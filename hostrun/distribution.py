@@ -98,6 +98,7 @@ UNKNOWN_COMMIT = "unknown"
 # than silently copied, so local scratch cannot leak into a release.
 PACKAGED_DIRS = (
     "agent",
+    "desktop",
     "archive",
     "contracts",
     "docs",

@@ -149,8 +149,12 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 
 ## 桌面界面
 
-在源码工作区双击 `Frontier.cmd` 可打开独立桌面窗口。需要带 Tkinter 和 `pythonw.exe` 的 Python（开发环境 `.venv` 已支持）。发行包的嵌入式 Python 目前未包含 Tkinter，暂不支持发行包 GUI 交付。
+日常启动请双击 `Frontier.lnk` 快捷方式（扩展名是小写 L 开头的 `.lnk`，Windows 通常隐藏它）。运行 `scripts/install-desktop.ps1` 可重新生成；使用 `-ShortcutDirectory <文件夹>` 可在指定文件夹额外创建“启动 Frontier”快捷方式。源码启动需要 Python、已安装并构建的 `desktop/`，不需要 Tkinter。
 
-中央区域与内置 Agent 对话，左栏切换本地保存的会话，右侧可折叠 Console 输入命令及交互回答。模型设置隐藏 API Key 输入。Ctrl+Enter 发送，停止按钮取消当前 Agent 进程。会话记录保存在本地 `.frontier/desktop/`。向 `Frontier.cmd` 传入命令参数仍使用原有 CLI。
+`Frontier.cmd` 保留为 CLI 入口；不传参数也会启动 GUI，但可能短暂显示命令行窗口。中央区域与内置 Agent 对话，左栏切换会话，Console 页签输入命令及交互回答。Enter 发送、Shift+Enter 换行；停止按钮取消当前 Agent。会话保存在 `.frontier/desktop/`。
 
-Windows 无命令行启动：运行一次 scripts/install-desktop.ps1，然后打开生成的 Frontier 快捷方式（开始菜单中也会安装）。关闭 GUI 后，其后台工作进程会在 10 秒内全部结束。Frontier.cmd 保留为命令行兼容入口，仍可能短暂显示 cmd.exe。
+首次启动会把随附 Electron 运行时复制到 `%LOCALAPPDATA%/Frontier/desktop-runtime/`，避免工作区磁盘上的 Windows 沙箱启动失败。代码、配置和资料库仍在原位置，渲染器沙箱保持开启。关闭 GUI 后，其后台工作进程会在 10 秒内结束。
+
+### 桌面界面开发
+
+在 `desktop/` 运行 `npm ci`、`npm run typecheck` 和 `npm run build`，然后打开快捷方式，或运行 `python -m hostrun.desktop --code <code> --archive <archive>`。Python 管理带随机令牌认证的本机回环通信和 Windows 进程作业。启动错误记录于 `.frontier/desktop-error.log`，Electron 日志位于 `.frontier/desktop-electron.log`。

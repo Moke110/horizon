@@ -8,6 +8,14 @@ _job = None
 _original_init = subprocess.Popen.__init__
 
 
+class GuiProcess(subprocess.Popen):
+    """Visible GUI child in the same job, without a console or SW_HIDE."""
+    def __init__(self, *args, **kwargs):
+        if os.name == 'nt':
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        _original_init(self, *args, **kwargs)
+
+
 def install():
     global _job
     if os.name != 'nt' or _job is not None:

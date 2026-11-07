@@ -198,8 +198,12 @@ Release builds require the compiled agent and both bundled runtimes.
 
 ## Desktop interface
 
-In this source checkout, double-click `Frontier.cmd` to open the native desktop window. It requires Python with Tkinter and `pythonw.exe` (the development `.venv` supports this). The embedded distribution Python does not currently bundle Tkinter; packaged GUI delivery is not yet supported.
+Double-click the `Frontier.lnk` shortcut for everyday startup. The extension starts with a lowercase L; Windows usually hides it. Run `scripts/install-desktop.ps1` to regenerate it; add `-ShortcutDirectory <folder>` to also create a “启动 Frontier” shortcut in that folder. Source startup requires Python and an installed, built `desktop/`; Tkinter is not required.
 
-Use the center pane to chat with the built-in Agent, the left pane to switch locally saved conversations, and the collapsible right pane for Console commands and interactive answers. Model settings mask the API key. Ctrl+Enter sends a message; Stop cancels the current Agent process. Conversation history is stored locally under `.frontier/desktop/`. CLI arguments to `Frontier.cmd` retain their original behavior.
+`Frontier.cmd` remains the CLI entry. Without arguments it also starts the GUI, but may briefly show a console. Chat with the embedded Agent in the center, switch conversations on the left, and enter commands and interactive answers in the Console tab. Enter sends; Shift+Enter inserts a newline. Stop cancels the active Agent. Conversations stay in `.frontier/desktop/`.
 
-For console-free Windows startup, run scripts/install-desktop.ps1 once and open the generated Frontier shortcut (also installed in the Start Menu). Closing the GUI stops its background workers within 10 seconds. Frontier.cmd remains available for CLI compatibility and can briefly display cmd.exe.
+On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Frontier/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the GUI stops its background workers within 10 seconds.
+
+### Desktop development
+
+Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.frontier/desktop-error.log`; Electron logs are in `.frontier/desktop-electron.log`.
