@@ -1,58 +1,64 @@
+import io
 import queue
 import threading
-import tkinter as tk
-from hostrun.desktop import Desktop
+from pathlib import Path
+import pytest
+from hostrun.desktop_worker import DesktopWorker
 
 
-def test_desktop_sessions_and_stream(tmp_path, monkeypatch):
-    monkeypatch.setattr(Desktop, 'run_console', lambda self: None)
-    root = tk.Tk()
-    root.withdraw()
-    app = Desktop(root, {'runtime': str(tmp_path), 'code': str(tmp_path), 'archive': str(tmp_path / 'archive')})
-    try:
-        app.chats[0]['messages'] = [{'role': 'You', 'text': '你好'}]
-        app.save()
-        assert '你好' in app.store.read_text(encoding='utf-8')
-        app.response = ''
-        app.busy = True
-        app.events.put(('agent', {'type': 'text', 'text': '测试回复'}))
-        app.events.put(('done', None))
-        app.poll()
-        assert not app.busy
-        assert app.chats[0]['messages'][-1]['text'] == '测试回复'
-        app.toggle()
-        assert str(app.sidebar) not in app.panes.panes()
-        app.toggle()
-        assert str(app.sidebar) in app.panes.panes()
-        app.new_chat()
-        assert len(app.chats) == 2
-    finally:
-        root.destroy()
-
-
-def test_console_answers_and_close():
-    app = Desktop.__new__(Desktop)
+def worker(tmp_path):
+    app = DesktopWorker()
+    app.home = tmp_path
+    app.resolved = {'code': str(tmp_path)}
+    app.events, app.answers = queue.Queue(), queue.Queue()
     app.closed = False
-    app.events = queue.Queue()
-    app.answers = queue.Queue()
+    app.cancelled = threading.Event()
+    app.process = None
+    return app
+
+
+def test_console_answers_and_eof(tmp_path):
+    app = worker(tmp_path)
     app.answers.put('yes')
     assert app.read('question') == 'yes'
+    assert app.events.get() == ('prompt', 'question')
+    app.answers.put(None)
+    with pytest.raises(EOFError): app.read()
     app.closed = True
-    import pytest
-    with pytest.raises(EOFError):
-        app.read()
+    with pytest.raises(EOFError): app.read()
 
 
-def test_activation_restores_hidden_window(tmp_path, monkeypatch):
-    monkeypatch.setattr(Desktop, 'run_console', lambda self: None)
-    root = tk.Tk()
-    root.withdraw()
-    app = Desktop(root, {'runtime': str(tmp_path), 'code': str(tmp_path), 'archive': str(tmp_path / 'archive')})
-    try:
-        app.activation.touch()
-        app.poll()
-        root.update()
-        assert not app.activation.exists()
-        assert root.state() == 'normal'
-    finally:
-        root.destroy()
+def test_agent_stream_and_completion(tmp_path, monkeypatch):
+    from hostrun import desktop_worker as module
+    app = worker(tmp_path)
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *a, **kw: ['node', 'agent'])
+    class Process:
+        stdout = io.StringIO('invalid\n{"type":"text","text":"你好"}\n')
+        stderr = io.StringIO('')
+        def wait(self): return 0
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *a, **kw: Process())
+    app.run_agent('hello')
+    assert app.events.get() == ('agent', {'type': 'text', 'text': '你好'})
+    assert app.events.get() == ('done', None)
+    assert app.process is None
+
+
+def test_agent_failure_always_completes(tmp_path, monkeypatch):
+    from hostrun import desktop_worker as module
+    app = worker(tmp_path)
+    def fail(*a, **kw): raise RuntimeError('missing model')
+    monkeypatch.setattr(module.embedded_agent, 'argv', fail)
+    app.run_agent('hello')
+    assert app.events.get() == ('agent', {'type': 'error', 'message': 'missing model'})
+    assert app.events.get() == ('done', None)
+
+
+def test_cancel_stops_active_process(tmp_path):
+    app = worker(tmp_path)
+    class Process:
+        stopped = False
+        def poll(self): return None
+        def terminate(self): self.stopped = True
+    app.process = Process()
+    app.stop()
+    assert app.cancelled.is_set() and app.process.stopped

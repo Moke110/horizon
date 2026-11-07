@@ -121,6 +121,19 @@ jobs:
         with:
           node-version: "24.16.0"
 
+      - name: Build the TypeScript desktop
+        shell: pwsh
+        run: |
+          npm --prefix desktop ci
+          if ($LASTEXITCODE -ne 0) { throw "Desktop dependency installation failed" }
+          node desktop/node_modules/electron/install.js
+          if ($LASTEXITCODE -ne 0) { throw "Electron runtime installation failed" }
+          npm --prefix desktop run typecheck
+          if ($LASTEXITCODE -ne 0) { throw "Desktop typecheck failed" }
+          npm --prefix desktop run build
+          if ($LASTEXITCODE -ne 0) { throw "Desktop build failed" }
+          npm --prefix desktop prune --omit=dev --ignore-scripts
+
       - name: Build the bundled Frontier Pi agent
         shell: pwsh
         run: |

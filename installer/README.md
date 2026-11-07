@@ -13,7 +13,7 @@ Pass the resulting package directory to Inno Setup:
 ```
 
 The installer includes the application, Pi, Node.js, Python and the Feishu CLI.
-Start menu and optional desktop shortcuts open the real Frontier console.
+The sole `Frontier.lnk` launcher lives inside the Frontier installation directory and opens the TypeScript desktop. No Start menu or outer desktop launcher is created.
 Run `/frontier-init` to configure the model API key and bind Feishu.
 Zig and the previous Hello World executable are no longer used.
 

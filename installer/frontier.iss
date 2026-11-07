@@ -26,10 +26,7 @@ SolidCompression=yes
 WizardStyle=modern
 AppMutex=Local\FrontierConsoleRunning
 UninstallDisplayIcon={app}\runtime\python.exe
-[Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
-Name: "{userprograms}\Frontier"; Filename: "{app}\runtime\python.exe"; Parameters: "-X utf8 -m hostrun.cli --code ""{app}"" console"; WorkingDir: "{app}"
-Name: "{userdesktop}\Frontier"; Filename: "{app}\runtime\python.exe"; Parameters: "-X utf8 -m hostrun.cli --code ""{app}"" console"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{app}\Frontier"; Filename: "{app}\runtime\pythonw.exe"; Parameters: "-X utf8 -m hostrun.desktop --code ""{app}"" --archive ""{app}\frontier-archive"""; WorkingDir: "{app}"
