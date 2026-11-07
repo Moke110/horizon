@@ -1,5 +1,7 @@
 # frontier 原型 · 文件契约
 
+> 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
+
 各模块之间**不 import 彼此**，只通过下面这些文件交换数据。任何模块都可以被替换，只要仍读写同样的形状。
 所有 JSON 顶层带 `schema_version: 1`，时间统一 ISO-8601（本地时区，秒级，如 `2026-10-20T09:30:00+08:00`）。
 
@@ -451,7 +453,7 @@ python -m knowledge.cli ledger      # 重建文本基线
 
 ## 10.6 原文/推送库（Phase 4，见 `contracts/lark-storage.md`）
 
-自 ADR 0003 起，云盘 + Base 是原文与推送的唯一真相；`<archive>/originals/**`、`<archive>/pushes/**` 降级为本地缓存与物化视图：
+在既有飞书存储适配链路中，云盘 + Base 保存原文与推送；`<archive>/originals/**`、`<archive>/pushes/**` 降级为本地缓存与物化视图：
 
 ```bash
 python -m library.cli put-source --file <pdf> --paper <paper_id>

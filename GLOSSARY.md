@@ -1,13 +1,13 @@
 # frontier
 
-面向研究者的知识库与论文报道推送系统：知识卡片驱动论文检索，报道推送到飞书，评分与采纳的更新持续积累为命题与证据。
+产品方向见 [产品决策](docs/adr/0001-product-direction.md)。本表定义领域术语；包含 Base、Drive、Console 和旧队列字段的条目仅描述现有实现。
 
 ## Language
 
 ### Knowledge
 
 **Knowledge card（知识卡片）**:
-The canonical unit of research interest, defined by a label, recall terms and a precision annotation. It replaces the retired checkpoint.
+The canonical unit of knowledge interest, defined by a label, recall terms and a precision annotation. It replaces the retired checkpoint.
 _Avoid_: checkpoint, topic, keyword
 
 **checkpoint**:
@@ -19,7 +19,7 @@ A knowledge card or proposition the owner kept during review but excluded from r
 _Avoid_: draft, pending card, disabled card
 
 **Proposition（命题）**:
-A cross-paper claim synthesized from evidence and related knowledge cards.
+A claim across sources synthesized from evidence and related knowledge cards.
 _Avoid_: finding, summary, note
 
 **Evidence（证据）**:
@@ -27,7 +27,7 @@ One directional entry under a proposition, supported by one or more reports.
 _Avoid_: citation, quote, source
 
 **Report（报道）**:
-A specific citation of one source paper in one push, identified by the paper, push, page and quote.
+A traceable citation of a source in an explanation. The existing paper adapter identifies it by paper, push, page and quote.
 _Avoid_: paper, papers table, excerpt
 
 **Review（综述）**:
@@ -38,18 +38,27 @@ _Avoid_: article, summary, write-up
 A temporary grouping used only to confirm the first batch of knowledge cards; the theme itself is not stored.
 _Avoid_: category, tag, folder
 
+**Knowledge base（知识库）**:
+Frontier-managed knowledge representing what the user has mastered, with automatic and manual card and proposition updates. Source collection alone does not establish mastery.
+
+**Personalized explanation（个性化解读）**:
+Writing grounded in new sources, existing knowledge and accumulated user preferences; independent of delivery.
+
+**Negotiation（谈判）**:
+Discussion that corrects interpretations, expresses preferences and revises proposed knowledge updates; distinct from a rating.
+
 ### Delivery
 
 **Push（推送）**:
-One paper's long-form report plus its rating and knowledge-update questions.
+A delivered personalized explanation with feedback and knowledge-update discussion.
 _Avoid_: article, PDF, post
 
 **Push artifact（推送件）**:
-The self-contained HTML rendered for one push; it records what the researcher saw and is not a regenerable view.
+The self-contained HTML rendered for one push; it records what the user saw and is not a regenerable view.
 _Avoid_: push, PDF, report file
 
 **Rating（评分）**:
-The researcher's `irrelevant` / `ok` / `great` verdict on a push; it gates knowledge updates, not retrieval ranking.
+The user's `irrelevant` / `ok` / `great` verdict on a push; the existing queue uses it to gate update questions; the product also uses accumulated preferences to guide explanations.
 _Avoid_: score, vote, feedback score
 
 **Unified question queue（统一问题队列）**:
@@ -87,7 +96,7 @@ The legacy script entry used to start the Console in the existing distribution a
 _Avoid_: listener script, service, shortcut
 
 **Frontier application（Frontier 应用）**:
-The installed Windows application the user opens to reach Frontier Console.
+The application providing source and knowledge management, explanations, delivery, ratings and negotiation.
 _Avoid_: installer, host, installation workspace
 
 **Heartbeat（心跳）**:
@@ -159,7 +168,7 @@ The frontier program directory — a source checkout in a source installation, a
 _Avoid_: workspace, install directory, app folder
 
 **Data root（数据根）**:
-Retired. The location it named split in two: the Code directory now holds configuration and run state, and the Archive directory holds the research files.
+Retired. The location it named split in two: the Code directory now holds configuration and run state, and the Archive directory holds the source files.
 _Avoid_: cache, backup, home
 
 **Archive directory（资料目录）**:
@@ -179,7 +188,7 @@ The interpreter and libraries a distribution package carries, so an installation
 _Avoid_: venv, embedded Python, private environment
 
 **Source document（原文）**:
-A paper's PDF original, keyed by `paper_id`; a paper has at most one source file.
+An original source used for interpretation, including papers, news, posts and blogs. The existing PDF adapter keys its source file by `paper_id`.
 _Avoid_: literature, reference, attachment
 
 **Library（库）**:
@@ -219,7 +228,7 @@ Comparing Drive files with Base registrations to find orphan files, broken links
 _Avoid_: sync, audit, verify
 
 **Decision（决定）**:
-The researcher's accepted or rejected outcome for one update proposal, recorded per proposal.
+The user's accepted or rejected outcome for one update proposal, recorded per proposal.
 _Avoid_: approval, answer, vote
 
 **Part（分片）**:

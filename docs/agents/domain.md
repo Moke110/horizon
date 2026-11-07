@@ -18,8 +18,7 @@ Single-context repo (this repo):
 /
 ├── GLOSSARY.md
 ├── docs/adr/
-│   ├── 0001-knowledge-cards-and-ids.md
-│   └── 0002-proposition-v3-and-bitable-authority.md
+│   └── 0001-product-direction.md
 └── ...
 ```
 
@@ -54,5 +53,5 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 
 - Single context: root `GLOSSARY.md`; there is no `GLOSSARY-MAP.md`.
 - The glossary defines vocabulary only. Field schemas, state machines and compatibility rules live in `contracts/`; current acceptance evidence and gaps live in `docs/acceptance/README.md`.
-- Existing ADRs are kept as historical records. New ADRs follow the current short format: title, one-paragraph context/decision/why, with optional status, considered options or consequences only when they add value.
+- Remove superseded product and interaction requirements when an explicitly confirmed decision requires cleanup; preserve applicable technical contracts. New ADRs follow the current short format: title, one-paragraph context/decision/why, with optional status, considered options or consequences only when they add value.
 - Development rules are in `AGENTS.md`; user installation and usage are in `README.md`; host runtime instructions are in `skills/frontier-run/`.

@@ -1,14 +1,15 @@
-# 飞书唯一存储：原文库 / 推送库 / 配额
+# 飞书存储适配：原文库 / 推送库 / 配额
+
+> 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
 
 实现契约：用于字段、状态机和兼容行为，不是本地任务规格。开发计划与验收以 GitHub Issues 为准；现行宿主调度与持久反馈见 `contracts/README.md` §12 和 `skills/frontier-run/SKILL.md`。现行常驻组件是用户手动启停的控制台（[ADR 0009](../docs/adr/0009-console-as-service.md)）；下文旧 listener / systemd 路径仅描述兼容实现，不授权启动旧部署。
 
-- 决策：`docs/adr/0003-lark-as-only-storage.md`
-- 状态：定稿（供 `library` 模块实现）
+- 范围：既有 `library` 飞书适配的字段、状态机与兼容行为；不规定产品使用飞书作为唯一存储。
 - 术语：见 `GLOSSARY.md`（Installation and storage）；知识五表契约见 `contracts/README.md` §10.5
 
 ## 1. 所有权
 
-| 资源 | 唯一写者 | 唯一真相 |
+| 资源 | 适配链路写入模块 | 适配链路读取来源 |
 |---|---|---|
 | 知识五表（卡片 / 命题 / 证据 / 报道 / 变更日志） | `knowledge` | Base |
 | 原文 PDF + 「原文」表 | `library` | 云盘 + Base |

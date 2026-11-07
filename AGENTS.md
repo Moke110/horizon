@@ -1,6 +1,6 @@
 # frontier
 
-Research knowledge base and paper-report delivery system. This file is the development guide; `GLOSSARY.md` is the project glossary. Maintain these through the Matt Pocock skills as working rules and terminology are resolved.
+This file contains development-agent working instructions only. Keep product positioning and feature explanations out of this file. Read `docs/adr/` for confirmed decisions and `GLOSSARY.md` for terminology.
 
 ## Development responsibilities
 

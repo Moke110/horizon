@@ -1,5 +1,7 @@
 # 内置 Agent 工具映射
 
+> 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../../../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
+
 此工作流中的 `python -m MODULE ...` 使用 `frontier_cli` 工具调用：`module` 为 MODULE，
 `args` 为后面的参数列表，不经过 shell。所有中间任务和 outbox 路径使用运行时目录
 `.frontier/` 内的绝对路径；不得向程序源码目录写入产物。读取和写入 JSON 使用
@@ -271,9 +273,9 @@ python -m hostrun.cli --code <code> --archive <archive> feedback sync
 - 首次 `pull` 只建立 `knowledge/state.json` 基线；之后只接受 title / review / annotation / conclusion 的文本改动与 `under_review` 的布尔改动。
 - 非法编辑不落本地：在 Base 的「待修正」列写原因。
 
-**Phase 3b（双读 7 天后）**：
+**Bitable 适配路径的读写协议**：
 
-- Bitable 成为知识层唯一真相；本地 JSON 转为只读快照。
+- 在 Bitable 适配路径中，本地 JSON 用作只读快照；此协议不指定 Frontier 自建知识库的存储方案。
 - 读：`KnowledgeStore` 实时读 Bitable；测试与 `--offline` 用 `FixtureStore`。
 - 写：本地 WAL（pending + proposals + before 快照）→ 逐条写 Bitable；按 `group_id` 幂等，失败断点续跑。
 - 写前校验：id 唯一、≥2 关联卡、conclusion ≤200、review ≤2000、quote 可定位、paper_id ∈ push、before 不陈旧。
@@ -313,5 +315,5 @@ python -m hostrun.cli --code <code> --archive <archive> feedback sync
 - `contracts/README.md`：模块文件契约。
 - `contracts/agent-tasks.md`：editor / writer 任务包与校验规则。
 - `contracts/question-queue.md`：队列状态机与闸门。
-- `docs/adr/`：知识卡片、命题 v3、Bitable 权威、控制台作为服务等决策记录。
+- `docs/adr/0001-product-direction.md`：已确认的产品方向。
 - `fixtures/`：离线运行时区与论文。
