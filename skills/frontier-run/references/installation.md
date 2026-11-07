@@ -1,5 +1,7 @@
 # Frontier 内置运行时
 
+> 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../../../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
+
 用户安装 Frontier 发行包；Node.js、Pi Agent、飞书 CLI 和 Python 业务运行时一并提供。
 无需安装 DSH、注册外部 Agent 技能或配置 headless overlay。
 

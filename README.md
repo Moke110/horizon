@@ -7,54 +7,13 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**A research knowledge base that reads papers for you and reports back in Feishu.**
+**A source discovery, knowledge management and personalized explanation assistant for people who keep learning across industries.**
 
-frontier turns the themes you care about into knowledge cards, retrieves the papers that
-match them, has an agent rank and write a daily report, and delivers it to your Feishu.
-You rate the report and confirm knowledge updates; every accepted update makes the cards,
-claims and evidence sharper. The result is a research memory that grows from your own
-judgement instead of a firehose of links.
+Frontier has four parts: retrieving original sources (papers, news, posts and blogs); managing its own knowledge base with automatic and manual card and proposition updates; writing explanations grounded in what the user already knows and their accumulated preferences; and an Agent that schedules retrieval, writing and delivery.
 
-## What it does
+The Frontier GUI provides reading, ratings and negotiation about interpretations, preferences and knowledge updates. Feishu is an optional external interaction and delivery channel. Collecting a source does not mean the user has mastered its knowledge.
 
-- **Retrieval grounded in your cards** — each report starts from the knowledge cards you
-  confirmed, not from a generic feed, so the searched queries stay on your topic.
-- **Agent-written reports** — one bounded run ranks candidates, writes one report and
-  renders it with figures, then delivers it as a Feishu file message.
-- **Human confirmation, not silent edits** — the agent only proposes knowledge updates.
-  You score the report, accept or reject each update, and only accepted proposals are
-  written back to the authoritative Feishu Base.
-- **Nothing resident on your machine** — frontier registers no Windows service, no
-  scheduled task, no registry key and no PATH entry. A single foreground console window
-  is the service; close it and everything stops.
-
-## How it works
-
-```text
- your themes ──▶  Feishu Base: cards · claims · evidence
-                        │
-                        │  retrieve (arXiv, Europe PMC, …)
-                        ▼
-                  candidate papers
-                        │
-                        │  agent ranks, writes, renders
-                        ▼
-                  one report ──▶  Feishu file message
-                        │                    │
-                        │                    ▼
-                        │             you rate and confirm
-                        │                    │
-                        ▼                    ▼
-                 accepted updates ◀──────────┘
-                        │
-                        └──▶  Feishu Base grows
-```
-
-Knowledge itself lives in Feishu: the Base tables hold the cards, claims and evidence, and
-Drive folders hold the originals and delivered reports. The copy on your machine is
-rebuildable. The archive directory keeps only `originals/` and `pushes/`; configuration,
-queues, logs, leases and install records live under the code directory, in
-`<code>\.frontier\`.
+The confirmed [product decision](docs/adr/0001-product-direction.md) defines the direction. The following commands and setup notes describe the existing implementation, including its Feishu adapter; they do not claim that the new knowledge suite and interaction flow are already implemented.
 
 ## Installation
 
@@ -88,7 +47,7 @@ Upgrades preserve `.frontier/` and the archive.
 
 Use the console or Feishu:
 
-- **Console** (always the primary surface): the foreground window shows scheduled runs,
+- **Console** (existing command interface): the foreground window shows scheduled runs,
   Feishu messages and card clicks, agent-run summaries and errors; the input line at the
   bottom takes the commands below.
 - **Feishu direct message** while the console is open: send one of the six phrases below.
