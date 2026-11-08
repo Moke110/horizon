@@ -548,7 +548,10 @@ def build(
             if runtime_path is not None
             else None
         )
-    except OSError as exc:
+        if runtime_path is not None:
+            from hostrun.runtime_inventory import write_inventory
+            write_inventory(package_dir)
+    except (OSError, ValueError) as exc:
         raise BuildError(f"could not write the package at {package_dir}: {exc}") from exc
 
     built_from_commit, commit_source, warning = resolve_commit(source_path, commit)
