@@ -51,3 +51,11 @@ For an existing task without a Pi transcript, the desktop supplies committed pri
 ### Model discovery
 
 The authenticated desktop bridge queries provider model catalogs in the backend. Renderer state contains provider choices, model identifiers and the selected model, never credentials. Configuration is replaced only after successful discovery. Selection must belong to the saved catalog. Refresh uses the saved credential without returning it. Catalog visibility is not proof of inference permission or available quota.
+
+### Child sessions
+
+`start_child` accepts schema_version, operation_id, parent task_id, input_version, bounded input_text and a whitelisted development_reader/development_summarizer role. `finish_child` requires the child expected_version and commits status succeeded/failed, result and error under a new operation_id. Child identity, parent session, role, input version and stable agent-child:<child_id> artifact reference remain in the Agent-owned SQLite ledger. `list_children(task_id)` returns only that task's committed children. Operation replay never replaces successful sibling results.
+
+The primary Pi delegate tool sends a structured request to its trusted Python owner; the owner invokes these public commands and starts an independent Pi session. Children cannot delegate or access generic business CLI, write tools, credentials, databases or sibling transcripts. Initial roles expose development-only read tools; production module role contracts are introduced by their later tickets. Child JSONL is model context, not business completion evidence. Full cancellation/lifecycle acceptance remains in #133.
+
+Delegation operation identities are scoped by parent task, committed input version and provider tool-call identity. Repeating a call in one turn returns its existing child result; reusing a provider call identifier in a later turn creates a separate child.

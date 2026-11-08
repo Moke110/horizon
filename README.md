@@ -172,3 +172,5 @@ Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open t
 Desktop conversations retain their model context when you continue a completed task or reopen Horizon. Start a new conversation for separate context. Configure your model in Horizon settings; credentials remain in the backend data home.
 
 Model setup: choose a provider and enter its API key. Horizon queries the provider for models visible to that credential; choose a model in the lower-right conversation menu. Refresh reloads the list without re-entering the key. An advertised model may still require account permissions or quota. Custom OpenAI-compatible services additionally require their API base URL.
+
+The built-in Agent can delegate bounded development-tool tasks to independent child sessions. The Trace tab shows their role, parent/child session identities, input version, stable result reference and success or failure. These initial read-only development roles are not Voyager, Editor or Keeper.

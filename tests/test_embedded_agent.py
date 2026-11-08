@@ -84,7 +84,7 @@ def test_real_pi_stream_and_tool_policy(tmp_path, kind):
         assert next(e for e in events if e["type"] == "final")["text"] == "Horizon ready"
         assert "private-test-key" not in proc.stdout + proc.stderr
         names = {t["function"]["name"] for t in requests[0].get("tools", [])}
-        expected = set() if kind == "intent_judgement" else {"read_file"} if kind == "kb_read" else {"horizon_cli", "read_file", "write_file"}
+        expected = set() if kind == "intent_judgement" else {"read_file"} if kind == "kb_read" else {"horizon_cli", "read_file", "write_file", "delegate"}
         assert names == expected
         assert "Development responsibilities" not in json.dumps(requests)
         if kind == "push_tool":
@@ -178,3 +178,28 @@ def test_pi_provider_error_does_not_persist_credentials(tmp_path):
         assert '[redacted]' in persisted
     finally:
         server.shutdown(); server.server_close(); worker.join()
+
+@pytest.mark.skipif(not shutil.which("node") or not (ROOT / "agent/dist/main.js").exists(), reason="build Pi first")
+def test_child_role_exposes_only_bounded_tools(tmp_path):
+    import os, sys, uuid
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
+            event = {'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':{'role':'assistant','content':'bounded result'},'finish_reason':'stop'}]}
+            self.wfile.write(('data: '+json.dumps(event)+'\n\ndata: [DONE]\n\n').encode())
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+    try:
+        embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='child-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        for role in ('development_reader','development_summarizer'):
+            args=embedded_agent.argv(tmp_path,'bounded input',kind='agent',code=ROOT,session_id=str(uuid.uuid4()))+['--child-role',role]
+            proc=subprocess.run(args,cwd=ROOT,env={**os.environ,'HORIZON_PYTHON':sys.executable},capture_output=True,text=True,encoding='utf-8',timeout=45)
+            assert proc.returncode == 0,proc.stdout+proc.stderr
+            assert {t['function']['name'] for t in requests[-1]['tools']} == {'read_file','developer_context'}
+            assert role in json.dumps(requests[-1]['messages'])
+        assert len(list((tmp_path/'agent/pi/sessions').rglob('*.jsonl'))) == 2
+    finally:
+        server.shutdown();server.server_close();worker.join()

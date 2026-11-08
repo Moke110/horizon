@@ -60,6 +60,7 @@ def serve(resolved):
     app.cancelled = threading.Event()
     service = AgentService(desktop_home(), token=token)
     app.home = service.home
+    app.service, app.service_token = service, token
     chats = service.list_tasks(token=token)
     current, response = 0, ''
     lock = threading.Lock()
@@ -87,7 +88,7 @@ def serve(resolved):
     def state():
         facts = embedded_agent.runtime(app.home, code=code)
         emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
-                       'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers()})
+                       'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def discover_models(command):
         try:
             if command['action'] == 'configure':
@@ -135,6 +136,7 @@ def serve(resolved):
                             continue
                         chat = chats[current]
                         response = ''; app.busy = True; app.cancelled.clear()
+                        app.task_id, app.input_version = chat['task_id'], chat['version']
                         task = text
                         threading.Thread(target=app.run_agent, args=(task, chat['session_id'], chat['messages'][:-1]), daemon=True).start()
                 state()
@@ -156,6 +158,8 @@ def serve(resolved):
                 activation.unlink(missing_ok=True); emit('activate')
             try: kind, data = app.events.get(timeout=.1)
             except queue.Empty: continue
+            if kind == 'children':
+                state()
             if kind == 'agent':
                 if data['type'] == 'text': response += data['text']
                 elif data['type'] == 'error': response += '\n错误：' + data['message']

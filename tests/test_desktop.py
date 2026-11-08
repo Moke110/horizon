@@ -187,3 +187,75 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     reopened = AgentService(tmp_path, token='new-launch')
     assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 4]
     assert len(reopened.events(token='new-launch')) == 6
+
+
+def test_child_handoff_persists_success_and_failure(tmp_path, monkeypatch):
+    from hostrun.agent_service import AgentService
+    from hostrun import desktop_worker as module
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='launch')
+    app.service_token = 'launch'
+    task = app.service.create_task({'schema_version':1,'operation_id':'parent','title':'parent'}, token='launch')
+    app.task_id = task['task_id']
+    app.input_version = task['version']
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *a, **kw: ['node', 'child'])
+    class Process:
+        stdout = io.StringIO('{"type":"final","text":"verified"}\n')
+        stderr = io.StringIO('')
+        def wait(self): return 0
+        def poll(self): return 0
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *a, **kw: Process())
+    first = app.delegate({'requestId':'one','role':'development_reader','input':'Read contract'})
+    assert first['status'] == 'succeeded' and first['result'] == 'verified'
+    assert first['artifact_ref'].startswith('agent-child:')
+    def fail(*a, **kw): raise RuntimeError('spawn failed')
+    monkeypatch.setattr(module.subprocess, 'Popen', fail)
+    second = app.delegate({'requestId':'two','role':'development_summarizer','input':'Summarize'})
+    assert second['status'] == 'failed'
+    assert app.delegate({'requestId':'one','role':'development_reader','input':'Read contract'}) == first
+    restored = AgentService(tmp_path, token='new')
+    assert len(restored.list_children(task['task_id'], token='new')) == 2
+
+
+def test_child_empty_result_is_failed_and_retains_prior_results(tmp_path, monkeypatch):
+    from hostrun.agent_service import AgentService
+    from hostrun import desktop_worker as module
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='launch'); app.service_token = 'launch'
+    task = app.service.create_task({'schema_version':1,'operation_id':'parent','title':'parent'}, token='launch')
+    app.task_id, app.input_version = task['task_id'], task['version']
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *a, **kw: ['node'])
+    class Process:
+        stdout = io.StringIO(''); stderr = io.StringIO('')
+        def wait(self): return 0
+        def poll(self): return 0
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *a, **kw: Process())
+    result = app.delegate({'requestId':'empty','role':'development_reader','input':'read'})
+    assert result['status'] == 'failed'
+    with pytest.raises(ValueError): app.delegate({'requestId':'bad','role':'keeper','input':'write'})
+    assert len(app.service.list_children(app.task_id, token='launch')) == 1
+
+
+def test_child_tool_ids_are_scoped_to_parent_turn(tmp_path, monkeypatch):
+    from hostrun.agent_service import AgentService
+    from hostrun import desktop_worker as module
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='launch'); app.service_token = 'launch'
+    task = app.service.create_task({'schema_version':1,'operation_id':'parent','title':'parent'}, token='launch')
+    app.task_id, app.input_version = task['task_id'], task['version']
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *a, **kw: ['node'])
+    class Process:
+        def __init__(self):
+            self.stdout = io.StringIO('{"type":"final","text":"result"}\n'); self.stderr = io.StringIO('')
+        def wait(self): return 0
+        def poll(self): return 0
+    monkeypatch.setattr(module.subprocess, 'Popen', lambda *a, **kw: Process())
+    event = {'requestId':'call_0','role':'development_reader','input':'read'}
+    first = app.delegate(event)
+    assert app.delegate(event) == first
+    task = app.service.append_message({'schema_version':1,'operation_id':'next-turn','task_id':app.task_id,'expected_version':task['version'],'role':'You','text':'again'}, token='launch')
+    app.input_version = task['version']
+    second = app.delegate(event)
+    assert second['child_id'] != first['child_id']
+    assert app.delegate(event) == second
+    assert len(app.service.list_children(app.task_id, token='launch')) == 2
