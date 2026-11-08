@@ -25,8 +25,12 @@ def executable(code, *, local_app_data=None):
     if not base:
         raise RuntimeError('LOCALAPPDATA is required for the Windows desktop runtime')
     root = Path(base) / 'Horizon/desktop-runtime'
-    root.mkdir(parents=True, exist_ok=True)
     target = root / digest.hexdigest()
+    # Published cache directories appear only after the complete staging copy is
+    # atomically renamed. Reusing that immutable revision needs no write access.
+    if (target / 'electron.exe').is_file():
+        return target / 'electron.exe'
+    root.mkdir(parents=True, exist_ok=True)
     with file_lock(root / 'install.lock', blocking=True):
         if not (target / 'electron.exe').is_file():
             staging = Path(tempfile.mkdtemp(prefix='install-', dir=root))
