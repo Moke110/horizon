@@ -222,6 +222,8 @@ def test_turn_dto_and_unfinished_child_snapshot_refresh(tmp_path):
     assert service.attempt_turn(attempt,token='s')==observed
     child=service.start_child({'schema_version':1,'operation_id':'child','task_id':task['task_id'],'input_version':2,'role':'development_reader','input_text':'read','snapshots':{'knowledge':{'version':1}}},token='s')
     child=service.attempt_child({'schema_version':1,'operation_id':'retry','child_id':child['child_id'],'expected_version':1,'snapshots':{'knowledge':{'version':2}}},token='s')
+    assert child['operation_id']=='retry'
+    assert service.attempt_child({'schema_version':1,'operation_id':'retry','child_id':child['child_id'],'expected_version':1,'snapshots':{'knowledge':{'version':2}}},token='s') == child
     assert child['snapshots']['knowledge']['version']==2
     done=service.finish_child({'schema_version':1,'operation_id':'finish','child_id':child['child_id'],'expected_version':1,'status':'succeeded','result':'read'},token='s')
     with pytest.raises(ValueError):

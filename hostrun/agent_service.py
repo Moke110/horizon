@@ -217,6 +217,7 @@ class AgentService:
                 if attempting:
                     result.setdefault('attempts', []).append({'operation_id':operation,'snapshots':command['snapshots']})
                     result['snapshots'] = command['snapshots']
+                    result['operation_id'] = operation
                     event_type = 'agent.child_attempted'
                 else:
                     result.update(status=command['status'], result=command.get('result',''), error=command.get('error',''),version=result['version']+1,operation_id=operation)
