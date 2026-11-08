@@ -10,7 +10,7 @@
 
 实现契约：描述发行包里的 `runtime/` 目录、`bin/horizon.cmd` 启动包装器，以及清单如何覆盖它们（spec #92，ticket #95）。开发计划与验收以 GitHub Issues 为准；发行包清单与安装锁的机器可读契约见 `contracts/distribution-manifest.schema.json` 与 `contracts/install-lock.schema.json`。
 
-所有 JSON 顶层带 `schema_version: 1`，时间统一 ISO-8601（见 `contracts/README.md`）。本契约不新增 JSON 文件：运行时与包装器只是普通包文件，由既有清单逐文件摘要覆盖。
+所有 JSON 顶层带 `schema_version: 1`，时间统一 ISO-8601（见 `contracts/README.md`）。运行时、包装器和运行时组件清单都是普通包文件，由发行清单逐文件摘要覆盖；升级恢复日志与版本标记保存在数据 home。
 
 ## 1. 目标
 
