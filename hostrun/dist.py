@@ -2143,6 +2143,8 @@ def verify_install(code: str | Path) -> dict:
                 continue
             if rel in VERIFY_IGNORED_PATHS:
                 continue
+            if rel == 'Horizon.lnk' and not path.is_symlink() and path.resolve().parent == code_path:
+                continue
             if rel not in listed:
                 extra.append(rel)
 

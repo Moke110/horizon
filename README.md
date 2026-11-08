@@ -167,6 +167,8 @@ On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horiz
 
 ### Desktop development
 
+Close Horizon before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
+
 Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.horizon/desktop-error.log`; Electron logs are in `<data-home>/desktop-electron.log`.
 
 Desktop conversations retain their model context when you continue a completed task or reopen Horizon. Start a new conversation for separate context. Configure your model in Horizon settings; credentials remain in the backend data home.

@@ -132,6 +132,8 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 
 ### 桌面界面开发
 
+运行新版安装程序前请先退出 Horizon。安装程序使用自身内置运行时，备份现有数据目录，并在原位置保留会话；桌面仍在运行时会拒绝替换。
+
 在 `desktop/` 运行 `npm ci`、`npm run typecheck` 和 `npm run build`，然后打开快捷方式，或运行 `python -m hostrun.desktop --code <code> --archive <archive>`。Python 管理带随机令牌认证的本机回环通信和 Windows 进程作业。启动错误记录于 `.horizon/desktop-error.log`，Electron 日志位于 `<数据目录>/desktop-electron.log`。
 
 桌面对话在任务完成后继续提问或重新打开 Horizon 时保留模型上下文。新建会话使用独立上下文。请在 Horizon 设置中配置模型，凭据保存在后端数据目录。
