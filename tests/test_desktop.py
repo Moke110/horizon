@@ -319,3 +319,43 @@ def test_model_failure_details_survive_restart_and_manual_continue(tmp_path, mon
     app.run_agent('work',app.turn['session_id'])
     assert reopened.list_turns(token='new')[0]['status']=='completed'
     assert len(reopened.list_tasks(token='new')[0]['messages'])==2
+
+
+def test_manual_continue_replays_successful_child_and_retries_failed_child(tmp_path, monkeypatch):
+    import json
+    from hostrun import desktop_worker as module
+    from hostrun.agent_service import AgentService
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='s'); app.service_token = 's'
+    task = app.service.create_task({'schema_version':1,'operation_id':'parent','title':'work'}, token='s')
+    app.task_id = task['task_id']
+    app.turn = app.service.begin_turn({'schema_version':1,'operation_id':'turn','task_id':app.task_id,'expected_version':1,'text':'two tasks'}, token='s')
+    app.input_version = 2
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *a, **kw: ['node'])
+    spawned = []
+    class Process:
+        def __init__(self, event, code):
+            self.stdout = io.StringIO(json.dumps(event)+'\n'); self.stderr = io.StringIO(''); self.code = code
+        def wait(self, timeout=None): return self.code
+        def poll(self): return self.code
+    responses = iter([({'type':'final','text':'first committed'},0),
+                      ({'type':'error','category':'quota','message':'Quota exhausted','attempts':1,'retryable':False},1),
+                      ({'type':'final','text':'second recovered'},0)])
+    def spawn(*a, **kw):
+        spawned.append(a)
+        return Process(*next(responses))
+    monkeypatch.setattr(module.subprocess, 'Popen', spawn)
+    first_call = {'requestId':'entry-1:call-0','role':'development_reader','input':'first'}
+    second_call = {'requestId':'entry-2:call-0','role':'development_reader','input':'second'}
+    first = app.delegate(first_call)
+    failed = app.delegate(second_call)
+    assert failed['status'] == 'failed' and failed['failure']['category'] == 'quota'
+    turn = app.service.commit_turn({'schema_version':1,'operation_id':'interrupted','turn_id':'turn','expected_version':app.turn['version'],'status':'recovery_required','result':'','error':'Quota exhausted'}, token='s')
+    app.service = AgentService(tmp_path, token='s')
+    app.turn = app.service.transition_turn({'schema_version':1,'operation_id':'continue','turn_id':'turn','expected_version':turn['version'],'action':'resume'}, token='s')
+    assert app.delegate(first_call) == first
+    recovered = app.delegate(second_call)
+    assert recovered['child_id'] == failed['child_id'] and recovered['status'] == 'succeeded'
+    assert len(spawned) == 3
+    assert len(app.service.list_children(app.task_id, token='s')) == 2
+    assert len(app.service.list_tasks(token='s')[0]['messages']) == 1
