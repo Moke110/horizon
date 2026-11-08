@@ -9,6 +9,7 @@ import threading
 import socket
 import secrets
 import uuid
+from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
@@ -58,10 +59,12 @@ def serve(resolved):
     app.closed, app.busy, app.process = False, False, None
     app.cancelled = threading.Event()
     service = AgentService(desktop_home(), token=token)
+    app.home = service.home
     chats = service.list_tasks(token=token)
     current, response = 0, ''
     lock = threading.Lock()
     ui_ready = threading.Event()
+    configuring = threading.Event()
     def emit(kind, data=None):
         with lock:
             try:
@@ -84,13 +87,28 @@ def serve(resolved):
     def state():
         facts = embedded_agent.runtime(app.home, code=code)
         emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
-                       'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured']})
+                       'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers()})
+    def discover_models(command):
+        try:
+            if command['action'] == 'configure':
+                embedded_agent.discover_and_configure(app.home, provider=command['provider'], api_key=command['key'], base_url=command.get('url', ''))
+                emit('configuration_saved')
+            else:
+                embedded_agent.refresh_models(app.home)
+        except Exception as exc:
+            emit('configuration_error' if command['action'] == 'configure' else 'notice', str(exc))
+        finally:
+            configuring.clear()
+            state()
+
     def commands():
         nonlocal current, response
         for line in incoming:
             try:
                 cmd = json.loads(line)
                 action = cmd.get('action')
+                if configuring.is_set() and action in ('configure', 'refresh_models', 'select_model', 'send'):
+                    raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
                 if action == 'ready': ui_ready.set()
                 elif action == 'stop': app.stop()
                 elif action == 'console': app.answers.put(str(cmd['text']))
@@ -101,9 +119,11 @@ def serve(resolved):
                         index = int(cmd['index'])
                         if not 0 <= index < len(chats): raise ValueError('Invalid session')
                         current = index
-                    elif action == 'configure':
-                        embedded_agent.configure(app.home, provider=cmd['provider'], model=cmd['model'], api_key=cmd['key'], base_url=cmd.get('url', ''))
-                        emit('notice', '模型配置已保存')
+                    elif action in ('configure', 'refresh_models'):
+                        configuring.set()
+                        threading.Thread(target=discover_models, args=(dict(cmd),), daemon=True).start()
+                    elif action == 'select_model':
+                        embedded_agent.select_model(app.home, cmd['model'])
                     elif action == 'send':
                         if not isinstance(cmd.get('operation_id'), str) or not cmd['operation_id'].strip() or type(cmd.get('expected_version')) is not int:
                             raise CommandError('invalid_command', 'operation_id and expected_version are required')
@@ -115,8 +135,8 @@ def serve(resolved):
                             continue
                         chat = chats[current]
                         response = ''; app.busy = True; app.cancelled.clear()
-                        task = '\n\n'.join(m['role'] + ': ' + m['text'] for m in chat['messages'])
-                        threading.Thread(target=app.run_agent, args=(task,), daemon=True).start()
+                        task = text
+                        threading.Thread(target=app.run_agent, args=(task, chat['session_id'], chat['messages'][:-1]), daemon=True).start()
                 state()
             except CommandError as exc:
                 chats[:] = service.list_tasks(token=token)

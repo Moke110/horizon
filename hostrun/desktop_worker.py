@@ -8,9 +8,15 @@ from pathlib import Path
 from hostrun import console, console_events, embedded_agent
 
 class DesktopWorker:
-    def run_agent(self, task):
+    def run_agent(self, task, session_id=None, history=None):
+        history_path = None
         try:
-            argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']))
+            argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
+            if session_id is not None and history:
+                history_path = self.home / 'agent' / 'history' / (session_id + '.json')
+                history_path.parent.mkdir(parents=True, exist_ok=True)
+                history_path.write_text(json.dumps(history, ensure_ascii=False), encoding='utf-8')
+                argv.extend(['--history-file', str(history_path)])
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
             self.process = subprocess.Popen(argv, cwd=self.resolved['code'], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             # Drain stderr without exposing provider credentials in UI logs.
@@ -29,6 +35,8 @@ class DesktopWorker:
         except Exception as exc:
             self.events.put(('agent', {'type': 'error', 'message': str(exc)}))
         finally:
+            if history_path is not None:
+                history_path.unlink(missing_ok=True)
             self.process = None
             self.events.put(('done', None))
 

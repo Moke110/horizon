@@ -133,3 +133,7 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 ### 桌面界面开发
 
 在 `desktop/` 运行 `npm ci`、`npm run typecheck` 和 `npm run build`，然后打开快捷方式，或运行 `python -m hostrun.desktop --code <code> --archive <archive>`。Python 管理带随机令牌认证的本机回环通信和 Windows 进程作业。启动错误记录于 `.horizon/desktop-error.log`，Electron 日志位于 `<数据目录>/desktop-electron.log`。
+
+桌面对话在任务完成后继续提问或重新打开 Horizon 时保留模型上下文。新建会话使用独立上下文。请在 Horizon 设置中配置模型，凭据保存在后端数据目录。
+
+模型配置：选择提供商并输入 API Key，Horizon 会查询该凭据可见的模型，在对话框右下角选择使用的模型。刷新列表无需重新输入密钥。列表中的模型仍可能受账户权限或额度限制；自定义 OpenAI 兼容服务还需填写 API 地址。

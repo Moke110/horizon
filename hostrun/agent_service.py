@@ -46,6 +46,13 @@ class AgentService:
                     operation_id TEXT UNIQUE NOT NULL, event TEXT NOT NULL);
             ''')
 
+            db.execute('BEGIN IMMEDIATE')
+            for task_id, encoded in db.execute('SELECT task_id,result FROM agent_tasks').fetchall():
+                task = json.loads(encoded)
+                if 'session_id' not in task:
+                    task['session_id'] = str(uuid.uuid4())
+                    db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?', (json.dumps(task), task_id))
+
     @contextmanager
     def _connect(self):
         db = sqlite3.connect(self._database)
@@ -81,7 +88,7 @@ class AgentService:
                 return json.loads(existing[1])
             task_id = str(uuid.uuid4())
             result = {'schema_version': 1, 'operation_id': operation, 'task_id': task_id,
-                      'entity_id': task_id, 'version': 1, 'title': title, 'messages': []}
+                      'entity_id': task_id, 'session_id': str(uuid.uuid4()), 'version': 1, 'title': title, 'messages': []}
             encoded = json.dumps(result)
             db.execute('INSERT INTO agent_tasks VALUES (?, ?)', (task_id, encoded))
             db.execute('INSERT INTO agent_operations VALUES (?, ?, ?)', (operation, request, encoded))
