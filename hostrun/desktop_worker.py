@@ -112,6 +112,8 @@ class DesktopWorker:
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
+            if self.cancelled.is_set():
+                self.child_process.terminate()
             for line in self.child_process.stdout:
                 try: item = json.loads(line)
                 except ValueError: continue

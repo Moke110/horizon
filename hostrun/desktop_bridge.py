@@ -67,6 +67,7 @@ def serve(resolved):
     current, response = 0, ''
     lock = threading.Lock()
     ui_ready = threading.Event()
+    exiting = threading.Event()
     configuring = threading.Event()
     def emit(kind, data=None):
         with lock:
@@ -122,7 +123,18 @@ def serve(resolved):
                 if configuring.is_set() and action in ('configure', 'refresh_models', 'select_model', 'send'):
                     raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
                 if action == 'ready': ui_ready.set()
-                elif action == 'stop': app.stop()
+                elif action == 'exit':
+                    exiting.set()
+                    for turn in service.recoverable_turns(token=token):
+                        service.transition_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'],'expected_version':turn['version'],'action':'pause'},token=token)
+                    app.stop()
+                    emit('exit_ready')
+                    break
+                elif action in ('stop','resume_turn','cancel_turn'):
+                    turn_id = cmd.get('turn_id') or getattr(app,'turn',{}).get('turn_id')
+                    target = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn_id)
+                    service.transition_turn({'schema_version':1,'operation_id':cmd.get('operation_id') or str(uuid.uuid4()),'turn_id':turn_id,'expected_version':target['version'],'action':'resume' if action == 'resume_turn' else 'cancel'},token=token)
+                    if action != 'resume_turn': app.stop()
                 elif action == 'console': app.answers.put(str(cmd['text']))
                 elif not app.busy:
                     if action == 'new':
@@ -160,7 +172,7 @@ def serve(resolved):
     exit_code = 0
     try:
         while child.poll() is None:
-            if not app.busy and ui_ready.is_set():
+            if not exiting.is_set() and not app.busy and ui_ready.is_set():
                 pending_turns = service.recoverable_turns(token=token)
                 if pending_turns: start_turn(pending_turns[0]); state()
             if activation.exists():

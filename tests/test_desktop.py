@@ -166,6 +166,15 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                     replayed = wait_state(lambda state: True)
                     assert len(replayed['chats']) == 2
                     assert replayed['chats'][replayed['current']]['task_id'] == original_id
+                    owner=AgentService(tmp_path,token='test-control')
+                    active=owner.list_tasks(token='test-control')[-1]
+                    owner.begin_turn({'schema_version':1,'operation_id':'exit-pending','task_id':active['task_id'],'expected_version':active['version'],'text':'pending work'},token='test-control')
+                    send({'action':'exit'})
+                    while True:
+                        event=json.loads(incoming.readline())
+                        if event['kind']=='exit_ready': break
+                    assert owner.list_turns(active['task_id'],token='test-control')[-1]['status']=='paused'
+                    assert not owner.recoverable_turns(token='test-control')
         except BaseException as exc:
             failures.append(exc)
         finally:
@@ -185,8 +194,8 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     assert calls[0][2] == []
     assert calls[1][2] == [{'role': 'You', 'text': 'Hello'}, {'role': 'Horizon', 'text': 'Answer'}]
     reopened = AgentService(tmp_path, token='new-launch')
-    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 4]
-    assert len(reopened.events(token='new-launch')) == 6
+    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 5]
+    assert len(reopened.events(token='new-launch')) == 8
 
 
 def test_child_handoff_persists_success_and_failure(tmp_path, monkeypatch):

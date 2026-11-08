@@ -233,3 +233,20 @@ def test_turn_dto_and_unfinished_child_snapshot_refresh(tmp_path):
     result=service.commit_turn(commit,token='s')
     assert result['entity_id']=='turn' and result['operation_id']=='commit'
     assert service.commit_turn(commit,token='s')==result
+
+
+def test_pause_resume_cancel_persist_and_reject_late_results(tmp_path):
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    turn=service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'work'},token='s')
+    child=service.start_child({'schema_version':1,'operation_id':'c','task_id':task['task_id'],'input_version':2,'role':'development_reader','input_text':'read'},token='s')
+    paused=service.transition_turn({'schema_version':1,'operation_id':'pause','turn_id':'t','expected_version':1,'action':'pause'},token='s')
+    assert not AgentService(tmp_path,token='new').recoverable_turns(token='new')
+    with pytest.raises(ValueError): service.finish_child({'schema_version':1,'operation_id':'late','child_id':child['child_id'],'expected_version':1,'status':'succeeded','result':'late'},token='s')
+    resumed=service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':paused['version'],'action':'resume'},token='s')
+    assert service.recoverable_turns(token='s')[0]['status']=='running'
+    cancelled=service.transition_turn({'schema_version':1,'operation_id':'cancel','turn_id':'t','expected_version':resumed['version'],'action':'cancel'},token='s')
+    assert cancelled['status']=='cancelled'
+    assert service.list_children(task['task_id'],token='s')[0]['status']=='cancelled'
+    with pytest.raises(ValueError): service.commit_turn({'schema_version':1,'operation_id':'late-turn','turn_id':'t','expected_version':resumed['version'],'status':'completed','result':'late'},token='s')
+    assert len(service.list_tasks(token='s')[0]['messages'])==1

@@ -210,6 +210,9 @@ class AgentService:
                 if not row:
                     raise CommandError('not_found', 'Unknown child_id')
                 result = json.loads(row[0])
+                parent_turns = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(result['task_id'],))]
+                if any(t['input_version'] == result['input_version'] and t['status'] != 'running' for t in parent_turns):
+                    raise CommandError('version_conflict','Parent execution is not running')
                 if type(command.get('expected_version')) is not int or command['expected_version'] != result['version']:
                     raise CommandError('version_conflict', 'expected_version conflicts with child version')
                 if result['status'] != 'running':
@@ -229,6 +232,8 @@ class AgentService:
                 parent = json.loads(row[0])
                 if type(command.get('input_version')) is not int or command['input_version'] != parent['version']:
                     raise CommandError('version_conflict', 'input_version conflicts with current task version')
+                if any(json.loads(r[0])['status'] != 'running' for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(identity,)) if json.loads(r[0])['input_version'] == command['input_version']):
+                    raise CommandError('version_conflict','Parent execution is not running')
                 child_id = str(uuid.uuid4())
                 result = {'schema_version':1,'operation_id':operation,'entity_id':child_id,'child_id':child_id,
                           'task_id':identity,'session_id':str(uuid.uuid4()),'parent_session_id':parent['session_id'],
@@ -260,6 +265,9 @@ class AgentService:
     def commit_turn(self, command, *, token):
         return self._turn_command(command, token=token, action='commit')
 
+    def transition_turn(self, command, *, token):
+        return self._turn_command(command, token=token, action='transition')
+
     def attempt_turn(self, command, *, token):
         return self._turn_command(command, token=token, action='attempt')
 
@@ -285,7 +293,7 @@ class AgentService:
                 task = json.loads(row[0])
                 if type(command.get('expected_version')) is not int or command['expected_version'] != task['version']: raise CommandError('version_conflict','Task version changed')
                 active = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(task['task_id'],))]
-                if any(t['status']=='running' for t in active): raise CommandError('version_conflict','Task has an unfinished turn')
+                if any(t['status'] in ('running','paused') for t in active): raise CommandError('version_conflict','Task has an unfinished turn')
                 if not task['messages']: task['title'] = text[:24]
                 task['messages'].append({'role':'You','text':text}); task['version'] += 1
                 turn = {'schema_version':1,'turn_id':operation,'operation_id':operation,'entity_id':operation,'task_id':task['task_id'],'session_id':task['session_id'],'input_version':task['version'],'version':1,'status':'running','text':text,'result':'','error':'','attempts':[]}
@@ -294,8 +302,21 @@ class AgentService:
                 row = db.execute('SELECT result FROM agent_turns WHERE turn_id=?',(command.get('turn_id'),)).fetchone()
                 if not row: raise CommandError('not_found','Unknown turn')
                 turn = json.loads(row[0])
-                if turn['status'] != 'running': raise CommandError('version_conflict','Turn already finished')
-                if action == 'attempt':
+                if action != 'transition' and turn['status'] != 'running': raise CommandError('version_conflict','Turn already finished')
+                if action == 'transition':
+                    if type(command.get('expected_version')) is not int or command['expected_version'] != turn['version']: raise CommandError('version_conflict','Turn version changed')
+                    operation_action = command.get('action')
+                    allowed = {'pause':('running',), 'resume':('paused',), 'cancel':('running','paused','recovery_required')}
+                    if operation_action not in allowed or turn['status'] not in allowed[operation_action]: raise CommandError('version_conflict','Invalid lifecycle transition')
+                    turn['status'] = {'pause':'paused','resume':'running','cancel':'cancelled'}[operation_action]
+                    turn['version'] += 1
+                    if operation_action == 'cancel':
+                        for child_id, encoded_child in db.execute('SELECT child_id,result FROM agent_children WHERE task_id=?',(turn['task_id'],)).fetchall():
+                            child = json.loads(encoded_child)
+                            if child['input_version'] == turn['input_version'] and child['status'] == 'running':
+                                child.update(status='cancelled',version=child['version']+1)
+                                db.execute('UPDATE agent_children SET result=? WHERE child_id=?',(json.dumps(child),child_id))
+                elif action == 'attempt':
                     snapshots = command.get('snapshots')
                     if not isinstance(snapshots,dict): raise CommandError('invalid_command','snapshots required')
                     turn['attempts'].append({'operation_id':operation,'snapshots':snapshots})
