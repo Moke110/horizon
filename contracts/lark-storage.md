@@ -2,7 +2,7 @@
 
 > 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
 
-实现契约：用于字段、状态机和兼容行为，不是本地任务规格。开发计划与验收以 GitHub Issues 为准；现行宿主调度与持久反馈见 `contracts/README.md` §12 和 `skills/frontier-run/SKILL.md`。现行常驻组件是用户手动启停的控制台（[ADR 0009](../docs/adr/0009-console-as-service.md)）；下文旧 listener / systemd 路径仅描述兼容实现，不授权启动旧部署。
+实现契约：用于字段、状态机和兼容行为，不是本地任务规格。开发计划与验收以 GitHub Issues 为准；现行宿主调度与持久反馈见 `contracts/README.md` §12 和 `skills/horizon-run/SKILL.md`。现行常驻组件是探索者手动启停的控制台（[ADR 0009](../docs/adr/0009-console-as-service.md)）；下文旧 listener / systemd 路径仅描述兼容实现，不授权启动旧部署。
 
 - 范围：既有 `library` 飞书适配的字段、状态机与兼容行为；不规定产品使用飞书作为唯一存储。
 - 术语：见 `GLOSSARY.md`（Installation and storage）；知识五表契约见 `contracts/README.md` §10.5
@@ -15,7 +15,7 @@
 | 原文 PDF + 「原文」表 | `library` | 云盘 + Base |
 | 推送 HTML + 「推送日志」表 | `library` | 云盘 + Base |
 | 「决定」表 | `library` | Base |
-| 「配置」表 | 用户（`library` 只读） | Base |
+| 「配置」表 | 探索者（`library` 只读） | Base |
 | 本地缓存 / `raw/*.json` 物化视图 | `archive` | 否，可重建 |
 | 对外消息（含配额提醒） | `publisher` | —— |
 
@@ -24,9 +24,9 @@
 ## 2. 云盘布局
 
 ```
-飞书云盘/frontier/原文/<paper_id>.pdf              # ≤ 19 MB
-飞书云盘/frontier/原文/<paper_id>.pdf.part01       # 超出单文件上限时按序分片
-飞书云盘/frontier/推送/<push_id>.html
+飞书云盘/horizon/原文/<paper_id>.pdf              # ≤ 19 MB
+飞书云盘/horizon/原文/<paper_id>.pdf.part01       # 超出单文件上限时按序分片
+飞书云盘/horizon/推送/<push_id>.html
 ```
 
 - 扁平、只用业务 ID 命名。不做年月分目录：移动文件可能换 token，Base 链接会失效。
@@ -72,7 +72,7 @@
 | 标题 | 文本 | |
 | 一句话结论 / 背景 / 方法 / 结果 / 与知识的关系 / 局限 / 来源 | 长文本 ×7 | 对应 `sections` 的 7 个键 |
 | 评分 | 单选 | irrelevant / ok / great |
-| 评语 | 长文本 | 用户可空 |
+| 评语 | 长文本 | 探索者可空 |
 | 云盘链接 | URL | 推送库文件 |
 | 文件大小 | 数字 | |
 | md5 | 文本 | 幂等键的第二段；内容变了就是冲突 |
@@ -93,7 +93,7 @@
 | 提议 ID | 文本 | `proposal_id` |
 | 操作 | 单选 | 采纳 / 拒绝 |
 | 目标 | 文本 | 卡片或命题 id |
-| 评语 | 长文本 | 用户可空 |
+| 评语 | 长文本 | 探索者可空 |
 
 一行 = 一条提议。一次 `agree_all` / `reject_all` 产生 N 行，共享 `问题 ID`。
 
@@ -109,7 +109,7 @@
 | 推送目录 token | 文本 | |
 | 最近对账 | 日期 | |
 
-用户直接改数值即生效；`library` 每次预检读一次，本地缓存 10 分钟。
+探索者直接改数值即生效；`library` 每次预检读一次，本地缓存 10 分钟。
 
 ## 4. 入库流程
 
@@ -140,7 +140,7 @@
 
 1. `<运行时区>/cache/raw/<paper_id>.pdf` 存在且 md5 与 Base 一致 → 命中。
 2. 否则从云盘下载（有 `分片` 则按 `i` 顺序拼接），校验 md5；不一致 → 删除重下，二次失败报 `corrupt`。
-3. `状态=已离线归档` → 从 `备份位置` 复制并校验 md5；备份也不在 → 报 `missing`，提示用户重下或恢复。
+3. `状态=已离线归档` → 从 `备份位置` 复制并校验 md5；备份也不在 → 报 `missing`，提示探索者重下或恢复。
 4. `状态=无原件` → 报 `no_source`，调用方退化为摘要锚定。
 
 派生缓存（`cache/text/`、`cache/pages/`）按需生成；`library.cli cache prune --max-size 2G` 按最近使用清理。
@@ -163,20 +163,20 @@
   "limit_bytes": 5000000000,
   "percent": 30,
   "candidates": {"count": 12, "bytes": 800000000},
-  "instruction": "清理 frontier 原文库：……"
+  "instruction": "清理 horizon 原文库：……"
 }
 ```
 
-- 指令段落自带数字（候选篇数、字节数、备份目录），用户复制即用：
+- 指令段落自带数字（候选篇数、字节数、备份目录），探索者复制即用：
 
-> 清理 frontier 原文库：把 Base「原文」表中 `状态=在库`、未被「报道」引用的 N 篇（约 X MB）下载到 `~/frontier-offline/2026-10-26/`，逐篇校验 md5 一致后，把状态改为 `已离线归档` 并填写备份位置，再从飞书云盘删除文件；完成后报告释放空间与剩余用量。
+> 清理 horizon 原文库：把 Base「原文」表中 `状态=在库`、未被「报道」引用的 N 篇（约 X MB）下载到 `~/horizon-offline/2026-10-26/`，逐篇校验 md5 一致后，把状态改为 `已离线归档` 并填写备份位置，再从飞书云盘删除文件；完成后报告释放空间与剩余用量。
 
 ## 7. 清理与恢复
 
 清理（`library.cli evict`，**永不自动执行**）：
 
 1. 候选排序：未被报道引用 → 被引用（入库最老优先）。推送件不参与自动清理（它们才是推送库的本体）。
-2. 下载到 `~/frontier-offline/<YYYY-MM-DD>/`，校验 md5。
+2. 下载到 `~/horizon-offline/<YYYY-MM-DD>/`，校验 md5。
 3. Base 改 `状态=已离线归档` + `备份位置`。
 4. 删云盘文件。
 5. 备份失败任何一步 → 中止，不删。
@@ -214,7 +214,7 @@ python -m library.cli resolve --paper <paper_id>
 python -m library.cli quota
 python -m library.cli reconcile [--dry-run] [--verify]
 python -m library.cli evict --candidates [--limit N]
-python -m library.cli evict --execute [--backup-root ~/frontier-offline]   # 备份的是拼接后的整份 PDF
+python -m library.cli evict --execute [--backup-root ~/horizon-offline]   # 备份的是拼接后的整份 PDF
 python -m library.cli restore --paper <paper_id>
 python -m library.cli cache prune --max-size 2G
 ```

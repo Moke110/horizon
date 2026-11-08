@@ -5,28 +5,28 @@
   #define NumericVersion "0.1.0.0"
 #endif
 #ifndef PackageDir
-  #error PackageDir must name a built Frontier distribution
+  #error PackageDir must name a built Horizon distribution
 #endif
 [Setup]
 AppId={{FB7ABBA7-2DAB-43D9-8C17-7F164304E919}
-AppName=Frontier
+AppName=Horizon
 AppVersion={#AppVersion}
 VersionInfoVersion={#NumericVersion}
-DefaultDirName={localappdata}\Programs\Frontier
-DefaultGroupName=Frontier
+DefaultDirName={localappdata}\Programs\Horizon
+DefaultGroupName=Horizon
 DisableDirPage=no
 PrivilegesRequired=lowest
 MinVersion=10.0
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 OutputDir=output
-OutputBaseFilename=Frontier-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Horizon-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-AppMutex=Local\FrontierConsoleRunning
+AppMutex=Local\HorizonConsoleRunning
 UninstallDisplayIcon={app}\runtime\python.exe
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
-Name: "{app}\Frontier"; Filename: "{app}\runtime\pythonw.exe"; Parameters: "-X utf8 -m hostrun.desktop --code ""{app}"" --archive ""{app}\frontier-archive"""; WorkingDir: "{app}"
+Name: "{app}\Horizon"; Filename: "{app}\runtime\pythonw.exe"; Parameters: "-X utf8 -m hostrun.desktop --code ""{app}"" --archive ""{app}\horizon-archive"""; WorkingDir: "{app}"

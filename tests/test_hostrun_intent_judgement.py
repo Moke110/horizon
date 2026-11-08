@@ -84,7 +84,7 @@ def _click(card: dict, decision: str = "execute", *, operator: str = OWNER) -> d
     return {
         "event_type": "card.action.trigger",
         "message_id": f"om_{value.get('nonce')}",
-        "action_name": "frontier_confirm_" + decision,
+        "action_name": "horizon_confirm_" + decision,
         "operator_id": operator,
         "token": "tok_1",
         "action_value": json.dumps(value, ensure_ascii=False),
@@ -157,7 +157,7 @@ def test_a_valid_judgement_sends_a_confirmation_card_and_executes_nothing(tmp_pa
     text = _markdown(card)
     assert "change_schedule" in text
     assert "09:30" in text
-    assert "不会修改 frontier 程序本身" in text
+    assert "不会修改 horizon 程序本身" in text
     assert "有效期" in text
     assert {_callback(card, "execute").get("decision"), _callback(card, "cancel").get("decision")} == {
         "execute",

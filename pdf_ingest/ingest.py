@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="pdf_ingest", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("run", help="ingest a manifest of PDFs")
     p.add_argument("--manifest", default=DEFAULT_MANIFEST)

@@ -25,17 +25,17 @@ from hostrun import cli, dist, distribution, install, workspace
 PACKAGE_FILES = {
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
 }
 
-REPO_URL = "https://github.com/Moke110/frontier.git"
+REPO_URL = "https://github.com/Moke110/horizon.git"
 
 
 def _write_tree(root: Path, files: dict[str, str]) -> Path:
@@ -74,9 +74,9 @@ def _seed_checkout(repo: Path) -> Path:
         "common.py",
         "requirements.txt",
         "contracts/README.md",
-        "skills/frontier-run/SKILL.md",
-        "skills/frontier-run/references/installation.md",
-        "skills/frontier-run/references/workflow.md",
+        "skills/horizon-run/SKILL.md",
+        "skills/horizon-run/references/installation.md",
+        "skills/horizon-run/references/workflow.md",
     ):
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -134,12 +134,12 @@ def _install(code: Path, result: dict) -> dict:
 # --------------------------------------------------------- source install lock
 def test_workspace_install_records_a_truthful_source_lock(tmp_path, capsys, monkeypatch):
     workspace_root = tmp_path / "ws"
-    repo = _seed_checkout(workspace_root / "frontier")
-    home = workspace_root / "frontier-archive"
+    repo = _seed_checkout(workspace_root / "horizon")
+    home = workspace_root / "horizon-archive"
     home.mkdir(parents=True)
     result = _acquire_result(workspace_root, repo, home)
     monkeypatch.setattr(cli.workspace_mod, "acquire", lambda *a, **k: result)
-    cli_home = tmp_path / "cli-code" / ".frontier"
+    cli_home = tmp_path / "cli-code" / ".horizon"
 
     exit_code, payload, captured = _cli(
         capsys, cli_home, "install", "workspace", "--root", str(workspace_root)
@@ -148,7 +148,7 @@ def test_workspace_install_records_a_truthful_source_lock(tmp_path, capsys, monk
     assert exit_code == 0
     assert "Traceback" not in captured.err
     assert payload["source_lock"]["distribution"] == "source"
-    lock_path = repo / ".frontier" / "dist.lock.json"
+    lock_path = repo / ".horizon" / "dist.lock.json"
     assert payload["source_lock"]["lock"] == str(lock_path)
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     assert lock["schema_version"] == 1
@@ -172,13 +172,13 @@ def test_workspace_install_records_a_truthful_source_lock(tmp_path, capsys, monk
 
 def test_workspace_install_keeps_the_source_installed_at_on_a_rerun(tmp_path, capsys, monkeypatch):
     workspace_root = tmp_path / "ws"
-    repo = _seed_checkout(workspace_root / "frontier")
-    home = workspace_root / "frontier-archive"
+    repo = _seed_checkout(workspace_root / "horizon")
+    home = workspace_root / "horizon-archive"
     home.mkdir(parents=True)
     dist.write_lock(repo, _source_lock(installed_at="2026-01-01T00:00:00+08:00"))
     result = _acquire_result(workspace_root, repo, home, commit="def456")
     monkeypatch.setattr(cli.workspace_mod, "acquire", lambda *a, **k: result)
-    cli_home = tmp_path / "cli-code" / ".frontier"
+    cli_home = tmp_path / "cli-code" / ".horizon"
 
     exit_code, _, _ = _cli(
         capsys, cli_home, "install", "workspace", "--root", str(workspace_root)
@@ -186,7 +186,7 @@ def test_workspace_install_keeps_the_source_installed_at_on_a_rerun(tmp_path, ca
 
     assert exit_code == 0
     lock = json.loads(
-        (repo / ".frontier" / "dist.lock.json").read_text(encoding="utf-8")
+        (repo / ".horizon" / "dist.lock.json").read_text(encoding="utf-8")
     )
     assert lock["commit"] == "def456"
     assert lock["installed_at"] == "2026-01-01T00:00:00+08:00"
@@ -195,7 +195,7 @@ def test_workspace_install_keeps_the_source_installed_at_on_a_rerun(tmp_path, ca
 # ---------------------------------------------------------------- install report
 def test_report_for_a_source_lock_is_truthful(tmp_path):
     code = tmp_path / "code"
-    home = code / ".frontier"
+    home = code / ".horizon"
     home.mkdir(parents=True)
     dist.write_lock(code, _source_lock(commit="abc123", dirty=True))
 
@@ -210,12 +210,12 @@ def test_report_for_a_source_lock_is_truthful(tmp_path):
     assert release["commit"] == "abc123"
     assert release["dirty"] is True
     assert release["retained"] == []
-    assert release["lock_path"] == str(code / ".frontier" / "dist.lock.json")
+    assert release["lock_path"] == str(code / ".horizon" / "dist.lock.json")
     assert "recorded" not in release
 
 
 def test_report_without_a_lock_keeps_the_unrecorded_source_shape(tmp_path):
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     home.mkdir(parents=True)
 
     release = install.report(home)["release"]
@@ -231,7 +231,7 @@ def test_report_for_a_package_install_does_not_gain_source_fields(tmp_path):
     code = tmp_path / "code"
     assert _install(code, v1)["ok"] is True
 
-    release = install.report(code / ".frontier")["release"]
+    release = install.report(code / ".horizon")["release"]
 
     assert release["distribution"] == "package"
     assert release["version"] == "1.0.0"
@@ -242,7 +242,7 @@ def test_report_for_a_package_install_does_not_gain_source_fields(tmp_path):
 # ---------------------------------------------------------------- install verify
 def test_verify_reports_a_source_install_instead_of_a_mismatch(tmp_path):
     code = tmp_path / "code"
-    (code / ".frontier").mkdir(parents=True)
+    (code / ".horizon").mkdir(parents=True)
     dist.write_lock(code, _source_lock())
 
     payload = dist.verify_install(code)
@@ -251,15 +251,15 @@ def test_verify_reports_a_source_install_instead_of_a_mismatch(tmp_path):
     assert payload["status"] == "source_install"
     assert payload["distribution"] == "source"
     assert payload["commit"] == "abc123"
-    assert payload["lock"] == str(code / ".frontier" / "dist.lock.json")
+    assert payload["lock"] == str(code / ".horizon" / "dist.lock.json")
     assert "发行包清单" in payload["note"]
 
 
 def test_cli_verify_of_a_source_install_exits_zero(tmp_path, capsys):
     code = tmp_path / "cli-code"
-    (code / ".frontier").mkdir(parents=True)
+    (code / ".horizon").mkdir(parents=True)
     dist.write_lock(code, _source_lock())
-    home = code / ".frontier"
+    home = code / ".horizon"
 
     exit_code, payload, captured = _cli(capsys, home, "install", "verify")
 
@@ -276,20 +276,20 @@ def test_rollback_restores_the_retained_release_source_url_and_installed_at(tmp_
     for result in (v1, v2):
         assert _install(code, result)["ok"] is True
     before = json.loads(
-        (code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8")
+        (code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8")
     )
 
     payload = dist.rollback(code)
 
     assert payload["ok"] is True
     lock = json.loads(
-        (code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8")
+        (code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8")
     )
     assert lock["source_url"] == Path(v1["artifact"]["path"]).resolve().as_uri()
     assert lock["source_url"] != Path(v2["artifact"]["path"]).resolve().as_uri()
     assert lock["installed_at"] == before["installed_at"]
 
-    release = install.report(code / ".frontier")["release"]
+    release = install.report(code / ".horizon")["release"]
     assert release["version"] == "1.0.0"
     assert release["source"] == Path(v1["artifact"]["path"]).resolve().as_uri()
 

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from frontier import model
+from horizon import model
 
 
 def _write_temporary_card(home, card_id="card_smoke_20261029_deadbe"):
@@ -18,7 +18,7 @@ def _write_temporary_card(home, card_id="card_smoke_20261029_deadbe"):
     return card
 
 
-def test_plan_reads_cards_not_frontier_yaml(kl_home):
+def test_plan_reads_cards_not_horizon_yaml(kl_home):
     plan = model.plan(kl_home, day="2026-10-20", days=7)
     assert plan["window"] == {"start": "2026-10-14", "end": "2026-10-20"}
     by_id = {q["query_id"]: q for q in plan["queries"]}
@@ -32,8 +32,8 @@ def test_plan_reads_cards_not_frontier_yaml(kl_home):
     assert epmc["annotation"].startswith("血红素合成")
     assert epmc["card_id"] == "card_hmbs"
 
-    # The retirement is real: retrieval no longer needs frontier.yaml.
-    (kl_home / "frontier.yaml").unlink(missing_ok=True)
+    # The retirement is real: retrieval no longer needs horizon.yaml.
+    (kl_home / "horizon.yaml").unlink(missing_ok=True)
     assert model.plan(kl_home, day="2026-10-20", days=7)["queries"]
 
 
@@ -56,7 +56,7 @@ def test_load_cards_rejects_an_archive_of_only_temporary_cards(tmp_path):
     home = tmp_path / "home"
     _write_temporary_card(home)
 
-    with pytest.raises(model.FrontierError, match="no knowledge cards"):
+    with pytest.raises(model.HorizonError, match="no knowledge cards"):
         model.load_cards(home)
 
 
@@ -69,7 +69,7 @@ def test_validate_can_opt_in_to_temporary_cards(tmp_path):
     assert [row["card_id"] for row in result["cards"]] == [card["id"]]
 
     # The formal command still treats the archive as empty.
-    with pytest.raises(model.FrontierError, match="no knowledge cards"):
+    with pytest.raises(model.HorizonError, match="no knowledge cards"):
         model.validate(home)
 
 
@@ -98,7 +98,7 @@ def test_record_updates_ema_and_weight(kl_home):
 
 def test_multi_word_ontology_term_is_not_an_exact_phrase():
     """Recall must follow the concept, not one literal phrase (live 0-hit bug)."""
-    from frontier import model
+    from horizon import model
 
     query = model._arxiv_query(["single-cell perturbation prediction benchmark"], "2026-10-23", "2026-10-29")
 
@@ -108,7 +108,7 @@ def test_multi_word_ontology_term_is_not_an_exact_phrase():
 
 
 def test_single_word_ontology_term_keeps_its_quoted_form():
-    from frontier import model
+    from horizon import model
 
     query = model._epmc_query(["HMBS"], "2026-10-23", "2026-10-29")
 

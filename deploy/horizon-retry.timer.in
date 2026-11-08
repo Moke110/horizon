@@ -1,12 +1,12 @@
 [Unit]
-Description=frontier pending-push retry every 2 minutes
+Description=horizon pending-push retry every 2 minutes
 
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=2min
 # 不补跑；只在系统运行时周期性检查。
 Persistent=false
-Unit=frontier-retry.service
+Unit=horizon-retry.service
 
 [Install]
 WantedBy=timers.target

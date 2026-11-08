@@ -1,11 +1,11 @@
 [Unit]
-Description=frontier daily retrieval at 08:00 Asia/Shanghai
+Description=horizon daily retrieval at 08:00 Asia/Shanghai
 
 [Timer]
 OnCalendar=*-*-* 08:00:00 Asia/Shanghai
 # 不在机器关机后补跑；到点才跑，避免安装/重启时立刻触发。
 Persistent=false
-Unit=frontier-daily.service
+Unit=horizon-daily.service
 
 [Install]
 WantedBy=timers.target

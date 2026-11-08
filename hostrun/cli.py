@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--archive",
-        help="archive directory for originals/ and pushes/ (default: <code>/../frontier-archive)",
+        help="archive directory for originals/ and pushes/ (default: <code>/../horizon-archive)",
     )
     parser.add_argument("--offline", action="store_true", help="use JSON Base/Drive fixtures")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -136,9 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--uv", dest="uv_path")
     t.add_argument("--python-version", default=workspace_mod.DEFAULT_PYTHON)
     t.add_argument("--clear", action="store_true", help="rebuild a missing or broken data-root interpreter")
-    sk = isub.add_parser("skill", help="register the frontier-run launcher for the host")
+    sk = isub.add_parser("skill", help="register the horizon-run launcher for the host")
     sk.add_argument("--root", required=True)
-    sk.add_argument("--target", required=True, help="host skill directory for frontier-run")
+    sk.add_argument("--target", required=True, help="host skill directory for horizon-run")
     sk.add_argument("--dry-run", action="store_true")
     loc = isub.add_parser("locate", help="print the nearest workspace record")
     loc.add_argument("--start")
@@ -295,7 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
             default=2.0,
             help="seconds to wait for the console to consume the request (default 2)",
         )
-    inst = csub.add_parser("install", help="prepare the bundled Frontier Agent and console launcher")
+    inst = csub.add_parser("install", help="prepare the bundled Horizon Agent and console launcher")
     inst.add_argument("--python", dest="python_path", help="private business interpreter")
     sub.add_parser("status", help="one snapshot of executor, queue, feedback and install")
     return parser

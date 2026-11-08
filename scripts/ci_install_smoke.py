@@ -10,11 +10,11 @@ against separate temporary directories:
     install verify
     console install (bundled Pi Agent)
     install skill    --root <code> --target <temp skills dir>
-    <code>\\bin\\frontier.cmd --code <code> --archive <archive> --help
+    <code>\\bin\\horizon.cmd --code <code> --archive <archive> --help
     install report
 
 The wrapper check (``--check-wrapper``) is the real "no system Python" claim:
-it executes the installed ``bin\\frontier.cmd`` through ``cmd.exe`` with a
+it executes the installed ``bin\\horizon.cmd`` through ``cmd.exe`` with a
 sanitized environment (PATH is only ``%SystemRoot%\\System32;%SystemRoot%`` and
 no ``PYTHONHOME``/``PYTHONPATH``/venv variable is inherited) and requires exit
 code 0 plus ``usage`` on stdout.  A failure keeps the captured stdout/stderr in
@@ -264,7 +264,7 @@ def run_wrapper_check(
     *,
     timeout: float = WRAPPER_TIMEOUT_SECONDS,
 ) -> dict:
-    """Execute the installed ``bin/frontier.cmd --help`` with a sanitized env.
+    """Execute the installed ``bin/horizon.cmd --help`` with a sanitized env.
 
     Refuses (as a ``wrapper`` step failure) when the installed tree has no
     launcher or no bundled interpreter, so an offline/synthetic runtime can
@@ -386,7 +386,7 @@ def run_smoke(
     _empty_dir(code_dir, "code")
     _empty_dir(skills_dir, "skills-target")
     if bootstrap is None:
-        bootstrap_dir = Path(tempfile.mkdtemp(prefix="frontier-install-smoke-"))
+        bootstrap_dir = Path(tempfile.mkdtemp(prefix="horizon-install-smoke-"))
     else:
         bootstrap_dir = Path(bootstrap).expanduser().resolve()
         _empty_dir(bootstrap_dir, "bootstrap")
@@ -580,7 +580,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skills-target",
         required=True,
-        help="empty host skills directory for the frontier-run pointer",
+        help="empty host skills directory for the horizon-run pointer",
     )
     parser.add_argument(
         "--bootstrap",
@@ -600,7 +600,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-wrapper",
         action="store_true",
         help=(
-            "execute the installed bin\\frontier.cmd with a sanitized PATH and "
+            "execute the installed bin\\horizon.cmd with a sanitized PATH and "
             "assert it prints usage (proves the bundled runtime needs no system Python)"
         ),
     )

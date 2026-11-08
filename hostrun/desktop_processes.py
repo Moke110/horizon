@@ -51,7 +51,7 @@ def install():
     # Non-inheritable handle lives until this GUI process exits. Windows then
     # closes it and kills every descendant, even on crash / forced termination.
     _job = handle
-    os.environ['FRONTIER_DESKTOP'] = '1'
+    os.environ['HORIZON_DESKTOP'] = '1'
     hide_children()
 
 

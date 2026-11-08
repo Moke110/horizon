@@ -191,7 +191,7 @@ def test_an_empty_message_is_not_an_instruction():
     assert route["action"] == "empty"
 
 
-@pytest.mark.parametrize("phrase", ["初始化", "/frontier-init", "更新知识库", "/frontier-update-kb"])
+@pytest.mark.parametrize("phrase", ["初始化", "/horizon-init", "更新知识库", "/horizon-update-kb"])
 def test_console_only_phrases_are_refused_with_the_console_pointer(phrase):
     route = operations.route_text(phrase)
     assert route["action"] == "refused"
@@ -386,7 +386,7 @@ def test_relocate_archive_resolves_and_records_the_new_location(tmp_path):
             "remember": lambda resolved: calls.append(resolved),
             "ensure": lambda resolved: ensured.append(resolved),
             "ensure_script": lambda code, archive, python: scripts.append((Path(code), archive))
-            or {"ok": True, "path": "bin/frontier-console.cmd"},
+            or {"ok": True, "path": "bin/horizon-console.cmd"},
         },
     )
 

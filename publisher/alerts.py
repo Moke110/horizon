@@ -34,11 +34,11 @@ def _size(value) -> str:
 def format_alert(alert: dict) -> str:
     level = alert.get("level")
     if level == "full":
-        head = "【frontier 库已满】"
+        head = "【horizon 库已满】"
     elif level == "warn":
-        head = "【frontier 库容量提醒】"
+        head = "【horizon 库容量提醒】"
     else:
-        head = "【frontier 库状态】"
+        head = "【horizon 库状态】"
     candidates = alert.get("candidates") or {}
     lines = [
         f"{head}{alert.get('percent')}% "

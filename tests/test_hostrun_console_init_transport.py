@@ -1,4 +1,4 @@
-"""Offline tests for the ``/frontier-init`` transport test (issue #86, ADR 0009 §7).
+"""Offline tests for the ``/horizon-init`` transport test (issue #86, ADR 0009 §7).
 
 The step sends one test HTML message and one single-button card and waits for the
 owner's card callback.  Every external effect is injected: a fake sender records
@@ -45,7 +45,7 @@ def ready_runner():
 def make_home(tmp_path: Path):
     """A paused console whose archive/agent/lark steps are already recorded."""
     code = tmp_path / "code"
-    home = code / ".frontier"
+    home = code / ".horizon"
     (home / "install").mkdir(parents=True)
     dsh = tmp_path / "bin" / "dsh.cmd"
     dsh.parent.mkdir(parents=True)
@@ -64,9 +64,9 @@ def make_home(tmp_path: Path):
     console_init.record_step(
         home,
         "archive",
-        {"path": str(tmp_path / "frontier-archive"), "default": True, "outside_code": True},
+        {"path": str(tmp_path / "horizon-archive"), "default": True, "outside_code": True},
     )
-    console_init.record_step(home, "agent", {"runtime": "frontier-pi", "provider": "test", "model": "test"})
+    console_init.record_step(home, "agent", {"runtime": "horizon-pi", "provider": "test", "model": "test"})
     console_init.record_step(home, "lark", {"cli": {"path": str(cli), "source": "recorded"}})
     record_completion_steps(home)
     console.write_state(home, service="paused", paused=True)
@@ -80,7 +80,7 @@ def record_completion_steps(home: Path) -> None:
         "naming",
         {
             "names": facilities.default_names(),
-            "base": {"token": "bascn_test", "url": "u", "name": "frontier 知识库"},
+            "base": {"token": "bascn_test", "url": "u", "name": "horizon 知识库"},
             "tables": {},
             "folders": {"root": "r", "source": "s", "push": "p"},
             "reused": False,
@@ -580,7 +580,7 @@ def test_default_transport_sender_writes_the_html_file_and_sends_it_as_a_file(
         "user_open_id",
         lambda cli, runner=None: {"ok": True, "open_id": "ou_user"},
     )
-    lines = iter(["/frontier-init", "/exit"])
+    lines = iter(["/horizon-init", "/exit"])
     out = io.StringIO()
 
     result = console.serve(

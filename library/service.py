@@ -44,7 +44,7 @@ SECTIONS = (
 )
 SECTION_KEYS = [key for key, _ in SECTIONS]
 
-DEFAULT_BACKUP_ROOT = "~/frontier-offline"
+DEFAULT_BACKUP_ROOT = "~/horizon-offline"
 ALERT_COOLDOWN_HOURS = 24
 
 # Lark's drive API rejects files above the tenant's per-file limit (20 MB on
@@ -332,7 +332,7 @@ class Library:
         backup = f"{DEFAULT_BACKUP_ROOT}/{today()}"
         if count:
             return (
-                f"清理 frontier 原文库：把 Base「原文」表中 状态=在库、"
+                f"清理 horizon 原文库：把 Base「原文」表中 状态=在库、"
                 f"{'未被「报道」引用的 ' if free else ''}{count} 篇（约 {size_mb} MB）"
                 f"下载到 `{backup}/`，逐篇校验 md5 一致后，把状态改为 `已离线归档` "
                 f"并填写备份位置，再从飞书云盘删除文件；"
@@ -340,7 +340,7 @@ class Library:
                 f"上限 {usage['limit_bytes'] // 1024**3} GB）。"
             )
         return (
-            "清理 frontier 原文库：当前没有可清理的在库原文；"
+            "清理 horizon 原文库：当前没有可清理的在库原文；"
             "先在 Base「配置」表提高容量上限，或手动归档后收缩原文库。"
         )
 

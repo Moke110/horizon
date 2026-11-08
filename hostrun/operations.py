@@ -11,7 +11,7 @@ ADR 0009 §4/§5 make the Feishu surface safe by construction:
   prefix/fuzzy matching, no punctuation stripping.  A near miss is *not*
   executed; it is handed to the intent-judgement seam (#83);
 - the **excluded** table names the actions that may never be triggered from
-  Feishu (``init``, ``update_kb``, ``stop_service`` and any change to frontier's
+  Feishu (``init``, ``update_kb``, ``stop_service`` and any change to horizon's
   own code/configuration).  They are answered with the console pointer or an
   explicit no-permission receipt;
 - **execution accepts an operation id and validated parameters only**.  The raw
@@ -38,11 +38,11 @@ DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "contracts" / "ope
 
 CONSOLE_ONLY_TEXT = "该操作不在飞书操作白名单内，请在控制台执行。"
 NO_PERMISSION_TEXT = (
-    "无权限：该操作不在操作白名单内，frontier 不接受通过飞书修改自身程序、配置或权限的请求。"
+    "无权限：该操作不在操作白名单内，horizon 不接受通过飞书修改自身程序、配置或权限的请求。"
 )
 INTENT_PENDING_TEXT = "已收到，正在判断意图。"
 EMPTY_MESSAGE_TEXT = "消息为空，未执行任何操作。"
-TEST_MESSAGE_TEXT = "frontier 测试消息：飞书通道可用。"
+TEST_MESSAGE_TEXT = "horizon 测试消息：飞书通道可用。"
 DEFAULT_SUCCESS_TEXT = "操作已完成。"
 DEFAULT_FAILURE_TEXT = "操作未完成。"
 
@@ -351,7 +351,7 @@ def execute(
 
 # ------------------------------------------------------------------- executors
 def status(home: Path, params: dict, context: dict) -> dict:
-    """Render the same snapshot ``/frontier-status`` uses."""
+    """Render the same snapshot ``/horizon-status`` uses."""
     from hostrun import console
 
     snapshot = console.status_snapshot(Path(home), status=context.get("status"))
@@ -390,7 +390,7 @@ def push_again(home: Path, params: dict, context: dict) -> dict:
         if reason == "knowledge_not_ready":
             text = (
                 "每日推送被知识库门禁挡住：待初始化知识库；"
-                "请在控制台执行 /frontier-update-kb 完成知识库初始化。"
+                "请在控制台执行 /horizon-update-kb 完成知识库初始化。"
             )
         return {
             "ok": False,

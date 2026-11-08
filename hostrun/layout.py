@@ -8,8 +8,8 @@ ADR 0009 retired the single data root in two:
 - the **archive directory** holds only ``originals/`` (source documents) and
   ``pushes/`` (push artifacts).
 
-Runtime state always lives in ``<code>/.frontier`` and the archive location is
-the one last resolved for that code directory (``<code>/.frontier/layout.json``),
+Runtime state always lives in ``<code>/.horizon`` and the archive location is
+the one last resolved for that code directory (``<code>/.horizon/layout.json``),
 so no command or module derives a location on its own.  The legacy ``--home``
 flag and its "data root" are gone: passing it is refused with a migration
 pointer instead of silently mapping one old tree onto the new model.
@@ -27,19 +27,19 @@ from pathlib import Path
 from common import RUNTIME_DIRNAME, RUNTIME_ENV, now, read_json, write_json
 from hostrun.base import HostRunError
 
-ARCHIVE_DIRNAME = "frontier-archive"
+ARCHIVE_DIRNAME = "horizon-archive"
 LAYOUT_FILENAME = "layout.json"
 
 # Environment handoff for child processes started by a resolved command: the
 # console and publisher spawn module commands without repeating the location
 # flags, and the child must resolve exactly the same two directories.
-ENV_CODE = "FRONTIER_CODE"
-ENV_ARCHIVE = "FRONTIER_ARCHIVE"
+ENV_CODE = "HORIZON_CODE"
+ENV_ARCHIVE = "HORIZON_ARCHIVE"
 ENV_RUNTIME = RUNTIME_ENV
 
 RETIRED_HOME_FLAG = "--home"
 RETIRED_HOME_MESSAGE = (
-    "--home 已退役：运行时区固定为 <代码目录>/.frontier，资料目录用 --archive 指定。"
+    "--home 已退役：运行时区固定为 <代码目录>/.horizon，资料目录用 --archive 指定。"
     "既有安装请先运行 python -m hostrun.cli --code <代码目录> --archive <资料目录> "
     "install migrate 迁移，再用 --code 与 --archive 指定位置"
 )
@@ -88,7 +88,7 @@ def repo_root() -> Path:
 
 
 def default_archive(code: str | Path) -> Path:
-    """``<root>/frontier-archive``, the archive sibling of a code checkout."""
+    """``<root>/horizon-archive``, the archive sibling of a code checkout."""
     return Path(code).expanduser().resolve().parent / ARCHIVE_DIRNAME
 
 
@@ -223,7 +223,7 @@ def export(resolved: dict) -> None:
 def handoff(runtime: str | Path) -> dict[str, str]:
     """The environment a parent hands a spawned module command.
 
-    Runtime state is by contract ``<code>/.frontier``, so the runtime area's
+    Runtime state is by contract ``<code>/.horizon``, so the runtime area's
     parent is the code directory; the archive is whatever that code directory
     resolved to.  Used by the Console's Agent runs and the publisher so a child
     process resolves exactly the same two locations without repeating the flags.

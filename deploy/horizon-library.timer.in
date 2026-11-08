@@ -1,11 +1,11 @@
 [Unit]
-Description=frontier library reconcile every day at 03:30
+Description=horizon library reconcile every day at 03:30
 
 [Timer]
 OnBootSec=15min
 OnCalendar=*-*-* 03:30:00
 Persistent=true
-Unit=frontier-library.service
+Unit=horizon-library.service
 
 [Install]
 WantedBy=timers.target

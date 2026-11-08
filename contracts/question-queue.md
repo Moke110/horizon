@@ -2,9 +2,9 @@
 
 > 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
 
-实现契约：用于字段、状态机和兼容行为，不是本地任务规格。开发计划与验收以 GitHub Issues 为准；现行宿主调度与持久反馈见 `contracts/README.md` §12 和 `skills/frontier-run/SKILL.md`。现行常驻组件是用户手动启停的控制台（[ADR 0009](../docs/adr/0009-console-as-service.md)）；下文旧 listener / systemd 路径仅描述兼容实现，不授权启动旧部署。
+实现契约：用于字段、状态机和兼容行为，不是本地任务规格。开发计划与验收以 GitHub Issues 为准；现行宿主调度与持久反馈见 `contracts/README.md` §12 和 `skills/horizon-run/SKILL.md`。现行常驻组件是探索者手动启停的控制台（[ADR 0009](../docs/adr/0009-console-as-service.md)）；下文旧 listener / systemd 路径仅描述兼容实现，不授权启动旧部署。
 
-- 票：[统一问题队列的状态机与闸门 #10](https://github.com/Moke110/frontier/issues/10)
+- 票：[统一问题队列的状态机与闸门 #10](https://github.com/Moke110/horizon/issues/10)
 - 状态：定稿（供 #16 / #17 / #18 实现）
 - 术语：见 `GLOSSARY.md`；卡片/命题契约见 `contracts/README.md`
 
@@ -23,7 +23,7 @@
 7. 知识库只在「同意全部」时写入；拒绝只落决定，不写 archive。
 8. `queue/state.json` 的所有变更必须在 `queue/lock` 排他锁内完成。
 9. 同一时刻最多一个「待推请求」在执行（start lease）。
-10. `proposition_review` 题在综述 HTML 生成前是 `pending` + `payload.ready=false`：闸住检索，但不发给用户；生成后 `review-ready` 置为 ready 才可 active。
+10. `proposition_review` 题在综述 HTML 生成前是 `pending` + `payload.ready=false`：闸住检索，但不发给探索者；生成后 `review-ready` 置为 ready 才可 active。
 
 ## 2. 文件与所有权
 
@@ -43,7 +43,7 @@
 - **queue 模块是 `state.json` / `request.json` 的唯一写者**。publisher、trigger、定时器都通过 `queue.cli`（或等价函数）读写。
 - `events.jsonl` 只追加，用于审计与重建；重建结果必须与 `state.json` 一致。
 - `start.lock` 里存 `{owner, started_at, lease_until}`；**租约 = `max(10 分钟, agent timeout + 5 分钟)`**（默认 `1800s` → 35 分钟）。租约必须覆盖整趟检索/写作，否则兜底重试会在同一个 job 还在跑时抢跑；只有进程组真正死掉、租约过期后才允许接管。
-- 兜底重试：`frontier-retry.timer` 每 2 分钟跑一次 `trigger.cli run-request --quiet`。没有 request / 租约有效 / job lock 被占 / 队列非空时立即返回，不写日志；租约过期且 job lock 空闲时接管。job lock 竞争**不得**释放别人的租约或累加 attempts。
+- 兜底重试：`horizon-retry.timer` 每 2 分钟跑一次 `trigger.cli run-request --quiet`。没有 request / 租约有效 / job lock 被占 / 队列非空时立即返回，不写日志；租约过期且 job lock 空闲时接管。job lock 竞争**不得**释放别人的租约或累加 attempts。
 
 ## 3. 队列项 schema
 
@@ -188,7 +188,7 @@ writer 的同一批 proposals 按目标归组：
 | 飞书发送失败 | 回 `pending` 并退避；3 次后 `failed`，闸住队列并告警 |
 | 回调重复（飞书重试） | 幂等键命中，返回 ok |
 | 回调乱序（更新题先到） | 更新题仍是 `pending`，返回 `ok:false, reason=not_active`；不推进 |
-| 长时间未答 | 不跳过、不超时丢弃；24h 后发一次提醒（同题、同 message 语义），仍等用户 |
+| 长时间未答 | 不跳过、不超时丢弃；24h 后发一次提醒（同题、同 message 语义），仍等探索者 |
 | archive 写入部分失败 | 该题 `failed`；archive 以 `group_id=queue_item_id` 做幂等，重试不会重复追加 history |
 | queue/state.json 损坏 | 从 `events.jsonl` 重建；重建失败则拒绝启动并告警，不猜测 |
 | 卡片或命题在同意前被删除 | 校验失败 → `failed`，提示人工处理；不自动降级为拒绝 |
@@ -234,7 +234,7 @@ writer 的同一批 proposals 按目标归组：
 6. worker 执行检索→写作→推送；新 push 入队时：
    - 若 request 的 `after_start=false` → 清除 request（本次请求已满足）；
    - 若 `after_start=true` → 保留一条新 request（`requested_at=now`，`sources` 沿用），等本轮队列清空后再启动。
-7. 检索失败 → 释放租约，`attempts+1`，保留 request；由 `frontier-retry.timer` 每 2 分钟重试（不设次数上限，但每次失败都写 `request_failed` 并告警）。
+7. 检索失败 → 释放租约，`attempts+1`，保留 request；由 `horizon-retry.timer` 每 2 分钟重试（不设次数上限，但每次失败都写 `request_failed` 并告警）。
 8. **完成校验**：agent exit 0 不等于推送成功。worker 结束后比对 `archive/pushes` 与 `publisher/messages.jsonl`：
    - 没有新 push → `reason=no_push_output`，按失败处理；
    - 有新 push 但没有对应的 `push_file` 消息 → `reason=push_not_sent:<id>`（典型是 `duplicate_paper` 被拒），按失败处理并告警。
@@ -245,7 +245,7 @@ writer 的同一批 proposals 按目标归组：
 - 评分/更新回调处理完后，若 `queue` 已空且没有 `failed`，自动调用 `try_start()`。
 - 手动监听器：先 `request_push("manual", card?)`，再 `try_start()`；若 `queue_busy` 回复「已排队，答完当前问题自动推送」。
 - 每日 08:00：`request_push("scheduled")` + `try_start()`，同一套合并与闸门。
-- 兜底重试：`frontier-retry.timer` 每 2 分钟 `run-request --quiet`；只在「有 request + 租约过期 + job lock 空闲 + 队列空」时真正启动。
+- 兜底重试：`horizon-retry.timer` 每 2 分钟 `run-request --quiet`；只在「有 request + 租约过期 + job lock 空闲 + 队列空」时真正启动。
 - 检索启动与队列写入使用同一把 `queue/lock` 的短临界区；实际检索在锁外执行。
 
 ## 9. 边界用例表
@@ -273,7 +273,7 @@ writer 的同一批 proposals 按目标归组：
 | 15 | 检索进行中又来手动请求 | 记 `after_start=true`；当前推送完成后，新一轮队列清空再启动 |
 | 16 | 检索完成但没有新论文 | 清 request；不建队列；回复「今天没有新的」 |
 | 17 | 检索 worker 崩溃，租约过期 | 兜底 timer 接管；request 保留，attempts+1 |
-| 18 | 用户 24h 未答题 | 发一次提醒；不跳过、不超时丢弃 |
+| 18 | 探索者 24h 未答题 | 发一次提醒；不跳过、不超时丢弃 |
 | 19 | 队列为空且无 request | idle；不产生任何发送 |
 | 20 | `state.json` 与 events 不一致 | 以 events 重建；重建失败拒绝服务并告警 |
 | 21 | worker 还在跑（租约未过期），兜底 timer 触发 | 直接返回 `busy/starting`；不改 request、不累加 attempts |
@@ -292,7 +292,7 @@ writer 的同一批 proposals 按目标归组：
 ## 11. 现有队列实现限制
 
 - 不做优先级/插队、批量答题、自动跳过、自动审批。
-- 不做多用户/多人同时答题；owner 单人。
+- 不做多探索者/多人同时答题；owner 单人。
 - 评分不反哺排序或权重（本阶段）。
 
 ## 12. 实现状态
@@ -303,7 +303,7 @@ writer 的同一批 proposals 按目标归组：
   publisher 两处都解析，`message_id` 仍用于路由。
 - 2026-10-21 真实验证：评分卡 → 更新卡（`reject_all`）→ 队列清空；拒绝未写 archive。
   测试数据已从 `~/knowledge-loop` 清理。
-- 每日 08:00：`frontier-daily.timer` → `trigger.cli scheduled`；队列非空只写 `request.json`，
-  队列清空后评分回调拉起 `trigger.cli run-request`。定时器不要加 `Requires=frontier-daily.service`
+- 每日 08:00：`horizon-daily.timer` → `trigger.cli scheduled`；队列非空只写 `request.json`，
+  队列清空后评分回调拉起 `trigger.cli run-request`。定时器不要加 `Requires=horizon-daily.service`
   （启动 timer 会立刻拉起 service），`Persistent=false` 避免安装/重启时补跑。
 

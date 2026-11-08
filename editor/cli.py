@@ -17,7 +17,7 @@ from hostrun.base import HostRunError
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="editor", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("fit", help="learn checkpoint/source preference from ratings")

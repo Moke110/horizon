@@ -77,12 +77,12 @@ def test_legacy_listener_config_is_mapped_onto_agent_run(tmp_path):
         {
             "schema_version": 1,
             "listener": {
-                "start_command": "C:/old/frontier-listener.cmd",
-                "stop_command": "C:/old/frontier-listener-stop.cmd",
+                "start_command": "C:/old/horizon-listener.cmd",
+                "stop_command": "C:/old/horizon-listener-stop.cmd",
                 "dsh_args": ["--patch", "C:/overlay.yml"],
                 "feedback_lease_minutes": 30,
             },
-            "schedules": {"enabled": True, "tasks": [{"id": "frontier-daily"}]},
+            "schedules": {"enabled": True, "tasks": [{"id": "horizon-daily"}]},
         },
     )
 

@@ -1,4 +1,4 @@
-"""Offline tests for the ``/frontier-init`` Lark CLI step (issue #85, ADR 0009 §7).
+"""Offline tests for the ``/horizon-init`` Lark CLI step (issue #85, ADR 0009 §7).
 
 Everything goes through the documented seams: an injected subprocess ``runner``
 (fake ``lark-cli`` and npm), an injectable private installer, a fake clock and a
@@ -155,7 +155,7 @@ class Clock:
 def make_home(tmp_path: Path, *, recorded_cli: bool = True, service: str = "paused"):
     """A code directory whose archive and agent steps are already recorded."""
     code = tmp_path / "code"
-    home = code / ".frontier"
+    home = code / ".horizon"
     (home / "install").mkdir(parents=True)
     dsh = tmp_path / "bin" / "dsh.cmd"
     dsh.parent.mkdir(parents=True)
@@ -180,9 +180,9 @@ def make_home(tmp_path: Path, *, recorded_cli: bool = True, service: str = "paus
         },
     )
     console_init.record_step(
-        home, "archive", {"path": str(tmp_path / "frontier-archive"), "default": True, "outside_code": True}
+        home, "archive", {"path": str(tmp_path / "horizon-archive"), "default": True, "outside_code": True}
     )
-    console_init.record_step(home, "agent", {"runtime": "frontier-pi", "provider": "test", "model": "test"})
+    console_init.record_step(home, "agent", {"runtime": "horizon-pi", "provider": "test", "model": "test"})
     record_completion_steps(home)
     if service != "stopped":
         console.write_state(home, service=service, paused=service == "paused")
@@ -196,7 +196,7 @@ def record_completion_steps(home: Path) -> None:
         "naming",
         {
             "names": facilities.default_names(),
-            "base": {"token": "bascn_test", "url": "u", "name": "frontier 知识库"},
+            "base": {"token": "bascn_test", "url": "u", "name": "horizon 知识库"},
             "tables": {},
             "folders": {"root": "r", "source": "s", "push": "p"},
             "reused": False,
@@ -369,13 +369,13 @@ def test_a_missing_cli_is_privately_installed_into_the_code_runtime_area(tmp_pat
 
     result, rendered = lark_run(home, [], fake=fake)
 
-    launcher = code / ".frontier" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
+    launcher = code / ".horizon" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
     assert result["ok"] is True
     assert "私有安装" in rendered
     assert launcher.is_file()
     assert fake.install_calls(), "a private npm install was expected"
     argv = fake.install_calls()[0]
-    assert str(code / ".frontier" / "lark") in argv
+    assert str(code / ".horizon" / "lark") in argv
     config = json.loads((home / "install" / "config.json").read_text(encoding="utf-8"))
     assert config["paths"]["lark_cli"] == str(launcher)
     state = json.loads(console_init.state_path(home).read_text(encoding="utf-8"))

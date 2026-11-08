@@ -1,8 +1,8 @@
 """Retention, rollback and the install report's release block.
 
 Ticket #96 builds on the #94 install seam: the active tree stays in the code
-root, one previous release is retained under ``<code>/.frontier/releases/<v>``
-and ``<code>/.frontier/current`` names the active version.  Every test builds
+root, one previous release is retained under ``<code>/.horizon/releases/<v>``
+and ``<code>/.horizon/current`` names the active version.  Every test builds
 real distribution packages and works only through the public install/rollback
 report seams; nothing reaches the network.
 """
@@ -23,12 +23,12 @@ from hostrun import cli, dist, distribution, install
 PACKAGE_FILES = {
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
 }
@@ -85,16 +85,16 @@ def _manifest(result: dict) -> dict:
 
 
 def _lock(code: Path) -> dict:
-    return json.loads((code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8"))
+    return json.loads((code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8"))
 
 
 def _current(code: Path) -> str:
-    return (code / ".frontier" / "current").read_text(encoding="utf-8").strip()
+    return (code / ".horizon" / "current").read_text(encoding="utf-8").strip()
 
 
 def _release_record(code: Path, version: str) -> dict:
     return json.loads(
-        (code / ".frontier" / "releases" / version / "release.json").read_text(
+        (code / ".horizon" / "releases" / version / "release.json").read_text(
             encoding="utf-8"
         )
     )
@@ -132,9 +132,9 @@ def test_upgrade_retains_the_outgoing_version_and_points_at_the_new_one(tmp_path
     assert lock["version"] == "2.0.0"
     assert lock["previous_version"] == "1.0.0"
     assert lock["artifact_sha256"] == v2["artifact"]["sha256"]
-    assert not (code / ".frontier" / "releases" / "2.0.0").exists()
+    assert not (code / ".horizon" / "releases" / "2.0.0").exists()
 
-    retained = code / ".frontier" / "releases" / "1.0.0"
+    retained = code / ".horizon" / "releases" / "1.0.0"
     v1_manifest = _manifest(v1)
     for row in v1_manifest["files"]:
         assert (retained / row["path"]).read_bytes() == (
@@ -226,7 +226,7 @@ def test_runtime_state_and_knowledge_survive_an_upgrade(tmp_path):
     code = tmp_path / "code"
     assert _install(code, v1)["ok"] is True
 
-    runtime = code / ".frontier"
+    runtime = code / ".horizon"
     (runtime / "install").mkdir(parents=True, exist_ok=True)
     (runtime / "knowledge").mkdir(parents=True, exist_ok=True)
     state_bytes = b'{"schema_version": 1, "steps": {}}\n'
@@ -248,7 +248,7 @@ def test_installing_a_third_version_prunes_the_oldest_retained_release(tmp_path)
     for result in (v1, v2, v3):
         assert _install(code, result)["ok"] is True
 
-    releases = code / ".frontier" / "releases"
+    releases = code / ".horizon" / "releases"
     assert sorted(path.name for path in releases.iterdir()) == ["2.0.0"]
     assert not (releases / "1.0.0").exists()
     record = _release_record(code, "2.0.0")
@@ -265,9 +265,9 @@ def test_idempotent_reinstall_does_not_rewrite_lock_current_or_retention(tmp_pat
     for result in (v1, v2):
         assert _install(code, result)["ok"] is True
 
-    lock_path = code / ".frontier" / "dist.lock.json"
-    current_path = code / ".frontier" / "current"
-    release_path = code / ".frontier" / "releases" / "1.0.0" / "release.json"
+    lock_path = code / ".horizon" / "dist.lock.json"
+    current_path = code / ".horizon" / "current"
+    release_path = code / ".horizon" / "releases" / "1.0.0" / "release.json"
     lock_bytes = lock_path.read_bytes()
     current_bytes = current_path.read_bytes()
     release_bytes = release_path.read_bytes()
@@ -285,7 +285,7 @@ def test_idempotent_reinstall_does_not_rewrite_lock_current_or_retention(tmp_pat
 
 # ---------------------------------------------------------------- rollback
 def _snapshot(code: Path) -> dict:
-    root = code / ".frontier"
+    root = code / ".horizon"
     return {
         "lock": (root / "dist.lock.json").read_bytes(),
         "current": (root / "current").read_bytes(),
@@ -293,7 +293,7 @@ def _snapshot(code: Path) -> dict:
         "files": {
             path.relative_to(code).as_posix(): path.read_bytes()
             for path in sorted(code.rglob("*"))
-            if path.is_file() and ".frontier" not in path.relative_to(code).parts
+            if path.is_file() and ".horizon" not in path.relative_to(code).parts
         },
         "retained": sorted(path.name for path in (root / "releases").iterdir()),
     }
@@ -306,7 +306,7 @@ def test_rollback_restores_the_retained_version_and_its_lock(tmp_path):
     for result in (v1, v2):
         assert _install(code, result)["ok"] is True
 
-    runtime = code / ".frontier"
+    runtime = code / ".horizon"
     (runtime / "install").mkdir(parents=True, exist_ok=True)
     (runtime / "knowledge").mkdir(parents=True, exist_ok=True)
     state_bytes = b'{"schema_version": 1, "steps": {"host": "ok"}}\n'
@@ -373,7 +373,7 @@ def test_second_rollback_returns_to_the_later_version(tmp_path):
     )
     assert dist.verify_install(code)["status"] == "verified"
     assert sorted(
-        path.name for path in (code / ".frontier" / "releases").iterdir()
+        path.name for path in (code / ".horizon" / "releases").iterdir()
     ) == ["1.0.0"]
 
 
@@ -400,7 +400,7 @@ def test_rollback_with_a_corrupt_retained_manifest_blocks_without_changes(tmp_pa
     for result in (v1, v2):
         assert _install(code, result)["ok"] is True
     before = _snapshot(code)
-    retained_manifest = code / ".frontier" / "releases" / "1.0.0" / "manifest.json"
+    retained_manifest = code / ".horizon" / "releases" / "1.0.0" / "manifest.json"
     retained_manifest.write_bytes(retained_manifest.read_bytes() + b"\n")
 
     payload = dist.rollback(code)
@@ -418,7 +418,7 @@ def test_rollback_with_a_tampered_retained_file_blocks_without_changes(tmp_path)
     for result in (v1, v2):
         assert _install(code, result)["ok"] is True
     before = _snapshot(code)
-    (code / ".frontier" / "releases" / "1.0.0" / "common.py").write_text(
+    (code / ".horizon" / "releases" / "1.0.0" / "common.py").write_text(
         "TAMPERED\n", encoding="utf-8"
     )
 
@@ -445,7 +445,7 @@ def test_rollback_without_an_install_lock_is_blocked(tmp_path):
 def test_cli_rollback_defaults_to_the_previous_version(tmp_path, capsys):
     v1 = _build(tmp_path, name="v1", version="1.0.0")
     v2 = _build(tmp_path, name="v2", version="2.0.0")
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
     code = cli.main([*cli_locations(home), "install", "package", "--from", str(v1["artifact"]["path"])])
     assert code == 0
     capsys.readouterr()
@@ -465,7 +465,7 @@ def test_cli_rollback_defaults_to_the_previous_version(tmp_path, capsys):
 def test_cli_rollback_to_unknown_version_exits_one(tmp_path, capsys):
     v1 = _build(tmp_path, name="v1", version="1.0.0")
     v2 = _build(tmp_path, name="v2", version="2.0.0")
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
     for result in (v1, v2):
         code = cli.main(
             [
@@ -493,7 +493,7 @@ def test_cli_rollback_to_unknown_version_exits_one(tmp_path, capsys):
 
 # ----------------------------------------------------------------- report
 def test_report_without_a_lock_reports_an_unrecorded_source_install(tmp_path):
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     home.mkdir(parents=True)
 
     report = install.report(home)
@@ -515,7 +515,7 @@ def test_report_for_a_package_install_shows_versions_source_and_retained(tmp_pat
     assert _install(code, v2, channel="prerelease")["ok"] is True
     lock = _lock(code)
 
-    report = install.report(code / ".frontier")
+    report = install.report(code / ".horizon")
 
     release = report["release"]
     assert release["distribution"] == "package"
@@ -532,7 +532,7 @@ def test_report_for_a_package_install_shows_versions_source_and_retained(tmp_pat
             "artifact_sha256": v1["artifact"]["sha256"],
         }
     ]
-    assert release["lock_path"] == str(code / ".frontier" / "dist.lock.json")
+    assert release["lock_path"] == str(code / ".horizon" / "dist.lock.json")
 
 
 def test_report_after_rollback_shows_the_restored_version_and_rolled_back_at(tmp_path):
@@ -543,7 +543,7 @@ def test_report_after_rollback_shows_the_restored_version_and_rolled_back_at(tmp
         assert _install(code, result)["ok"] is True
     rolled = dist.rollback(code)
 
-    release = install.report(code / ".frontier")["release"]
+    release = install.report(code / ".horizon")["release"]
 
     assert release["version"] == "1.0.0"
     assert release["previous_version"] == "2.0.0"
@@ -559,7 +559,7 @@ def test_report_after_rollback_shows_the_restored_version_and_rolled_back_at(tmp
 
 def test_cli_report_includes_the_release_block(tmp_path, capsys):
     v1 = _build(tmp_path, name="v1", version="1.0.0")
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
     exit_code, payload, _ = _cli(
         capsys, home, "install", "package", "--from", str(v1["artifact"]["path"])
     )

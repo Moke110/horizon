@@ -1,12 +1,12 @@
 # 内置运行时与启动包装器
 
-实现契约：描述发行包里的 `runtime/` 目录、`bin/frontier.cmd` 启动包装器，以及清单如何覆盖它们（spec #92，ticket #95）。开发计划与验收以 GitHub Issues 为准；发行包清单与安装锁的机器可读契约见 `contracts/distribution-manifest.schema.json` 与 `contracts/install-lock.schema.json`。
+实现契约：描述发行包里的 `runtime/` 目录、`bin/horizon.cmd` 启动包装器，以及清单如何覆盖它们（spec #92，ticket #95）。开发计划与验收以 GitHub Issues 为准；发行包清单与安装锁的机器可读契约见 `contracts/distribution-manifest.schema.json` 与 `contracts/install-lock.schema.json`。
 
 所有 JSON 顶层带 `schema_version: 1`，时间统一 ISO-8601（见 `contracts/README.md`）。本契约不新增 JSON 文件：运行时与包装器只是普通包文件，由既有清单逐文件摘要覆盖。
 
 ## 1. 目标
 
-用户机器上不需要 git、uv、系统 Python 或 PATH 配置。发行包自带解释器与依赖，启动包装器只引用包内路径。
+探索者机器上不需要 git、uv、系统 Python 或 PATH 配置。发行包自带解释器与依赖，启动包装器只引用包内路径。
 
 - 构建入口：`python -m hostrun.distribution --source <tree> --out <dir> --version V --channel C --runtime-dir <runtime>`
 - 构建不联网、不下载、不合成运行时。CI（#98）准备 `runtime` 目录后传给构建入口。
@@ -41,7 +41,7 @@
 
 限制：若未来的发行包更换了内置运行时版本（运行时字节不同），就地升级会因锁定文件而失败并在响应里说明；此时需要先关闭控制台/用包外的解释器执行升级。该限制写入验收记录。
 
-## 3. 启动包装器 `<package>/bin/frontier.cmd`
+## 3. 启动包装器 `<package>/bin/horizon.cmd`
 
 内置运行时存在时，构建入口生成该文件。它是一段固定文本，不是安装步骤产物：
 
@@ -60,30 +60,30 @@ cd /d "%~dp0.."
 
 ## 4. 控制台启动脚本（安装后生成，不在包内）
 
-`console install` 仍生成 `<code>/bin/frontier-console.cmd`。两种模式：
+`console install` 仍生成 `<code>/bin/horizon-console.cmd`。两种模式：
 
 源码安装（目录没有发行包安装锁）：
 
 ```
-title frontier-console
+title horizon-console
 cd /d "<code>"
 "<记录的解释器>" -m hostrun.cli --code "<code>" --archive "<archive>" console %*
 ```
 
-发行包安装（`<code>/.frontier/dist.lock.json` 的 `distribution == "package"` 且 `<code>/bin/frontier.cmd` 存在）：
+发行包安装（`<code>/.horizon/dist.lock.json` 的 `distribution == "package"` 且 `<code>/bin/horizon.cmd` 存在）：
 
 ```
-title frontier-console
-call "%~dp0frontier.cmd" --code "<code>" --archive "<archive>" console %*
+title horizon-console
+call "%~dp0horizon.cmd" --code "<code>" --archive "<archive>" console %*
 ```
 
-两种形式都以 `title frontier-console` 开头、以 `%*` 结尾，重复生成只在文本变化时重写。`frontier-console.cmd` 是安装期生成物，不属于发行包：`install verify` 只把这一固定路径列入忽略集，其他清单外文件仍报告为多余。
+两种形式都以 `title horizon-console` 开头、以 `%*` 结尾，重复生成只在文本变化时重写。`horizon-console.cmd` 是安装期生成物，不属于发行包：`install verify` 只把这一固定路径列入忽略集，其他清单外文件仍报告为多余。
 
 ## 5. 清单覆盖
 
 运行时文件与控制台包装器都在清单组装**之前**写入包目录，因此：
 
-- `manifest.json` 的 `files` 自动包含 `runtime/**` 与 `bin/frontier.cmd`，逐文件 `bytes` / `sha256` / `executable` 与其他文件同规则。
+- `manifest.json` 的 `files` 自动包含 `runtime/**` 与 `bin/horizon.cmd`，逐文件 `bytes` / `sha256` / `executable` 与其他文件同规则。
 - `install verify` 按清单校验这些文件；缺失、字节或摘要不符都会报告 mismatch。
 - 清单 schema 不变（`schema_version: 1`），摘要文件与 zip 也不新增字段。
 
@@ -94,4 +94,4 @@ call "%~dp0frontier.cmd" --code "<code>" --archive "<archive>" console %*
 - 源码安装：解释器必须位于代码目录之外，否则 `blocked`。
 - 发行包安装：安装锁记录 `distribution: "package"` 且解释器解析到 `<code>/runtime/` 内时，探测照常运行 PyYAML/PyMuPDF 导入，并给出 `evidence.bundled_runtime = true`。
 
-真实“无系统 Python 运行包装器”的证据由发布工作流的 `--check-wrapper` 步骤在真实嵌入式运行时上产生：它以净化环境（`PATH` 仅 `%SystemRoot%\System32;%SystemRoot%`，无 `PYTHONHOME`/`PYTHONPATH`/venv）执行安装后的 `<code>\bin\frontier.cmd --code ... --archive ... --help` 并要求退出码 0 且 stdout 含 `usage`。离线 pytest 只用合成运行时验证该检查会按预期失败并带 stdout/stderr，不能代替真实 tag/CI 证据；真实模板安装仍保持 `untested`。
+真实“无系统 Python 运行包装器”的证据由发布工作流的 `--check-wrapper` 步骤在真实嵌入式运行时上产生：它以净化环境（`PATH` 仅 `%SystemRoot%\System32;%SystemRoot%`，无 `PYTHONHOME`/`PYTHONPATH`/venv）执行安装后的 `<code>\bin\horizon.cmd --code ... --archive ... --help` 并要求退出码 0 且 stdout 含 `usage`。离线 pytest 只用合成运行时验证该检查会按预期失败并带 stdout/stderr，不能代替真实 tag/CI 证据；真实模板安装仍保持 `untested`。

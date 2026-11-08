@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "frontier retained release record",
-  "description": "Metadata for one retained previous distribution tree at <code>/.frontier/releases/<version>/release.json (spec #92, ticket #96). The directory also contains that version's full package files and its manifest.json; the active version is named by <code>/.frontier/current and by the install lock. A released record must agree byte-for-byte with the retained manifest digest, otherwise the retained tree is treated as corrupt and rollback is blocked.",
+  "title": "horizon retained release record",
+  "description": "Metadata for one retained previous distribution tree at <code>/.horizon/releases/<version>/release.json (spec #92, ticket #96). The directory also contains that version's full package files and its manifest.json; the active version is named by <code>/.horizon/current and by the install lock. A released record must agree byte-for-byte with the retained manifest digest, otherwise the retained tree is treated as corrupt and rollback is blocked.",
   "type": "object",
   "additionalProperties": true,
   "required": [

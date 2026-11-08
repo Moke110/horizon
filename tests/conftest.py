@@ -13,14 +13,14 @@ if str(ROOT) not in sys.path:
 @pytest.fixture(autouse=True)
 def _clean_location_handoff(monkeypatch):
     """Commands export the resolved locations for child runs; keep tests isolated."""
-    for name in ("FRONTIER_CODE", "FRONTIER_ARCHIVE", "FRONTIER_RUNTIME", "KL_HOME"):
+    for name in ("HORIZON_CODE", "HORIZON_ARCHIVE", "HORIZON_RUNTIME", "KL_HOME"):
         monkeypatch.delenv(name, raising=False)
 
 
 def cli_locations(home) -> list[str]:
     """Location flags for a CLI call, derived from a test's runtime directory.
 
-    Tests treat the runtime area as their working "home": ``<code>/.frontier``.
+    Tests treat the runtime area as their working "home": ``<code>/.horizon``.
     """
     code = Path(home).parent
     return ["--code", str(code)]
@@ -28,7 +28,7 @@ def cli_locations(home) -> list[str]:
 
 @pytest.fixture
 def kl_home(tmp_path):
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     shutil.copytree(ROOT / "fixtures" / "home", home)
     return home
 
@@ -41,7 +41,7 @@ def fixtures_dir():
 @pytest.fixture
 def offline_home(tmp_path):
     """A private runtime area with no Bitable configured yet."""
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     (home / "knowledge").mkdir(parents=True)
     return home
 

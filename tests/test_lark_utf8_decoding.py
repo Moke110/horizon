@@ -3,7 +3,7 @@
 On Chinese Windows the default locale codec is GBK.  lark-cli emits UTF-8 JSON
 that contains Chinese Base/table names, so a ``text=True`` subprocess without an
 explicit encoding raised ``UnicodeDecodeError`` inside the reader thread during
-a real ``/frontier-init`` facility creation (real-acceptance defect,
+a real ``/horizon-init`` facility creation (real-acceptance defect,
 2026-10-30).  These tests pin the kwargs at the call seams.
 """
 

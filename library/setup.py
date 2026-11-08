@@ -181,7 +181,7 @@ def setup(
     push_table = str(names.get("push") or PUSH_TABLE)
     decision_table = str(names.get("decision") or DECISION_TABLE)
     config_table = str(names.get("config") or CONFIG_TABLE)
-    root_folder_name = str(names.get("root_folder") or "frontier")
+    root_folder_name = str(names.get("root_folder") or "horizon")
     source_folder_name = str(names.get("source_folder") or "原文")
     push_folder_name = str(names.get("push_folder") or "推送")
     client = client or base_mod.LarkBaseClient(cfg, identity=identity)
@@ -249,9 +249,9 @@ def setup(
     if dry_run:
         actions.append(f"ensure folders {root_folder_name}/{source_folder_name} and {root_folder_name}/{push_folder_name}")
     else:
-        frontier = drive.ensure_folder(root, root_folder_name)
-        source_folder = drive.ensure_folder(frontier, source_folder_name)
-        push_folder = drive.ensure_folder(frontier, push_folder_name)
+        horizon = drive.ensure_folder(root, root_folder_name)
+        source_folder = drive.ensure_folder(horizon, source_folder_name)
+        push_folder = drive.ensure_folder(horizon, push_folder_name)
         actions.append(f"folders: {source_folder} / {push_folder}")
 
     # config row (create once; never overwrite a user-set limit)

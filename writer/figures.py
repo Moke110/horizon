@@ -20,7 +20,7 @@ from pathlib import Path
 
 from common import clip
 
-USER_AGENT = "frontier/0.1 (personal research assistant)"
+USER_AGENT = "horizon/0.1 (personal research assistant)"
 MAX_BYTES = 20 * 1024 * 1024
 XLINK = "{http://www.w3.org/1999/xlink}href"
 
@@ -305,7 +305,7 @@ def _fallback_svg(paper: dict, push_id: str) -> str:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
   <rect width="1200" height="675" fill="#0f4c5c"/>
   <rect x="0" y="0" width="14" height="675" fill="#e36414"/>
-  <text x="72" y="98" fill="#e36414" font-family="Noto Sans CJK SC, sans-serif" font-size="26" font-weight="700" letter-spacing="4">FRONTIER · VISUAL ABSTRACT</text>
+  <text x="72" y="98" fill="#e36414" font-family="Noto Sans CJK SC, sans-serif" font-size="26" font-weight="700" letter-spacing="4">HORIZON · VISUAL ABSTRACT</text>
   <text x="72" y="220" fill="#ffffff" font-family="Noto Serif CJK SC, serif" font-size="54" font-weight="700">
 {tspans}
   </text>

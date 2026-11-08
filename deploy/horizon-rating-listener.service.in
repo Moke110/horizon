@@ -1,12 +1,12 @@
 [Unit]
-Description=frontier rating callback listener (Lark card actions)
+Description=horizon rating callback listener (Lark card actions)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/frontier
-Environment=FRONTIER_RUNTIME=%h/knowledge-loop
+WorkingDirectory=%h/horizon
+Environment=HORIZON_RUNTIME=%h/knowledge-loop
 Environment=PATH=%h/.opencode/bin:%h/.npm-global/bin:%h/.local/bin:%h/miniconda3/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=__PYTHON__ -m publisher.cli listen --max-events 0 --timeout 0
 Restart=always

@@ -12,6 +12,6 @@ foreach ($RequiredFile in @('manifest.json', 'runtime/python.exe', 'runtime/node
 }
 Push-Location $PSScriptRoot
 try {
-    & $ISCC "/DAppVersion=$Version" "/DNumericVersion=$NumericVersion" "/DPackageDir=$PackagePath" frontier.iss
+    & $ISCC "/DAppVersion=$Version" "/DNumericVersion=$NumericVersion" "/DPackageDir=$PackagePath" horizon.iss
     if ($LASTEXITCODE) { throw 'Installer compilation failed' }
 } finally { Pop-Location }

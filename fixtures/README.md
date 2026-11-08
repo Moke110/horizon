@@ -1,6 +1,6 @@
 # 测试与研究样例
 
-这些文件是离线测试、初始构建样例和存量验收基线，不是用户的正式知识库；安装时不自动导入。
+这些文件是离线测试、初始构建样例和存量验收基线，不是探索者的正式知识库；安装时不自动导入。
 
 | 内容 | 用途 |
 |---|---|
@@ -14,4 +14,4 @@
 
 历史语料研究：362 个 PDF 文件经排除非论文并按 md5 去重后形成 174 篇清单；当时均可提取正文。DOI、标题和年份不能只信 PDF 内嵌元数据，应结合来源核对；引文按 PDF 页码和原文精确定位。上述是旧语料的研究结论，不保证新文件有同样性质。
 
-完整调研和旧主题报告可查 [PDF 研究历史](https://github.com/Moke110/frontier/blob/978cbfc/docs/research/pdf-corpus-inventory.md) 与 [主题报告历史](https://github.com/Moke110/frontier/blob/978cbfc/docs/research/theme-inventory.md)。原件、清单和衍生索引的存储规则见 [原文与推送库契约](../contracts/lark-storage.md)。
+完整调研和旧主题报告可查 [PDF 研究历史](https://github.com/Moke110/horizon/blob/978cbfc/docs/research/pdf-corpus-inventory.md) 与 [主题报告历史](https://github.com/Moke110/horizon/blob/978cbfc/docs/research/theme-inventory.md)。原件、清单和衍生索引的存储规则见 [原文与推送库契约](../contracts/lark-storage.md)。

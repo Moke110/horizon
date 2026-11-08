@@ -1,4 +1,4 @@
-"""Manual Lark trigger for one forward frontier run."""
+"""Manual Lark trigger for one forward horizon run."""
 
 from trigger.service import Config, handle_event, listen
 

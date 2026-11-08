@@ -16,7 +16,7 @@ from question_queue.store import QueueError, QueueStore
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="queue", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("status", help="print queue state and pending request")

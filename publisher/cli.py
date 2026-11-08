@@ -27,7 +27,7 @@ from publisher.store import PublisherStore
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="publisher", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("send", help="send one push: HTML file + rating card")

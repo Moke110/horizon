@@ -570,7 +570,7 @@ class EventSurface:
     signals each one and joins it.  The subscriptions inspect an independent
     stop event, so a disconnect on one key never touches the other.  The prompt
     loop keeps running on the main thread: neither events nor ticks block a
-    ``/frontier-status`` reply.
+    ``/horizon-status`` reply.
     """
 
     def __init__(
@@ -709,7 +709,7 @@ class EventSurface:
     def wait_card(self, *, timeout_seconds: float = 300, identity: str = "bot") -> dict:
         """Block until the next card callback arrives on this surface.
 
-        ``/frontier-init`` uses this instead of spawning a second
+        ``/horizon-init`` uses this instead of spawning a second
         ``lark-cli event consume``: the console's single card subscription is the
         only consumer.  ``identity`` is accepted for the event-source contract and
         is not used (the surface already consumes as bot).
@@ -811,7 +811,7 @@ class EventSurface:
             if event is None:
                 self._log("INFO", "feishu", f"忽略非卡片回调事件（{event_key}）")
                 return {"ok": True, "action": "ignored", "reason": "not_a_card"}
-            # Hand the callback to an in-flight /frontier-init transport test
+            # Hand the callback to an in-flight /horizon-init transport test
             # before routing it.  Pause only suppresses replies/runs; the click
             # itself is still the evidence the init step is waiting for.
             self._notify_card(event)

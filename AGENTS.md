@@ -1,4 +1,4 @@
-# frontier
+# horizon
 
 This file contains development-agent working instructions only. Keep product positioning and feature explanations out of this file. Read `docs/adr/` for confirmed decisions and `GLOSSARY.md` for terminology.
 
@@ -7,7 +7,11 @@ This file contains development-agent working instructions only. Keep product pos
 - **Planning:** Codex handles complex work (architecture, cross-module changes, unclear requirements, or risky migrations); DeepSeek Harness handles simple, bounded work. Use the Matt Pocock workflow: `wayfinder` to map uncertain work, `grill-with-docs` to resolve decisions and record domain docs, `to-spec` to publish the agreed spec, then `to-tickets` to publish approved vertical slices and native blocking links. The skill is named `to-tickets` (plural).
 - **Implementation:** DeepSeek Harness uses `implement` to execute the approved GitHub spec and tickets. Read the issue body, comments and blockers before starting; work only on unblocked tickets, and follow the skill's testing, review and commit requirements. Record results and remaining blockers in GitHub; close a ticket only when its acceptance criteria are met. Offline tests do not replace required live acceptance.
 - **Handoff:** Planning ends with linked GitHub issues and clear acceptance criteria/dependencies. Implementation starts when the user requests it; a planning request alone does not authorize implementation. Return changes to scope or unresolved product decisions to the planner rather than silently changing the spec.
-- **WorkBuddy:** no longer used to develop this repository. Keep project-specific WorkBuddy configuration and memory out of the workspace. This development-role change does not remove WorkBuddy as a frontier runtime host or waive its product acceptance requirements.
+- **WorkBuddy:** no longer used to develop this repository. Keep project-specific WorkBuddy configuration and memory out of the workspace. This development-role change does not remove WorkBuddy as a horizon runtime host or waive its product acceptance requirements.
+
+## Human acceptance
+
+Complete automated checks and prepare the reviewable result before requesting manual acceptance whenever possible. After the user supplies the requested confirmation, automatically continue the remaining authorized work; do not wait for another continue instruction.
 
 ## Git workflow
 
@@ -24,9 +28,9 @@ Do not force-push, reset away commits, or delete historical branches as routine 
 
 ## Release, tags and channels
 
-Distribution releases are built from tags; branches are not release units. Users install the distribution package; the source checkout stays the developer path (see `skills/frontier-run/references/installation.md`).
+Distribution releases are built from tags; branches are not release units. Users install the distribution package; the source checkout stays the developer path (see `skills/horizon-run/references/installation.md`).
 
-- **Tag convention:** `vMAJOR.MINOR.PATCH` (for example `v1.2.3`) is the **stable** channel. `vMAJOR.MINOR.PATCH-<suffix>` (for example `-rc.N`, `v0.1.0-rc.1`, or `v0.2.0-preview.2`) is the **prerelease** channel. The `v` prefix is not part of the version or the artifact name: `v0.1.0-rc.1` publishes `frontier-0.1.0-rc.1-prerelease.zip`.
+- **Tag convention:** `vMAJOR.MINOR.PATCH` (for example `v1.2.3`) is the **stable** channel. `vMAJOR.MINOR.PATCH-<suffix>` (for example `-rc.N`, `v0.1.0-rc.1`, or `v0.2.0-preview.2`) is the **prerelease** channel. The `v` prefix is not part of the version or the artifact name: `v0.1.0-rc.1` publishes `horizon-0.1.0-rc.1-prerelease.zip`.
 - **Tag-triggered release:** pushing a `v*` tag runs `.github/workflows/release.yml` (windows-latest, `contents: write`). It derives version/channel from the tag, downloads the pinned embeddable CPython and wheels, assembles `runtime/`, builds the package twice to prove the artifact digest is reproducible, creates the GitHub Release with the zip, `.digest.json` and `manifest.json` (`--prerelease` only for prerelease tags), and updates `releases/index.json` with version, channel, artifact digest and compatibility. The workflow commits that index to `main` as `github-actions[bot]` and uploads it as a release asset; if branch protection rejects the push it retries once and then fails, leaving the index to be updated manually.
 - **Dry runs:** `workflow_dispatch` builds and verifies but creates no Release and commits nothing unless `dry_run` is explicitly false.
 - **Main first, then tag:** `main` must already contain the commit that will be tagged; the index job verifies the tagged commit is an ancestor of `origin/main` and refuses to commit the index otherwise. Merge the change into `main`, verify the suite there, then tag that commit.
@@ -38,7 +42,7 @@ The observable release contract is [`contracts/release.md`](contracts/release.md
 
 ### Issue tracker
 
-Issues, specs, tickets, and wayfinder maps live only in GitHub Issues of `Moke110/frontier`; do not create local spec/ticket drafts or mirrors. See `docs/agents/issue-tracker.md`. The retired `.scratch/` tracker is available through Git history, not the working tree.
+Issues, specs, tickets, and wayfinder maps live only in GitHub Issues of `Moke110/horizon`; do not create local spec/ticket drafts or mirrors. See `docs/agents/issue-tracker.md`. The retired `.scratch/` tracker is available through Git history, not the working tree.
 
 ### Triage labels
 
@@ -50,7 +54,7 @@ Single-context layout (`GLOSSARY.md` + `docs/adr/` at the repo root). See `docs/
 
 ### Runtime and user documentation
 
-`README.md` (English, primary) and `README.zh-CN.md` (Simplified Chinese) are the user-facing installation and usage guides; keep the two copies in step with each other, and keep development/acceptance status out of both — that belongs in `docs/acceptance/` and GitHub Issues. The product's host agent loads `skills/frontier-run/SKILL.md`; its installation and workflow references are runtime instructions, not development skills. Module contracts live in `contracts/`. Keep root documentation limited to `AGENTS.md`, `GLOSSARY.md`, `README.md` and `README.zh-CN.md`, with `LICENSE` retained at the root.
+`README.md` (English, primary) and `README.zh-CN.md` (Simplified Chinese) are the user-facing installation and usage guides; keep the two copies in step with each other, and keep development/acceptance status out of both — that belongs in `docs/acceptance/` and GitHub Issues. The product's host agent loads `skills/horizon-run/SKILL.md`; its installation and workflow references are runtime instructions, not development skills. Module contracts live in `contracts/`. Keep root documentation limited to `AGENTS.md`, `GLOSSARY.md`, `README.md` and `README.zh-CN.md`, with `LICENSE` retained at the root.
 
 Keep `docs/adr/` for Matt-maintained decisions, `docs/agents/` for Matt skill configuration, and `docs/acceptance/README.md` for concise evidence and outstanding acceptance gaps. Put schemas/state machines in `contracts/`, sample/generated documentation beside its fixtures, and historical process logs in Git history rather than duplicate local trackers or reports.
 

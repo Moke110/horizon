@@ -48,7 +48,7 @@ def run(data_home: Path, push_id: str = TEST_PUSH) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="migrate_drop_test_push_refs")
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     parser.add_argument("--push-id", default=TEST_PUSH)
     try:
         args = parser.parse_args(layout.cli_argv(argv))

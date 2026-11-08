@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "version": "1.0.0",
-  "description": "frontier 操作白名单 v1（ADR 0009 §5）。这是控制台与飞书唯一允许执行的操作集合；执行入口只接受操作 id 与经参数 schema 校验的 params，绝不接受消息原文。",
+  "description": "horizon 操作白名单 v1（ADR 0009 §5）。这是控制台与飞书唯一允许执行的操作集合；执行入口只接受操作 id 与经参数 schema 校验的 params，绝不接受消息原文。",
   "operations": [
     {
       "id": "status",
@@ -151,7 +151,7 @@
       "reply": "console_only"
     },
     {
-      "phrase": "/frontier-init",
+      "phrase": "/horizon-init",
       "operation": "init",
       "reply": "console_only"
     },
@@ -161,7 +161,7 @@
       "reply": "console_only"
     },
     {
-      "phrase": "/frontier-update-kb",
+      "phrase": "/horizon-update-kb",
       "operation": "update_kb",
       "reply": "console_only"
     },
@@ -171,7 +171,7 @@
       "reply": "console_only"
     },
     {
-      "phrase": "/frontier-stop",
+      "phrase": "/horizon-stop",
       "operation": "stop_service",
       "reply": "console_only"
     },

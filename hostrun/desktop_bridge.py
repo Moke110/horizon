@@ -1,5 +1,6 @@
 """Authenticated loopback bridge; Python owns the Windows job and GUI lifetime."""
 import json
+import hmac
 import os
 import queue
 import subprocess
@@ -7,8 +8,16 @@ import sys
 import threading
 import socket
 import secrets
+import uuid
+from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
+
+
+def authenticate(incoming, token):
+    supplied = incoming.readline(129).rstrip('\r\n')
+    if not hmac.compare_digest(supplied, token):
+        raise PermissionError('Desktop bridge authentication failed')
 
 
 def serve(resolved):
@@ -22,8 +31,8 @@ def serve(resolved):
     listener.listen(1)
     listener.settimeout(15)
     token = secrets.token_hex(32)
-    env['FRONTIER_DESKTOP_PORT'] = str(listener.getsockname()[1])
-    env['FRONTIER_DESKTOP_TOKEN'] = token
+    env['HORIZON_DESKTOP_PORT'] = str(listener.getsockname()[1])
+    env['HORIZON_DESKTOP_TOKEN'] = token
     log_path = Path(resolved['runtime']) / 'desktop-electron.log'
     env['ELECTRON_LOG_FILE'] = str(log_path)
     env['ELECTRON_ENABLE_LOGGING'] = '1'
@@ -35,8 +44,7 @@ def serve(resolved):
         connection.settimeout(15)
         incoming = connection.makefile('r', encoding='utf-8')
         outgoing = connection.makefile('w', encoding='utf-8')
-        if incoming.readline(129).strip() != token:
-            raise RuntimeError('Desktop bridge authentication failed')
+        authenticate(incoming, token)
         connection.settimeout(None)
     except Exception:
         child.terminate()
@@ -49,11 +57,8 @@ def serve(resolved):
     app.events, app.answers = queue.Queue(), queue.Queue()
     app.closed, app.busy, app.process = False, False, None
     app.cancelled = threading.Event()
-    store = app.home / 'desktop/sessions.json'
-    try:
-        chats = json.loads(store.read_text(encoding='utf-8'))
-    except FileNotFoundError:
-        chats = []
+    service = AgentService(desktop_home(), token=token)
+    chats = service.list_tasks(token=token)
     current, response = 0, ''
     lock = threading.Lock()
     ui_ready = threading.Event()
@@ -64,11 +69,18 @@ def serve(resolved):
                 outgoing.flush()
             except (OSError, ValueError):
                 pass
-    def save():
-        store.parent.mkdir(parents=True, exist_ok=True)
-        temp = store.with_suffix('.tmp')
-        temp.write_text(json.dumps(chats, ensure_ascii=False), encoding='utf-8')
-        temp.replace(store)
+    def create(operation=None):
+        nonlocal current
+        result = service.create_task({'schema_version': 1, 'operation_id': operation or str(uuid.uuid4()),
+                             'title': '新会话'}, token=token)
+        chats[:] = service.list_tasks(token=token)
+        current = next(index for index, task in enumerate(chats) if task['task_id'] == result['task_id'])
+    def message(role, text, operation=None, expected_version=None):
+        previous_version = chats[current]['version']
+        result = service.append_message({'schema_version': 1, 'operation_id': operation or str(uuid.uuid4()),
+                                'task_id': chats[current]['task_id'], 'expected_version': previous_version if expected_version is None else expected_version, 'role': role, 'text': text}, token=token)
+        chats[:] = service.list_tasks(token=token)
+        return result['version'] > previous_version
     def state():
         facts = embedded_agent.runtime(app.home, code=code)
         emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
@@ -84,7 +96,7 @@ def serve(resolved):
                 elif action == 'console': app.answers.put(str(cmd['text']))
                 elif not app.busy:
                     if action == 'new':
-                        chats.insert(0, {'title': '新会话', 'messages': []}); current = 0; save()
+                        create(cmd.get('operation_id'))
                     elif action == 'select':
                         index = int(cmd['index'])
                         if not 0 <= index < len(chats): raise ValueError('Invalid session')
@@ -93,30 +105,33 @@ def serve(resolved):
                         embedded_agent.configure(app.home, provider=cmd['provider'], model=cmd['model'], api_key=cmd['key'], base_url=cmd.get('url', ''))
                         emit('notice', '模型配置已保存')
                     elif action == 'send':
+                        if not isinstance(cmd.get('operation_id'), str) or not cmd['operation_id'].strip() or type(cmd.get('expected_version')) is not int:
+                            raise CommandError('invalid_command', 'operation_id and expected_version are required')
                         text = str(cmd['text']).strip()
                         if not text: continue
-                        if not chats: chats.append({'title': '新会话', 'messages': []})
+                        if not chats: create()
+                        if not message('You', text, cmd.get('operation_id'), cmd.get('expected_version')):
+                            state()
+                            continue
                         chat = chats[current]
-                        if not chat['messages']: chat['title'] = text[:24]
-                        chat['messages'].append({'role': 'You', 'text': text})
-                        save(); response = ''; app.busy = True; app.cancelled.clear()
+                        response = ''; app.busy = True; app.cancelled.clear()
                         task = '\n\n'.join(m['role'] + ': ' + m['text'] for m in chat['messages'])
                         threading.Thread(target=app.run_agent, args=(task,), daemon=True).start()
                 state()
+            except CommandError as exc:
+                chats[:] = service.list_tasks(token=token)
+                state()
+                emit('command_error', {'schema_version': 1, 'operation_id': cmd.get('operation_id'), 'code': exc.code, 'message': str(exc)})
+                emit('notice', str(exc))
             except Exception as exc:
                 emit('notice', str(exc))
     state()
     threading.Thread(target=commands, daemon=True).start()
-    console_thread = threading.Thread(target=app.run_console, daemon=True)
-    # Do not start resident business services before the renderer is usable.
-    console_started = False
+    emit('console_done', None)
     activation = app.home / 'desktop.activate'
     exit_code = 0
     try:
         while child.poll() is None:
-            if ui_ready.is_set() and not console_started:
-                console_thread.start()
-                console_started = True
             if activation.exists():
                 activation.unlink(missing_ok=True); emit('activate')
             try: kind, data = app.events.get(timeout=.1)
@@ -125,8 +140,8 @@ def serve(resolved):
                 if data['type'] == 'text': response += data['text']
                 elif data['type'] == 'error': response += '\n错误：' + data['message']
             elif kind == 'done':
-                chats[current]['messages'].append({'role': 'Frontier', 'text': response})
-                app.busy = False; save(); state()
+                message('Horizon', response)
+                app.busy = False; state()
             emit(kind, data)
         exit_code = child.returncode
     finally:
@@ -134,9 +149,6 @@ def serve(resolved):
         incoming.close()
         connection.close()
         app.closed = True; app.stop(); app.answers.put(None)
-        if console_started:
-            console_thread.join(timeout=10)
-        console.write_state(app.home, service='stopped')
         if exit_code:
             raise RuntimeError(f'Electron exited before completing desktop session (exit {exit_code:#x})')
         if os.name == 'nt': os._exit(0)

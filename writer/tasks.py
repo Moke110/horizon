@@ -11,7 +11,7 @@ from pathlib import Path
 
 from common import now, read_json
 from archive.store import Archive, is_under_review
-from frontier.model import is_temporary_card
+from horizon.model import is_temporary_card
 from writer.model import _context
 from writer.render import inspect as inspect_pdf
 

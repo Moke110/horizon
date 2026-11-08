@@ -2,13 +2,13 @@ from pathlib import Path
 
 from common import write_yaml
 from editor import model as editor_model
-from frontier import model as frontier_model
+from horizon import model as horizon_model
 from retriever import cli as retriever_cli
 from writer import model as writer_model
 
 
 def _candidates(kl_home, fixtures_dir):
-    plan = frontier_model.plan(kl_home, day="2026-10-20", days=7)
+    plan = horizon_model.plan(kl_home, day="2026-10-20", days=7)
     return plan, retriever_cli.run(
         plan, "fixture", Path(fixtures_dir), check_window=True
     )

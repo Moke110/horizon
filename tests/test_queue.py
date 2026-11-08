@@ -5,7 +5,7 @@ import pytest
 
 from archive.store import Archive, ArchiveError
 from editor import model as editor_model
-from frontier import model as frontier_model
+from horizon import model as horizon_model
 from publisher.service import handle_event, replay, send_push, send_rating
 from question_queue.store import QueueStore
 from retriever import cli as retriever_cli
@@ -398,7 +398,7 @@ def test_ndjson_replay_finishes_rating_and_two_updates(kl_home, tmp_path):
 
 
 def test_writer_push_enters_queue_and_approval_applies(kl_home, fixtures_dir, tmp_path):
-    plan = frontier_model.plan(kl_home, day="2026-10-20", days=7)
+    plan = horizon_model.plan(kl_home, day="2026-10-20", days=7)
     rows = retriever_cli.run(plan, "fixture", fixtures_dir, check_window=True)
     selection = editor_model.rank(
         kl_home, rows, day="2026-10-20", limit=4, per_checkpoint=2
@@ -492,8 +492,8 @@ def test_empty_queue_spawns_pending_runner(kl_home, monkeypatch):
     assert cmd[-1] == "run-request"
     assert "--home" not in cmd
     # The spawned child resolves the same locations through the environment.
-    assert calls[0][1]["env"]["FRONTIER_RUNTIME"] == str(kl_home)
-    assert calls[0][1]["env"]["FRONTIER_CODE"] == str(kl_home.parent)
+    assert calls[0][1]["env"]["HORIZON_RUNTIME"] == str(kl_home)
+    assert calls[0][1]["env"]["HORIZON_CODE"] == str(kl_home.parent)
 
 
 def test_pending_request_coalesces_and_waits_for_empty_queue(kl_home):

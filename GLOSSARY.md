@@ -1,29 +1,43 @@
-# frontier
+# Horizon（地平线）
 
 产品方向见 [产品决策](docs/adr/0001-product-direction.md)。本表定义领域术语；包含 Base、Drive、Console 和旧队列字段的条目仅描述现有实现。
+
+## Canonical product names
+
+| English | 中文 | Meaning |
+|---|---|---|
+| Horizon | 地平线 | The software |
+| Knowledge Base | 知识库 | Knowledge managed within Horizon |
+| Knowledge Card | 知识卡片 | A knowledge unit within the Knowledge Base |
+| Theme | 命题 | An evidence-backed claim within the Knowledge Base |
+| Explorer | 探索者 | A person using Horizon |
+
+Use these names in product copy, documentation and Agent explanations. Explorer names the person, not an Agent or Windows File Explorer. Technical protocol roles such as `user` and existing identity fields such as `owner` keep their technical meanings.
+
+Existing `proposition` / `propositions` fields, IDs, commands and filenames represent Theme for compatibility; they are not a separate domain entity. Existing initial-build `theme` fields and paths represent temporary initial-build groups, not the canonical Theme entity. This terminology decision does not migrate stored data or change interfaces.
 
 ## Language
 
 ### Knowledge
 
-**Knowledge card（知识卡片）**:
+**Knowledge Card（知识卡片）**:
 The canonical unit of knowledge interest, defined by a label, recall terms and a precision annotation. It replaces the retired checkpoint.
 _Avoid_: checkpoint, topic, keyword
 
 **checkpoint**:
-Retired name for a knowledge-card id; it is not an independent entity.
+Retired name for a Knowledge Card id; it is not an independent entity.
 _Avoid_: entity, node
 
 **Under review card（待复核卡片）**:
-A knowledge card or proposition the owner kept during review but excluded from retrieval, ranking and writing until the owner clears its review flag.
+A Knowledge Card or Theme the Explorer kept during review but excluded from retrieval, ranking and writing until the Explorer clears its review flag.
 _Avoid_: draft, pending card, disabled card
 
-**Proposition（命题）**:
-A claim across sources synthesized from evidence and related knowledge cards.
+**Theme（命题）**:
+A claim across sources synthesized from evidence and related Knowledge Cards.
 _Avoid_: finding, summary, note
 
 **Evidence（证据）**:
-One directional entry under a proposition, supported by one or more reports.
+One directional entry under a Theme, supported by one or more reports.
 _Avoid_: citation, quote, source
 
 **Report（报道）**:
@@ -31,18 +45,18 @@ A traceable citation of a source in an explanation. The existing paper adapter i
 _Avoid_: paper, papers table, excerpt
 
 **Review（综述）**:
-A proposition's current synthesis, rewritten only from its evidence after accepted updates.
+A Theme's current synthesis, rewritten only from its evidence after accepted updates.
 _Avoid_: article, summary, write-up
 
-**Theme（主题）**:
-A temporary grouping used only to confirm the first batch of knowledge cards; the theme itself is not stored.
+**Initial-build group（初始构建分组）**:
+A temporary grouping used only to confirm the first batch of Knowledge Cards; the group itself is not stored.
 _Avoid_: category, tag, folder
 
-**Knowledge base（知识库）**:
-Frontier-managed knowledge representing what the user has mastered, with automatic and manual card and proposition updates. Source collection alone does not establish mastery.
+**Knowledge Base（知识库）**:
+Horizon-managed knowledge representing what the Explorer has mastered, with automatic and manual Knowledge Card and Theme updates. Source collection alone does not establish mastery.
 
 **Personalized explanation（个性化解读）**:
-Writing grounded in new sources, existing knowledge and accumulated user preferences; independent of delivery.
+Writing grounded in new sources, existing knowledge and accumulated Explorer preferences; independent of delivery.
 
 **Negotiation（谈判）**:
 Discussion that corrects interpretations, expresses preferences and revises proposed knowledge updates; distinct from a rating.
@@ -54,11 +68,11 @@ A delivered personalized explanation with feedback and knowledge-update discussi
 _Avoid_: article, PDF, post
 
 **Push artifact（推送件）**:
-The self-contained HTML rendered for one push; it records what the user saw and is not a regenerable view.
+The self-contained HTML rendered for one push; it records what the Explorer saw and is not a regenerable view.
 _Avoid_: push, PDF, report file
 
 **Rating（评分）**:
-The user's `irrelevant` / `ok` / `great` verdict on a push; the existing queue uses it to gate update questions; the product also uses accumulated preferences to guide explanations.
+The Explorer's `irrelevant` / `ok` / `great` verdict on a push; the existing queue uses it to gate update questions; the product also uses accumulated preferences to guide explanations.
 _Avoid_: score, vote, feedback score
 
 **Unified question queue（统一问题队列）**:
@@ -70,7 +84,7 @@ A retrieval trigger recorded while the question queue is non-empty; requests coa
 _Avoid_: backlog, retry queue, scheduled job
 
 **Writer**:
-The agent role that proposes knowledge-card and proposition updates; it never writes the archive directly.
+The agent role that proposes Knowledge Card and Theme updates; it never writes the archive directly.
 _Avoid_: author, editor, generator
 
 ### Installation and storage
@@ -80,11 +94,11 @@ The host project folder that contains the code directory and the archive directo
 _Avoid_: repo root, project root, workspace root
 
 **Host（运行宿主）**:
-The agent application that installs frontier on the user's machine and performs the judgement work the Console asks for; it neither owns scheduling nor provides liveness.
+The agent application that installs horizon on the Explorer's machine and performs the judgement work the Console asks for; it neither owns scheduling nor provides liveness.
 _Avoid_: machine, runtime, bot
 
 **Host schedule（宿主定时任务）**:
-Retired. Planned runs are scheduled and started by the Console; the host's own schedule starts no frontier run.
+Retired. Planned runs are scheduled and started by the Console; the host's own schedule starts no horizon run.
 _Avoid_: cron job, service, daemon
 
 **Listener（监听进程）**:
@@ -95,12 +109,12 @@ _Avoid_: service, daemon, bot, background job
 The legacy script entry used to start the Console in the existing distribution and source workflows.
 _Avoid_: listener script, service, shortcut
 
-**Frontier application（Frontier 应用）**:
+**Horizon application（Horizon 应用）**:
 The application providing source and knowledge management, explanations, delivery, ratings and negotiation.
 _Avoid_: installer, host, installation workspace
 
 **Heartbeat（心跳）**:
-The Console's periodic liveness record, rewritten while the Console runs; the evidence used by other frontier commands to tell "running" from "process exists".
+The Console's periodic liveness record, rewritten while the Console runs; the evidence used by other horizon commands to tell "running" from "process exists".
 _Avoid_: pid file, ping
 
 **Listener health check（监听巡检）**:
@@ -113,12 +127,12 @@ _Avoid_: headless agent, child session, bot run
 
 ### Distribution and release
 
-**Frontier installer（Frontier 安装器）**:
-The downloadable Windows setup application that lets the user select where to install the Frontier application.
+**Horizon installer（Horizon 安装器）**:
+The downloadable Windows setup application that lets the Explorer select where to install the Horizon application.
 _Avoid_: distribution package, Console launcher
 
 **Distribution package（发行包）**:
-The self-contained artifact a user installs frontier from: program code, agent-facing assets and the runtime it needs, identified by one version.
+The self-contained artifact an Explorer installs horizon from: program code, agent-facing assets and the runtime it needs, identified by one version.
 _Avoid_: installer, build, release, bundle
 
 **Distribution manifest（发行包清单）**:
@@ -134,13 +148,13 @@ The line a distribution package is published on — stable or prerelease — and
 _Avoid_: branch, tag, market
 
 **Source installation（源码安装）**:
-An installation run from a developer's source checkout, used for development rather than for users.
+An installation run from a developer's source checkout, used for development rather than for Explorers.
 _Avoid_: dev install, editable install
 
 ### Runtime control
 
 **Console（控制台）**:
-The single foreground program that owns frontier service on a host: it schedules planned runs, consumes Feishu input, starts bounded agent runs on the owner's behalf, and shows run information. Closing it stops the service; it is not the operating system's service.
+The single foreground program that owns horizon service on a host: it schedules planned runs, consumes Feishu input, starts bounded agent runs on the Explorer's behalf, and shows run information. Closing it stops the service; it is not the operating system's service.
 _Avoid_: listener, service, daemon, bot, TUI
 
 **Console command（控制台指令）**:
@@ -148,7 +162,7 @@ A slash-prefixed text typed in the Console that names one operation from the ope
 _Avoid_: CLI command, keyword
 
 **Operation whitelist（操作白名单）**:
-The closed set of frontier operations an agent run may perform on the owner's behalf. It excludes any change to frontier's own definition.
+The closed set of horizon operations an agent run may perform on the Explorer's behalf. It excludes any change to horizon's own definition.
 _Avoid_: command list, permissions
 
 **Instruction whitelist（指令白名单）**:
@@ -156,7 +170,7 @@ The natural-language and slash phrases that map directly to one operation; a mes
 _Avoid_: aliases, keywords
 
 **Intent judgement（意图判定）**:
-The agent run that maps a message outside the instruction whitelist to at most one operation from the operation whitelist. It never executes the operation; the owner confirms it first.
+The agent run that maps a message outside the instruction whitelist to at most one operation from the operation whitelist. It never executes the operation; the Explorer confirms it first.
 _Avoid_: classifier, NLU
 
 **Agent run（agent 运行）**:
@@ -164,7 +178,7 @@ A bounded host-agent run the Console starts for work that needs judgement, such 
 _Avoid_: headless agent, child session, bot run
 
 **Code directory（代码目录）**:
-The frontier program directory — a source checkout in a source installation, an extracted distribution package in a normal installation — that also holds the installation's environment, configuration, run state, queue, logs and archive index; it is kept separate from source documents and push artifacts.
+The horizon program directory — a source checkout in a source installation, an extracted distribution package in a normal installation — that also holds the installation's environment, configuration, run state, queue, logs and archive index; it is kept separate from source documents and push artifacts.
 _Avoid_: workspace, install directory, app folder
 
 **Data root（数据根）**:
@@ -184,7 +198,7 @@ The uv-managed Python environment and interpreter kept inside the Code directory
 _Avoid_: repo venv, workspace virtualenv, system Python
 
 **Bundled runtime（内置运行时）**:
-The interpreter and libraries a distribution package carries, so an installation needs neither a toolchain nor a package manager on the user's machine.
+The interpreter and libraries a distribution package carries, so an installation needs neither a toolchain nor a package manager on the Explorer's machine.
 _Avoid_: venv, embedded Python, private environment
 
 **Source document（原文）**:
@@ -228,7 +242,7 @@ Comparing Drive files with Base registrations to find orphan files, broken links
 _Avoid_: sync, audit, verify
 
 **Decision（决定）**:
-The user's accepted or rejected outcome for one update proposal, recorded per proposal.
+The Explorer's accepted or rejected outcome for one update proposal, recorded per proposal.
 _Avoid_: approval, answer, vote
 
 **Part（分片）**:

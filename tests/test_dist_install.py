@@ -1,7 +1,7 @@
 """Install a distribution package, write the install lock and verify the install.
 
 Ticket #94 is the installation seam: one local artifact plus its digest goes in;
-an extracted code directory and ``<code>/.frontier/dist.lock.json`` come out.
+an extracted code directory and ``<code>/.horizon/dist.lock.json`` come out.
 Every test builds a real package with :mod:`hostrun.distribution` and installs it
 from a local path or ``file://`` URL; nothing reaches the network.
 """
@@ -28,12 +28,12 @@ from hostrun import cli, dist, distribution
 PACKAGE_FILES = {
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
 }
@@ -227,13 +227,13 @@ def test_install_extracts_the_package_and_writes_the_complete_lock(tmp_path):
     assert payload["artifact_sha256"] == result["artifact"]["sha256"]
     assert payload["extracted"] is True
     assert payload["code"] == str(code.resolve())
-    assert payload["lock"] == str(code / ".frontier" / "dist.lock.json")
+    assert payload["lock"] == str(code / ".horizon" / "dist.lock.json")
     assert payload["manifest"] == str(code / "manifest.json")
     assert payload["files"] == len(_manifest(result)["files"])
     assert payload["bytes"] == sum(row["bytes"] for row in _manifest(result)["files"])
     assert payload["note"]
 
-    lock_path = code / ".frontier" / "dist.lock.json"
+    lock_path = code / ".horizon" / "dist.lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     manifest = _manifest(result)
     source_url = Path(result["artifact"]["path"]).resolve().as_uri()
@@ -258,7 +258,7 @@ def test_install_extracts_the_package_and_writes_the_complete_lock(tmp_path):
         assert target.is_file(), row["path"]
         assert target.read_bytes() == (Path(result["package"]) / row["path"]).read_bytes()
     assert not (code / Path(result["artifact"]["path"]).name).exists()
-    assert not (code / ".frontier" / "staging").exists()
+    assert not (code / ".horizon" / "staging").exists()
 
 
 def test_file_url_source_records_a_canonical_source_url(tmp_path):
@@ -269,7 +269,7 @@ def test_file_url_source_records_a_canonical_source_url(tmp_path):
     payload = _install(code, artifact)
 
     assert payload["source_url"] == artifact.resolve().as_uri()
-    lock = json.loads((code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8"))
+    lock = json.loads((code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8"))
     assert lock["source_url"] == artifact.resolve().as_uri()
 
 
@@ -308,7 +308,7 @@ def test_https_source_downloads_the_artifact_and_installs_it(tmp_path, monkeypat
     assert payload["channel"] == "stable"
     assert payload["artifact_sha256"] == result["artifact"]["sha256"]
     assert (code / "manifest.json").is_file()
-    assert (code / ".frontier" / "dist.lock.json").is_file()
+    assert (code / ".horizon" / "dist.lock.json").is_file()
     assert seen["url"] == url
     assert seen["timeout"] is not None
 
@@ -316,8 +316,8 @@ def test_https_source_downloads_the_artifact_and_installs_it(tmp_path, monkeypat
 @pytest.mark.parametrize(
     "source",
     [
-        "http://example.invalid/frontier-0.1.0-stable.zip",
-        "ftp://example.invalid/frontier-0.1.0-stable.zip",
+        "http://example.invalid/horizon-0.1.0-stable.zip",
+        "ftp://example.invalid/horizon-0.1.0-stable.zip",
     ],
     ids=["http", "ftp"],
 )
@@ -342,7 +342,7 @@ def test_https_download_failure_blocks_before_any_write(tmp_path, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", failing_urlopen)
 
     payload = dist.install_package(
-        code, from_source="https://example.invalid/frontier-0.1.0-stable.zip"
+        code, from_source="https://example.invalid/horizon-0.1.0-stable.zip"
     )
 
     assert payload["ok"] is False
@@ -439,8 +439,8 @@ def test_tampered_package_file_blocks_without_a_lock_or_applied_files(tmp_path):
     assert payload["files"] == ["hostrun/cli.py"]
     assert not (code / "hostrun" / "cli.py").exists()
     assert not (code / "manifest.json").exists()
-    assert not (code / ".frontier" / "dist.lock.json").exists()
-    staging = code / ".frontier" / "staging"
+    assert not (code / ".horizon" / "dist.lock.json").exists()
+    staging = code / ".horizon" / "staging"
     assert not staging.exists() or not any(staging.rglob("*"))
 
 
@@ -464,7 +464,7 @@ def test_zip_slip_entries_are_refused_before_extraction(tmp_path, unsafe):
     assert not (tmp_path / "absolute.txt").exists()
     assert not (tmp_path / "drive.txt").exists()
     assert not (code / "manifest.json").exists()
-    assert not (code / ".frontier" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
 
 
 def test_manifest_path_escaping_the_package_is_refused(tmp_path):
@@ -517,7 +517,7 @@ def test_incompatible_os_arch_or_python_blocks_before_writes(tmp_path, field, va
 
 
 def _recorded_dsh(code: Path, path: Path) -> None:
-    config = code / ".frontier" / "install" / "config.json"
+    config = code / ".horizon" / "install" / "config.json"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(
         json.dumps({"schema_version": 1, "paths": {"dsh": str(path)}}),
@@ -576,8 +576,8 @@ def test_dsh_compat_mismatch_blocks_before_extraction(tmp_path):
     assert payload["reason"] == "compat_dsh_mismatch"
     assert payload["field"] == "compat.dsh"
     assert not (code / "manifest.json").exists()
-    assert not (code / ".frontier" / "dist.lock.json").exists()
-    assert not (code / ".frontier" / "staging").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "staging").exists()
 
 
 @pytest.mark.parametrize(
@@ -648,7 +648,7 @@ def test_explicit_digest_path_is_used(tmp_path):
     payload = _install(code, artifact, digest_path=digest_path)
 
     assert payload["ok"] is True
-    assert json.loads((code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8"))[
+    assert json.loads((code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8"))[
         "artifact_sha256"
     ] == result["artifact"]["sha256"]
 
@@ -758,19 +758,19 @@ def test_foreign_code_directory_is_refused_without_an_install_lock(tmp_path):
     assert "notes.txt" in payload["conflicts"]
     assert (code / "notes.txt").read_text(encoding="utf-8") == "owner notes\n"
     assert not (code / "manifest.json").exists()
-    assert not (code / ".frontier" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
 
 
 def test_runtime_area_alone_is_not_a_foreign_code_directory(tmp_path):
     result = _build(tmp_path)
     code = tmp_path / "code"
-    (code / ".frontier").mkdir(parents=True)
-    (code / ".frontier" / "settings.json").write_text("{}\n", encoding="utf-8")
+    (code / ".horizon").mkdir(parents=True)
+    (code / ".horizon" / "settings.json").write_text("{}\n", encoding="utf-8")
 
     payload = _install(code, Path(result["artifact"]["path"]))
 
     assert payload["ok"] is True
-    assert (code / ".frontier" / "settings.json").exists()
+    assert (code / ".horizon" / "settings.json").exists()
 
 
 def test_reinstalling_the_same_artifact_is_idempotent_and_keeps_installed_at(tmp_path):
@@ -779,10 +779,10 @@ def test_reinstalling_the_same_artifact_is_idempotent_and_keeps_installed_at(tmp
     code = tmp_path / "code"
 
     first = _install(code, artifact)
-    lock_path = code / ".frontier" / "dist.lock.json"
+    lock_path = code / ".horizon" / "dist.lock.json"
     lock_bytes = lock_path.read_bytes()
     installed_at = json.loads(lock_bytes)["installed_at"]
-    current_path = code / ".frontier" / "current"
+    current_path = code / ".horizon" / "current"
     current_bytes = current_path.read_bytes()
     mtime = (code / "hostrun" / "cli.py").stat().st_mtime_ns
     lock_mtime = lock_path.stat().st_mtime_ns
@@ -811,12 +811,12 @@ def test_a_different_artifact_reinstalls_over_the_existing_package(tmp_path):
     assert payload["ok"] is True
     assert payload["extracted"] is True
     assert payload["version"] == "0.2.0"
-    lock = json.loads((code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8"))
+    lock = json.loads((code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8"))
     assert lock["version"] == "0.2.0"
     assert lock["artifact_sha256"] == second["artifact"]["sha256"]
     assert lock["previous_version"] == "0.1.0"
-    assert (code / ".frontier" / "releases" / "0.1.0" / "manifest.json").is_file()
-    assert (code / ".frontier" / "current").read_text(encoding="utf-8").strip() == "0.2.0"
+    assert (code / ".horizon" / "releases" / "0.1.0" / "manifest.json").is_file()
+    assert (code / ".horizon" / "current").read_text(encoding="utf-8").strip() == "0.2.0"
 
 
 # -------------------------------------------------------------------- verify
@@ -825,7 +825,7 @@ def test_verify_tolerates_bytecode_caches_written_by_the_installed_cli(tmp_path)
 
     A live installation therefore always contains bytecode caches the manifest
     never listed.  ``install verify`` must treat them as runtime state, exactly
-    like ``.frontier``, or every real user's first verify would report a false
+    like ``.horizon``, or every real user's first verify would report a false
     mismatch against files the installation itself created.
     """
     result = _build(tmp_path)
@@ -914,7 +914,7 @@ def test_verify_reports_lock_disagreements_with_the_manifest(tmp_path):
     result = _build(tmp_path)
     code = tmp_path / "code"
     _install(code, Path(result["artifact"]["path"]))
-    lock_path = code / ".frontier" / "dist.lock.json"
+    lock_path = code / ".horizon" / "dist.lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     lock["version"] = "9.9.9"
     lock["package_file_count"] = 999
@@ -951,7 +951,7 @@ def test_verify_detects_a_tampered_manifest_even_when_every_file_matches(tmp_pat
 def test_cli_install_then_verify_returns_json_envelopes_and_exit_zero(tmp_path, capsys):
     result = _build(tmp_path)
     artifact = Path(result["artifact"]["path"])
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
 
     code, payload, captured = _cli(
         capsys, home, "install", "package", "--from", str(artifact)
@@ -962,7 +962,7 @@ def test_cli_install_then_verify_returns_json_envelopes_and_exit_zero(tmp_path, 
     assert payload["ok"] is True
     assert payload["status"] == "ok"
     assert payload["distribution"] == "package"
-    assert (tmp_path / "cli-code" / ".frontier" / "dist.lock.json").is_file()
+    assert (tmp_path / "cli-code" / ".horizon" / "dist.lock.json").is_file()
 
     code, payload, captured = _cli(capsys, home, "install", "verify")
 
@@ -974,7 +974,7 @@ def test_cli_install_then_verify_returns_json_envelopes_and_exit_zero(tmp_path, 
 def test_cli_digest_mismatch_exits_one_with_a_blocked_payload(tmp_path, capsys):
     result = _build(tmp_path)
     artifact = Path(result["artifact"]["path"])
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
 
     code, payload, captured = _cli(
         capsys,
@@ -992,11 +992,11 @@ def test_cli_digest_mismatch_exits_one_with_a_blocked_payload(tmp_path, capsys):
     assert payload["status"] == "blocked"
     assert payload["reason"] == "digest_mismatch"
     assert "Traceback" not in captured.err
-    assert not (tmp_path / "cli-code" / ".frontier" / "dist.lock.json").exists()
+    assert not (tmp_path / "cli-code" / ".horizon" / "dist.lock.json").exists()
 
 
 def test_cli_verify_without_a_lock_exits_one(tmp_path, capsys):
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
 
     code, payload, captured = _cli(capsys, home, "install", "verify")
 
@@ -1009,7 +1009,7 @@ def test_cli_verify_without_a_lock_exits_one(tmp_path, capsys):
 def test_cli_verify_mismatch_exits_one_with_specifics(tmp_path, capsys):
     result = _build(tmp_path)
     artifact = Path(result["artifact"]["path"])
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
     code, payload, _ = _cli(
         capsys, home, "install", "package", "--from", str(artifact)
     )
@@ -1028,7 +1028,7 @@ def test_cli_verify_mismatch_exits_one_with_specifics(tmp_path, capsys):
 def test_cli_channel_flag_is_recorded_in_the_lock(tmp_path, capsys):
     result = _build(tmp_path, channel="prerelease")
     artifact = Path(result["artifact"]["path"])
-    home = tmp_path / "cli-code" / ".frontier"
+    home = tmp_path / "cli-code" / ".horizon"
 
     code, payload, _ = _cli(
         capsys,
@@ -1044,7 +1044,7 @@ def test_cli_channel_flag_is_recorded_in_the_lock(tmp_path, capsys):
     assert code == 0
     assert payload["channel"] == "prerelease"
     lock = json.loads(
-        (tmp_path / "cli-code" / ".frontier" / "dist.lock.json").read_text(
+        (tmp_path / "cli-code" / ".horizon" / "dist.lock.json").read_text(
             encoding="utf-8"
         )
     )

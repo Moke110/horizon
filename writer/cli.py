@@ -27,7 +27,7 @@ from writer.tasks import build_task, validate as validate_outbox
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="writer", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("write", help="heuristic writer (fallback, no agent)")

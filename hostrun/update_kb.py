@@ -1,4 +1,4 @@
-"""``/frontier-update-kb`` read side: copy, shard, read and report (ADR 0009 §8).
+"""``/horizon-update-kb`` read side: copy, shard, read and report (ADR 0009 §8).
 
 The console command brackets the whole operation with a service pause and a
 restore, copies a chosen directory into ``<archive>/originals`` (md5 verified,
@@ -458,7 +458,7 @@ def pending_shards(state: dict) -> list[dict]:
 # --------------------------------------------------------------- agent runs
 def shard_task(shard: dict) -> str:
     lines = [
-        "你是 frontier 的知识读取子运行，只读、不写。",
+        "你是 horizon 的知识读取子运行，只读、不写。",
         "读取下列文件的内容，只产出候选知识卡片与命题；不要写入知识库，",
         "不要调用任何写库命令，也不要改动任何文件。",
         "只输出一个 JSON 对象，形如：",

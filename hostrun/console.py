@@ -10,9 +10,9 @@ the slash prompt and the command dispatcher — and nothing else:
 - scheduling and service pause/resume belong to later tickets; the commands that
   need them are registered here as explicit stubs, so an unknown instruction is
   never mistaken for an unimplemented one;
-- ``/frontier-status`` reads the persisted runtime area (``intents.status`` plus
+- ``/horizon-status`` reads the persisted runtime area (``intents.status`` plus
   the console state file) instead of probing the system again;
-- ``/frontier-logs`` tails the most recent ``logs/agent-<run_id>.log`` written by
+- ``/horizon-logs`` tails the most recent ``logs/agent-<run_id>.log`` written by
   :mod:`hostrun.agent_run`.
 
 The shell is injectable end to end (``isatty``, ``reader``, ``out``,
@@ -36,9 +36,9 @@ from common import ensure_dir, file_lock, now, read_json, write_json
 from hostrun import console_gate, launcher
 from hostrun.base import load_config, update_config
 
-SCRIPT_NAME = "frontier-console.cmd"
-WINDOW_TITLE = "frontier-console"
-PROMPT = "frontier> "
+SCRIPT_NAME = "horizon-console.cmd"
+WINDOW_TITLE = "horizon-console"
+PROMPT = "horizon> "
 
 LOCK_NAME = "console.lock"
 HEARTBEAT_NAME = "heartbeat.json"
@@ -59,35 +59,35 @@ LEVELS = ("INFO", "WARN", "ERROR")
 #: order.  Later tickets flip ``implemented`` and add a handler; the parser and
 #: the help text then follow automatically.
 COMMANDS = {
-    "/frontier-help": {
+    "/horizon-help": {
         "summary": "显示可用控制台指令",
         "implemented": True,
     },
-    "/frontier-status": {
+    "/horizon-status": {
         "summary": "查看服务状态、下一次推送与队列概览",
         "implemented": True,
     },
-    "/frontier-logs": {
+    "/horizon-logs": {
         "summary": "查看最近一次 Agent 运行的日志尾部",
         "implemented": True,
     },
-    "/frontier-start": {
+    "/horizon-start": {
         "summary": "启动服务（启动或从暂停恢复）",
         "implemented": True,
     },
-    "/frontier-stop": {
+    "/horizon-stop": {
         "summary": "暂停服务但保持控制台运行",
         "implemented": True,
     },
-    "/frontier-push": {
+    "/horizon-push": {
         "summary": "立即请求一次推送",
         "implemented": True,
     },
-    "/frontier-init": {
+    "/horizon-init": {
         "summary": "初始化资料目录、执行 Agent、Lark CLI 与飞书测试消息（后续步骤逐步接入）",
         "implemented": True,
     },
-    "/frontier-update-kb": {
+    "/horizon-update-kb": {
         "summary": "读取资料并逐条审阅知识卡片",
         "implemented": True,
     },
@@ -125,7 +125,7 @@ def state_path(home: Path) -> Path:
 
 
 def script_path(code: str | Path) -> Path:
-    """``<code>/bin/frontier-console.cmd``: the fixed double-click launcher."""
+    """``<code>/bin/horizon-console.cmd``: the fixed double-click launcher."""
     return Path(code) / "bin" / SCRIPT_NAME
 
 
@@ -133,11 +133,11 @@ def script_path(code: str | Path) -> Path:
 def script_text(code: str | Path, archive: str | Path, python: str) -> str:
     """The launcher argv, identical to the one ``install migrate`` writes.
 
-    ``%*`` forwards arguments, so ``frontier-console control start`` reaches
+    ``%*`` forwards arguments, so ``horizon-console control start`` reaches
     ``python -m hostrun.cli ... console control start`` while a double-click
     still starts the resident console with no arguments (#81).
 
-    A package installation delegates to ``<code>/bin/frontier.cmd`` so the
+    A package installation delegates to ``<code>/bin/horizon.cmd`` so the
     launcher keeps using the bundled runtime rather than a system interpreter;
     a source installation keeps the recorded absolute interpreter form byte for
     byte (#95).
@@ -151,7 +151,7 @@ def script_text(code: str | Path, archive: str | Path, python: str) -> str:
 
 
 def ensure_script(code: str | Path, archive: str | Path, python: str) -> dict:
-    """Create or refresh ``<code>/bin/frontier-console.cmd`` idempotently.
+    """Create or refresh ``<code>/bin/horizon-console.cmd`` idempotently.
 
     The file is written only when its text changed, so starting the console
     repeatedly does not touch the user's launcher.  A read-only checkout raises
@@ -171,12 +171,12 @@ def ensure_script(code: str | Path, archive: str | Path, python: str) -> dict:
 
 
 def install(home: Path, *, resolved: dict, python_path: str | None = None) -> dict:
-    """Prepare the Frontier launcher and check the bundled Agent; no process starts."""
+    """Prepare the Horizon launcher and check the bundled Agent; no process starts."""
     from hostrun import embedded_agent
     code, archive = Path(resolved["code"]), Path(resolved["archive"])
     python = str(python_path or sys.executable)
     update_config(home, paths={"repo": str(code), "python": python},
-                  host={"product": "frontier", "mode": "embedded-pi"})
+                  host={"product": "horizon", "mode": "embedded-pi"})
     facts = embedded_agent.runtime(home, code=code)
     try:
         script = ensure_script(code, archive, python)
@@ -184,7 +184,7 @@ def install(home: Path, *, resolved: dict, python_path: str | None = None) -> di
         script = {"ok": False, "error": str(exc)}
     ok = facts["ok"] and script.get("ok", False)
     return {"schema_version": 1, "ok": ok, "status": "ok" if ok else "blocked",
-            "note": "Frontier 内置 Pi Agent；首次启动时配置模型并绑定飞书" if ok else "；".join(facts["problems"] + [script.get("error", "")]),
+            "note": "Horizon 内置 Pi Agent；首次启动时配置模型并绑定飞书" if ok else "；".join(facts["problems"] + [script.get("error", "")]),
             "agent": facts, "script": script, "processes_started": False}
 
 
@@ -356,13 +356,13 @@ def help_text() -> str:
 
 def usage_hint(command: str = "") -> str:
     prefix = f"未知指令 {command}。" if command else "指令必须以 / 开头。"
-    return f"{prefix}\n输入 /frontier-help 查看可用指令。"
+    return f"{prefix}\n输入 /horizon-help 查看可用指令。"
 
 
 def _not_implemented(name: str) -> str:
     return (
         f"{name} 尚未实现：该能力由后续票据接入，本次不执行任何操作。\n"
-        "输入 /frontier-help 查看当前可用指令。"
+        "输入 /horizon-help 查看当前可用指令。"
     )
 
 
@@ -425,14 +425,14 @@ def status_text(snapshot: dict) -> str:
         f"知识库门禁：{gate_text}",
     ]
     if not gate_ready:
-        lines.append(f"  下一步：{gate.get('note') or '/frontier-update-kb'}")
+        lines.append(f"  下一步：{gate.get('note') or '/horizon-update-kb'}")
     request = queue.get("request") or {}
     last_error = str(request.get("last_error") or "")
     if last_error and last_error != "console_shutdown":
         lines.append(
             f"最近一次推送失败：{last_error}"
             f"（尝试 {request.get('attempts') or 0} 次；不会自动重试，"
-            "需要重试请执行 /frontier-push）"
+            "需要重试请执行 /horizon-push）"
         )
     return "\n".join(lines)
 
@@ -497,12 +497,12 @@ def dispatch(
     """Route one prompt line to one bounded action and return its text.
 
     The dispatcher never raises on a bad command.  The lifecycle commands
-    (``/frontier-start|stop|push``) delegate to :class:`hostrun.console_service.Service`;
+    (``/horizon-start|stop|push``) delegate to :class:`hostrun.console_service.Service`;
     when a test or a plain dispatch call supplies no service, a one-shot service
-    for the same runtime area is used.  ``/frontier-init`` delegates to the
+    for the same runtime area is used.  ``/horizon-init`` delegates to the
     initialization step machine (:mod:`hostrun.console_init`); ``init`` is an
     injectable zero-argument runner so the console can hand it the prompt's
-    reader/out/TTY seams.  ``/frontier-update-kb`` delegates to the segmented
+    reader/out/TTY seams.  ``/horizon-update-kb`` delegates to the segmented
     read (:mod:`hostrun.update_kb`), which pauses and restores the service around
     the read; ``update_kb`` is an injectable runner with the same call shape.
     When the read completed, the per-item review (:mod:`hostrun.update_kb_review`)
@@ -532,9 +532,9 @@ def dispatch(
             "command": name,
             "text": _not_implemented(name),
         }
-    if name == "/frontier-help":
+    if name == "/horizon-help":
         return {"ok": True, "action": "help", "command": name, "text": help_text()}
-    if name == "/frontier-status":
+    if name == "/horizon-status":
         try:
             snapshot = status_snapshot(home, status=status)
             text = status_text(snapshot)
@@ -547,7 +547,7 @@ def dispatch(
                 "text": f"状态读取失败：{type(exc).__name__}: {exc}",
             }
         return {"ok": True, "action": "status", "command": name, "text": text}
-    if name == "/frontier-logs":
+    if name == "/horizon-logs":
         try:
             tail = (logs or tail_agent_log)(home)
         except Exception as exc:  # noqa: BLE001 - a log read must not kill the console
@@ -565,14 +565,14 @@ def dispatch(
             "text": tail.get("text") or "暂无 Agent 运行日志。",
             "path": tail.get("path") or "",
         }
-    if name in ("/frontier-start", "/frontier-stop", "/frontier-push"):
+    if name in ("/horizon-start", "/horizon-stop", "/horizon-push"):
         from hostrun import console_service
 
         lifecycle = service if service is not None else console_service.Service(home)
-        if name == "/frontier-start":
+        if name == "/horizon-start":
             outcome = lifecycle.start()
             text = "服务已启动；定时推送与飞书响应已恢复。"
-        elif name == "/frontier-stop":
+        elif name == "/horizon-stop":
             outcome = lifecycle.pause()
             text = "服务已暂停；控制台仍在前台，定时推送与飞书响应已停止。"
         else:
@@ -580,25 +580,25 @@ def dispatch(
             if outcome.get("ok"):
                 text = "已发起一次推送请求。"
             elif outcome.get("reason") == "service_paused":
-                text = "服务已暂停，未派发推送；先执行 /frontier-start。"
+                text = "服务已暂停，未派发推送；先执行 /horizon-start。"
             elif outcome.get("reason") == "push_busy":
                 text = "已有推送正在运行，稍后再试。"
             elif outcome.get("reason") == "knowledge_not_ready":
                 text = (
                     "每日推送被知识库门禁挡住：待初始化知识库。"
-                    "先执行 /frontier-update-kb 完成知识库初始化（完成后自动放行）。"
+                    "先执行 /horizon-update-kb 完成知识库初始化（完成后自动放行）。"
                 )
             else:
                 text = "推送请求未派发：" + str(outcome.get("reason") or "unknown")
         return {
             "ok": bool(outcome.get("ok")),
-            "action": name.lstrip("/").replace("frontier-", ""),
+            "action": name.lstrip("/").replace("horizon-", ""),
             "reason": outcome.get("reason") or "",
             "command": name,
             "text": text,
             "service": outcome,
         }
-    if name == "/frontier-init":
+    if name == "/horizon-init":
         runner = init
         if runner is None:
             from hostrun import console_init
@@ -623,7 +623,7 @@ def dispatch(
             "text": str(outcome.get("text") or ""),
             "init": outcome,
         }
-    if name == "/frontier-update-kb":
+    if name == "/horizon-update-kb":
         from hostrun import update_kb as update_kb_mod
 
         source_arg = " ".join(parsed["args"]).strip().strip('"')
@@ -789,11 +789,11 @@ def serve(
     tick worker, dispatches the lifecycle slash commands, and shuts down (kill
     in-flight run, release lease, mark the request unfinished) in ``finally``.
 
-    ``init`` is an optional zero-argument runner for ``/frontier-init``.  The
+    ``init`` is an optional zero-argument runner for ``/horizon-init``.  The
     default binds the interactive step machine to the same reader/out/TTY seams
     as the prompt, so tests can drive a whole initialization through ``serve``.
 
-    ``review`` is an optional runner for ``/frontier-update-kb``'s per-item
+    ``review`` is an optional runner for ``/horizon-update-kb``'s per-item
     review.  The default binds the single-key review to the same out/TTY seams as
     the prompt; the key source stays the review module's live reader unless a
     test injects one.
@@ -885,7 +885,7 @@ def serve(
             f"控制台已启动（{started_at}，pid={os.getpid()}，服务={'已暂停' if paused else '运行中'}）",
             out=out,
         )
-        emit_event(home, "INFO", "console", "输入 /frontier-help 查看可用指令", out=out)
+        emit_event(home, "INFO", "console", "输入 /horizon-help 查看可用指令", out=out)
         if script is not None:
             if script.get("ok"):
                 emit_event(
@@ -1001,11 +1001,11 @@ def serve(
                         getattr(surface, "wait_card", None) if surface is not None else None
                     ),
                     # The knowledge-base choice "初始化知识库" enters the real
-                    # /frontier-update-kb flow (read + review) through the same
+                    # /horizon-update-kb flow (read + review) through the same
                     # dispatcher, so #87 hands off to #89/#90 and not to a copy.
                     update_kb=lambda: dispatch(
                         home,
-                        "/frontier-update-kb",
+                        "/horizon-update-kb",
                         service=lifecycle,
                         review=review_runner,
                     ),

@@ -53,7 +53,7 @@ STEP_NOTES = {
     "host": "宿主产品、版本、本机执行与实际权限",
     "workspace": "代码目录与资料目录分离（运行时区在代码目录内），已有副本检查与续接",
     "dependencies": "私有 uv、解释器、PyYAML/PyMuPDF 导入探针与仓库副本",
-    "skill": "frontier-run 入口指针及参考文件可读",
+    "skill": "horizon-run 入口指针及参考文件可读",
     "lark_cli": "飞书 CLI 由显式私有路径解析（仅可执行，未证明已登录）",
     "identity": "飞书 user / bot 身份与登录有效期",
     "permissions": "运行时区与 CLI 凭据目录写入、Base/Drive 资源读取与消息权限的真实预检",
@@ -244,7 +244,7 @@ def _is_bundled_runtime(repo: Path, python_path: Path) -> bool:
     if not python_path.is_absolute():
         return False
     try:
-        lock = read_json(repo / ".frontier" / "dist.lock.json")
+        lock = read_json(repo / ".horizon" / "dist.lock.json")
     except (OSError, ValueError):
         return False
     if not isinstance(lock, dict) or lock.get("distribution") != "package":
@@ -279,9 +279,9 @@ def probe_dependencies(
     repo = Path(repo)
     repair_hint = repair or "install toolchain --root <workspace> --clear"
     require = [
-        "skills/frontier-run/SKILL.md",
-        "skills/frontier-run/references/installation.md",
-        "skills/frontier-run/references/workflow.md",
+        "skills/horizon-run/SKILL.md",
+        "skills/horizon-run/references/installation.md",
+        "skills/horizon-run/references/workflow.md",
         "contracts/README.md",
         "common.py",
     ]
@@ -415,7 +415,7 @@ def lark_store_dir(store_dir: str | Path | None = None) -> Path:
 
 
 def _probe_file_writer(path: Path) -> None:
-    path.write_text("frontier write probe\n", encoding="utf-8")
+    path.write_text("horizon write probe\n", encoding="utf-8")
 
 
 def _nearest_existing_dir(target: Path) -> Path | None:
@@ -446,7 +446,7 @@ def _probe_one_write(target: Path, *, writer=None) -> dict:
             "probe": "",
             "error": "Path has no existing ancestor directory to probe",
         }
-    probe = root / f".frontier-write-probe-{uuid.uuid4().hex[:8]}"
+    probe = root / f".horizon-write-probe-{uuid.uuid4().hex[:8]}"
     try:
         (writer or _probe_file_writer)(probe)
         probe.unlink()
@@ -661,7 +661,7 @@ def check(
             repo_ok = repo_ok and (Path(ws["repo"]) / ".git").exists()
         home_ok = bool(ws.get("home")) and Path(ws["home"]).is_dir()
         wrapper = (
-            Path(ws["repo"]) / "bin" / "frontier.cmd"
+            Path(ws["repo"]) / "bin" / "horizon.cmd"
             if package and ws.get("repo")
             else None
         )
@@ -894,7 +894,7 @@ def _public_permissions(permissions: dict) -> dict:
 def _release_report(home: Path) -> dict:
     """The ``release`` block: package identity or a truthful source record.
 
-    ``home`` is the runtime area (``<code>/.frontier``); the install lock and
+    ``home`` is the runtime area (``<code>/.horizon``); the install lock and
     the retained releases live beside it.  A source installation never invents
     package fields: it reports ``version: null`` and ``channel: "source"`` with
     its commit instead (#97).  An absent lock stays ``recorded: false``.

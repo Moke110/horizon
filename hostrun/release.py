@@ -37,12 +37,12 @@ STABLE = "stable"
 PRERELEASE = "prerelease"
 CHANNELS = (STABLE, PRERELEASE)
 TAG_PREFIX = "v"
-ARTIFACT_TEMPLATE = "frontier-{version}-{channel}.zip"
-DIGEST_TEMPLATE = "frontier-{version}-{channel}.digest.json"
+ARTIFACT_TEMPLATE = "horizon-{version}-{channel}.zip"
+DIGEST_TEMPLATE = "horizon-{version}-{channel}.digest.json"
 MANIFEST_NAME = "manifest.json"
 RUNTIME_DIRNAME = "runtime"
 RUNTIME_PYTHON_NAME = "python.exe"
-WRAPPER_REL = "bin/frontier.cmd"
+WRAPPER_REL = "bin/horizon.cmd"
 RELEASE_INDEX_PATH = "releases/index.json"
 
 #: Fields of one release-index entry, in canonical JSON order.  ``compat`` keeps
@@ -252,7 +252,13 @@ def validate_entry(entry) -> None:
         )
 
     expected_name = expected_artifact_name(entry["version"], channel)
-    if entry["artifact_name"] != expected_name:
+    # Published pre-rename assets keep their original names and digests.
+    legacy_name = (
+        f"frontier-{entry['version']}-{channel}.zip"
+        if entry["version"] in {f"0.1.0-rc.{n}" for n in range(1, 7)}
+        else None
+    )
+    if entry["artifact_name"] != expected_name and (legacy_name is None or entry["artifact_name"] != legacy_name):
         raise ReleaseError(
             f"release entry artifact_name must be {expected_name!r}; "
             f"got {entry['artifact_name']!r}"
@@ -492,7 +498,7 @@ def resolve_release_source(
     if not filename or filename in {".", ".."} or parsed.path.endswith("/"):
         raise ReleaseError(
             "release URL must name the artifact filename, e.g. "
-            "https://host/frontier-0.1.0-stable.zip"
+            "https://host/horizon-0.1.0-stable.zip"
         )
     try:
         seconds = float(timeout)
@@ -504,7 +510,7 @@ def resolve_release_source(
         raise ReleaseError("download timeout must be greater than zero")
 
     if download_dir is None:
-        destination_dir = Path(tempfile.mkdtemp(prefix="frontier-release-"))
+        destination_dir = Path(tempfile.mkdtemp(prefix="horizon-release-"))
     else:
         destination_dir = Path(download_dir).expanduser().resolve()
     try:
@@ -716,7 +722,7 @@ def validate_runtime_dir(
 # ------------------------------------------------------------ release writing
 def release_title(meta: dict) -> str:
     """Human title for the GitHub Release."""
-    return f"frontier {meta['version']} ({meta['channel']})"
+    return f"horizon {meta['version']} ({meta['channel']})"
 
 
 def release_notes(
@@ -727,11 +733,11 @@ def release_notes(
     manifest_sha256: str,
     compat: dict,
     built_from_commit: str,
-    repository: str = "Moke110/frontier",
+    repository: str = "Moke110/horizon",
 ) -> str:
     """Release notes: identity, asset digests, compatibility and install pointer."""
     lines = [
-        f"## frontier {meta['version']} ({meta['channel']})",
+        f"## horizon {meta['version']} ({meta['channel']})",
         "",
         f"Built from commit `{built_from_commit}` on the "
         f"**{meta['channel']}** channel.",
@@ -882,7 +888,7 @@ def build_parser() -> argparse.ArgumentParser:
     notes = subparsers.add_parser("notes", help="render release notes")
     notes.add_argument("--tag", required=True)
     notes.add_argument("--digest", required=True)
-    notes.add_argument("--repository", default="Moke110/frontier")
+    notes.add_argument("--repository", default="Moke110/horizon")
     notes.add_argument("--out", default=None)
 
     argv = subparsers.add_parser("build-argv", help="print the build argv as JSON")

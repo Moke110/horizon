@@ -1,4 +1,4 @@
-"""Offline tests for ``/frontier-update-kb`` read-side (issue #89, ADR 0009 §8).
+"""Offline tests for ``/horizon-update-kb`` read-side (issue #89, ADR 0009 §8).
 
 The Console command pauses the service, copies a chosen directory into the
 archive's ``originals/`` (md5 verified, source untouched), shards whole files by
@@ -26,7 +26,7 @@ from hostrun import archive_index, console, update_kb
 
 # ------------------------------------------------------------------ fixtures
 def _runtime(tmp_path: Path) -> Path:
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     (home / "install").mkdir(parents=True)
     return home
 
@@ -432,7 +432,7 @@ def test_the_pause_covers_the_per_item_review_until_it_restores(tmp_path):
 
     result = console.dispatch(
         home,
-        "/frontier-update-kb",
+        "/horizon-update-kb",
         service=service,
         update_kb=runner,
         review=review,
@@ -479,7 +479,7 @@ def test_a_cancelled_read_releases_the_deferred_pause(tmp_path):
 
     result = console.dispatch(
         home,
-        "/frontier-update-kb",
+        "/horizon-update-kb",
         service=service,
         update_kb=runner,
         review=review,
@@ -603,7 +603,7 @@ def test_pdf_files_are_uploaded_through_the_library_seam(tmp_path):
 
 
 # --------------------------------------------------------- console command
-def test_frontier_update_kb_is_implemented_and_dispatches_to_the_runner(tmp_path):
+def test_horizon_update_kb_is_implemented_and_dispatches_to_the_runner(tmp_path):
     home = _runtime(tmp_path)
     captured: dict = {}
 
@@ -611,10 +611,10 @@ def test_frontier_update_kb_is_implemented_and_dispatches_to_the_runner(tmp_path
         captured.update({"runtime": Path(runtime), **kwargs})
         return {"ok": True, "action": "update_kb", "reason": "done", "text": "更新完成"}
 
-    assert console.COMMANDS["/frontier-update-kb"]["implemented"] is True
+    assert console.COMMANDS["/horizon-update-kb"]["implemented"] is True
     result = console.dispatch(
         home,
-        "/frontier-update-kb E:\\papers\\inbox",
+        "/horizon-update-kb E:\\papers\\inbox",
         update_kb=fake_update_kb,
     )
 

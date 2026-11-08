@@ -220,7 +220,7 @@ def test_library_alerts_are_delivered_as_copyable_text(kl_home):
         "limit_bytes": 5 * 1024**3,
         "percent": 80.0,
         "candidates": {"count": 3, "bytes": 200 * 1024**2},
-        "instruction": "清理 frontier 原文库：把 3 篇下载到 ~/frontier-offline/2026-10-26/。",
+        "instruction": "清理 horizon 原文库：把 3 篇下载到 ~/horizon-offline/2026-10-26/。",
     }
     write_json(kl_home / "library" / "alerts" / "a1.json", alert)
 
@@ -234,7 +234,7 @@ def test_library_alerts_are_delivered_as_copyable_text(kl_home):
     text = read_json(outbox[0])["text"]
     assert "80.0%" in text
     assert "4.00 GB / 5.00 GB" in text
-    assert "清理 frontier 原文库" in text
+    assert "清理 horizon 原文库" in text
 
 
 def test_put_push_is_skipped_without_library_config(kl_home, tmp_path):
@@ -461,7 +461,7 @@ def test_cli_resolve_send_not_sent_clears_the_attempt(kl_home, tmp_path, monkeyp
 def test_feishu_prefers_the_recorded_cli_path(monkeypatch, tmp_path):
     from publisher import feishu
 
-    root = tmp_path / "code" / ".frontier"
+    root = tmp_path / "code" / ".horizon"
     (root / "install").mkdir(parents=True)
     executable = tmp_path / "bin" / "lark-cli.exe"
     executable.parent.mkdir()
@@ -492,7 +492,7 @@ def test_feishu_prefers_the_recorded_cli_path(monkeypatch, tmp_path):
 def test_feishu_refuses_a_stale_recorded_cli_path(monkeypatch, tmp_path):
     from publisher import feishu
 
-    root = tmp_path / "code" / ".frontier"
+    root = tmp_path / "code" / ".horizon"
     (root / "install").mkdir(parents=True)
     (root / "install" / "config.json").write_text(
         json.dumps({"paths": {"lark_cli": str(tmp_path / "retired" / "lark-cli.exe")}}),
@@ -523,7 +523,7 @@ def test_cli_code_reaches_the_recorded_cli_lookup(monkeypatch, tmp_path):
     from publisher import cli as publisher_cli
     from publisher import feishu
 
-    root = tmp_path / "code" / ".frontier"
+    root = tmp_path / "code" / ".horizon"
     (root / "install").mkdir(parents=True)
     executable = tmp_path / "bin" / "lark-cli.exe"
     executable.parent.mkdir()
@@ -547,13 +547,13 @@ def test_cli_code_reaches_the_recorded_cli_lookup(monkeypatch, tmp_path):
     assert code == 0
     assert seen["home"] == root
     assert seen["recorded"] == str(executable)
-    assert os.environ["FRONTIER_RUNTIME"] == str(root)
+    assert os.environ["HORIZON_RUNTIME"] == str(root)
 
 
 def test_get_message_uses_the_recorded_cli_path(monkeypatch, tmp_path):
     from publisher import feishu
 
-    root = tmp_path / "code" / ".frontier"
+    root = tmp_path / "code" / ".horizon"
     (root / "install").mkdir(parents=True)
     executable = tmp_path / "bin" / "lark-cli.exe"
     executable.parent.mkdir()
@@ -584,7 +584,7 @@ def test_get_message_uses_the_recorded_cli_path(monkeypatch, tmp_path):
 def test_available_reports_a_stale_recorded_path_as_unavailable(monkeypatch, tmp_path):
     from publisher import feishu
 
-    root = tmp_path / "code" / ".frontier"
+    root = tmp_path / "code" / ".horizon"
     (root / "install").mkdir(parents=True)
     (root / "install" / "config.json").write_text(
         json.dumps({"paths": {"lark_cli": str(tmp_path / "retired" / "lark-cli.exe")}}),

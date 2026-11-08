@@ -4,7 +4,7 @@ ADR 0009 keeps the archive directory free of ledgers.  The index therefore lives
 in the code directory runtime area and records, for every material file under
 ``originals/`` and ``pushes/``, its business id, size and content md5.  It is
 append-only in effect: re-registering the same bytes is a no-op, so
-``/frontier-update-kb`` can ask "which files are new?" without re-reading a
+``/horizon-update-kb`` can ask "which files are new?" without re-reading a
 directory twice.
 
 Nothing here writes into the archive directory and nothing touches Feishu.

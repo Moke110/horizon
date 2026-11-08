@@ -1,4 +1,4 @@
-"""frontier CLI."""
+"""horizon CLI."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ import sys
 from pathlib import Path
 
 from common import emit, write_json
-from frontier.model import FrontierError, plan, record, show, validate
+from horizon.model import HorizonError, plan, record, show, validate
 from hostrun import layout
 from hostrun.base import HostRunError
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="frontier", description=__doc__)
+    parser = argparse.ArgumentParser(prog="horizon", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("validate", help="check every knowledge card has its four fields")
@@ -64,8 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "record":
             emit(record(root, args.checkpoint, args.verdict, args.pushed))
         else:  # pragma: no cover
-            raise FrontierError(f"unknown command {args.cmd}")
-    except FrontierError as exc:
+            raise HorizonError(f"unknown command {args.cmd}")
+    except HorizonError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1
     return 0

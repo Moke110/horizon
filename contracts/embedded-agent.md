@@ -1,6 +1,6 @@
-# Embedded Frontier Agent
+# Embedded Horizon Agent
 
-Frontier owns the Agent lifecycle. The TypeScript implementation in `agent/`
+Horizon owns the Agent lifecycle. The TypeScript implementation in `agent/`
 embeds the pinned Pi SDK; no DSH executable, external Pi installation or host
 skill registration is required. Existing Python modules retain business rules,
 validation, storage, rendering and PDF extraction.
@@ -8,10 +8,10 @@ validation, storage, rendering and PDF extraction.
 The console launches the packaged `runtime/node.exe` and `agent/dist/main.js`.
 Source checkouts may resolve Node from PATH. The console passes the runtime
 directory and task kind, and supplies its own Python interpreter through
-`FRONTIER_PYTHON`. Model keys never appear in argv. Pi resources are isolated
+`HORIZON_PYTHON`. Model keys never appear in argv. Pi resources are isolated
 from global Pi settings and development AGENTS.md.
 
-Configuration is local at `.frontier/agent/model.json`: `provider`, `model`,
+Configuration is local at `.horizon/agent/model.json`: `provider`, `model`,
 `apiKey`, and optional `baseUrl` for an OpenAI-compatible endpoint. It is a
 credential file, not an artifact or an installation-report field. Protect it
 with the same account permissions as other local credentials.
@@ -22,9 +22,9 @@ Tool policies:
 |---|---|
 | `intent_judgement` | none; JSON classification only |
 | `kb_read` | `read_file`; extracted source text only, no mutations |
-| other business runs | `read_file`, `write_file`, `frontier_cli` |
+| other business runs | `read_file`, `write_file`, `horizon_cli` |
 
-`frontier_cli` spawns an allowlisted business module with argv, without a shell.
+`horizon_cli` spawns an allowlisted business module with argv, without a shell.
 The Python validators and user-review gates remain authoritative. File tools
 reject credential directories and writes outside runtime/archive directories.
 This is an application tool boundary, not an operating-system sandbox.

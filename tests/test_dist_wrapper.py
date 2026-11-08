@@ -1,6 +1,6 @@
 """Bundled runtime layout and launcher wrappers (#95).
 
-A distribution package carries its own interpreter and a ``bin/frontier.cmd``
+A distribution package carries its own interpreter and a ``bin/horizon.cmd``
 wrapper, so an installation needs no system Python and no PATH lookup.  These
 tests pin the wrapper bytes, the deterministic runtime copy, the manifest
 coverage and the console's package-mode delegation; a real "no system Python"
@@ -22,12 +22,12 @@ from hostrun import console, dist, distribution, launcher
 PACKAGE_FILES = {
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
 }
@@ -120,7 +120,7 @@ def test_wrapper_text_is_a_fully_quoted_no_path_launcher():
 
 
 def test_write_wrapper_uses_crlf_bytes_and_creates_the_bin_directory(tmp_path):
-    path = tmp_path / "package" / "bin" / "frontier.cmd"
+    path = tmp_path / "package" / "bin" / "horizon.cmd"
 
     written = launcher.write_wrapper(path)
 
@@ -133,16 +133,16 @@ def test_write_wrapper_uses_crlf_bytes_and_creates_the_bin_directory(tmp_path):
 
 
 def test_console_script_source_mode_matches_the_pinned_launcher():
-    code = Path("C:/frontier")
+    code = Path("C:/horizon")
     archive = Path("C:/papers")
-    python = "C:/frontier/runtime/python.exe"
+    python = "C:/horizon/runtime/python.exe"
 
     text = launcher.console_script_text(code, archive, python)
 
     assert text == (
-        "title frontier-console\n"
-        'cd /d "C:\\frontier"\n'
-        '"C:/frontier/runtime/python.exe" -m hostrun.cli --code "C:\\frontier" '
+        "title horizon-console\n"
+        'cd /d "C:\\horizon"\n'
+        '"C:/horizon/runtime/python.exe" -m hostrun.cli --code "C:\\horizon" '
         '--archive "C:\\papers" console %*\n'
     )
     assert console.script_text(code, archive, python) == text
@@ -161,7 +161,7 @@ def test_build_copies_the_runtime_verbatim_and_generates_the_wrapper(
             continue
         assert (package / "runtime" / rel).read_bytes() == data, rel
 
-    wrapper = package / "bin" / "frontier.cmd"
+    wrapper = package / "bin" / "horizon.cmd"
     assert wrapper.read_bytes() == launcher.wrapper_text().encode("utf-8")
     assert wrapper.read_bytes().split(b"\r\n")[0] == b"@echo off"
 
@@ -174,10 +174,10 @@ def test_build_copies_the_runtime_verbatim_and_generates_the_wrapper(
         "runtime/DLLs/select.pyd",
         "runtime/Lib/site-packages/yaml/__init__.py",
         "runtime/Lib/site-packages/fitz/__init__.py",
-        "bin/frontier.cmd",
+        "bin/horizon.cmd",
     } <= set(rows)
     assert rows["runtime/python.exe"]["executable"] is True
-    assert rows["bin/frontier.cmd"]["executable"] is True
+    assert rows["bin/horizon.cmd"]["executable"] is True
     assert rows["runtime/python313.dll"]["executable"] is False
     assert result["runtime"]["files"] == len(
         [rel for rel in RUNTIME_FILES if "__pycache__" not in rel and not rel.endswith(".pyc")]
@@ -189,9 +189,9 @@ def test_build_without_a_runtime_dir_keeps_the_93_layout(source, tmp_path):
     package = Path(result["package"])
 
     assert not (package / "runtime").exists()
-    assert not (package / "bin" / "frontier.cmd").exists()
+    assert not (package / "bin" / "horizon.cmd").exists()
     assert not any(path.startswith("runtime/") for path in _listed(result))
-    assert "bin/frontier.cmd" not in _listed(result)
+    assert "bin/horizon.cmd" not in _listed(result)
     assert result["runtime"] is None
     assert result["launcher"] is None
 
@@ -210,7 +210,7 @@ def test_build_rejects_an_invalid_runtime_dir(source, tmp_path, broken, pattern)
         _build(source, tmp_path / "out", runtime_dir=runtime_dir)
 
     # Validation happens before the package directory is created.
-    assert not (tmp_path / "out" / "frontier-0.1.0-stable").exists()
+    assert not (tmp_path / "out" / "horizon-0.1.0-stable").exists()
 
 
 def test_same_runtime_directory_builds_byte_identical_packages(
@@ -299,7 +299,7 @@ def test_cli_reports_an_invalid_runtime_dir_before_writing(source, tmp_path):
     payload = json.loads(completed.stdout)
     assert payload["ok"] is False
     assert "python.exe" in payload["error"]
-    assert not (tmp_path / "out" / "frontier-0.1.0-stable").exists()
+    assert not (tmp_path / "out" / "horizon-0.1.0-stable").exists()
 
 
 # ------------------------------------------------- console package delegation
@@ -307,26 +307,26 @@ def test_console_package_mode_delegates_to_the_wrapper(tmp_path):
     code = tmp_path / "code"
     archive = tmp_path / "papers"
     (code / "bin").mkdir(parents=True)
-    (code / "bin" / "frontier.cmd").write_bytes(
+    (code / "bin" / "horizon.cmd").write_bytes(
         launcher.wrapper_text().encode("utf-8")
     )
-    (code / ".frontier").mkdir()
-    (code / ".frontier" / "dist.lock.json").write_text(
+    (code / ".horizon").mkdir()
+    (code / ".horizon" / "dist.lock.json").write_text(
         json.dumps({"schema_version": 1, "distribution": "package"}),
         encoding="utf-8",
     )
 
     first = console.ensure_script(code, archive, "C:/system/python.exe")
-    path = code / "bin" / "frontier-console.cmd"
+    path = code / "bin" / "horizon-console.cmd"
     text = path.read_text(encoding="utf-8")
 
     assert first["written"] is True
     assert text == (
-        "title frontier-console\n"
-        f'call "%~dp0frontier.cmd" --code "{code}" '
+        "title horizon-console\n"
+        f'call "%~dp0horizon.cmd" --code "{code}" '
         f'--archive "{archive}" console %*\n'
     )
-    assert text.startswith("title frontier-console\n")
+    assert text.startswith("title horizon-console\n")
     assert text.rstrip().endswith("%*")
     assert "python.exe" not in text
 
@@ -339,10 +339,10 @@ def test_console_source_mode_bytes_are_unchanged(tmp_path):
     python = "C:/python/python.exe"
 
     assert console.ensure_script(code, archive, python)["written"] is True
-    text = (code / "bin" / "frontier-console.cmd").read_text(encoding="utf-8")
+    text = (code / "bin" / "horizon-console.cmd").read_text(encoding="utf-8")
 
     assert text == (
-        "title frontier-console\n"
+        "title horizon-console\n"
         f'cd /d "{code}"\n'
         f'"{python}" -m hostrun.cli --code "{code}" --archive "{archive}" console %*\n'
     )
@@ -369,7 +369,7 @@ def test_verify_tolerates_the_generated_console_launcher(
     dist.install_package(code, from_source=Path(result["artifact"]["path"]))
 
     console.ensure_script(code, tmp_path / "papers", "C:/unused/python.exe")
-    generated = code / "bin" / "frontier-console.cmd"
+    generated = code / "bin" / "horizon-console.cmd"
     assert generated.is_file()
 
     payload = dist.verify_install(code)

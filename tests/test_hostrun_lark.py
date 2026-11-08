@@ -14,14 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _workspace(tmp_path):
     root = tmp_path / "ws"
-    home = root / "frontier-archive"
+    home = root / "horizon-archive"
     home.mkdir(parents=True)
     workspace.save_record(
         root,
         {
             "schema_version": 1,
             "root": str(root),
-            "repo": str(root / "frontier"),
+            "repo": str(root / "horizon"),
             "home": str(home),
             "repo_url": workspace.DEFAULT_REPO_URL,
             "commit": "abc123",
@@ -61,7 +61,7 @@ class Proc:
 
 def test_discover_prefers_private_launcher(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "")
-    binary = tmp_path / ".frontier" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
+    binary = tmp_path / ".horizon" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
     binary.parent.mkdir(parents=True)
     binary.write_text("", encoding="utf-8")
 
@@ -93,7 +93,7 @@ def test_private_npm_install_writes_launcher_under_workspace(tmp_path, monkeypat
     def runner(argv, **kwargs):
         calls.append(list(argv))
         if "install" in argv:
-            entry = tmp_path / ".frontier" / "lark" / "node_modules" / "@larksuite" / "cli" / "bin"
+            entry = tmp_path / ".horizon" / "lark" / "node_modules" / "@larksuite" / "cli" / "bin"
             entry.mkdir(parents=True, exist_ok=True)
             (entry / "lark-cli.js").write_text("// fake", encoding="utf-8")
             return Proc(stdout="added 1 package")
@@ -104,7 +104,7 @@ def test_private_npm_install_writes_launcher_under_workspace(tmp_path, monkeypat
 
     assert result["ok"] is True
     launcher = Path(result["path"])
-    assert launcher.parent == tmp_path / ".frontier" / "bin"
+    assert launcher.parent == tmp_path / ".horizon" / "bin"
     assert launcher.is_file()
     if os.name == "nt":
         text = launcher.read_text(encoding="utf-8").lower()
@@ -204,7 +204,7 @@ def test_status_reaches_ok_from_real_base_and_drive_reads(tmp_path):
         encoding="utf-8",
     )
     root = tmp_path / "ws"
-    binary = root / ".frontier" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
+    binary = root / ".horizon" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
     binary.parent.mkdir(parents=True)
     binary.write_text("", encoding="utf-8")
 
@@ -323,7 +323,7 @@ def test_status_accepts_explicit_tokens_without_writing_the_library(tmp_path):
         json.dumps({"base_token": "bas_recorded"}), encoding="utf-8"
     )
     root = tmp_path / "ws"
-    binary = root / ".frontier" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
+    binary = root / ".horizon" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
     binary.parent.mkdir(parents=True)
     binary.write_text("", encoding="utf-8")
     before = {
@@ -407,7 +407,7 @@ def test_cli_status_accepts_explicit_tokens(tmp_path, monkeypatch):
 
 def test_status_never_echoes_credentials(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "")
-    binary = tmp_path / ".frontier" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
+    binary = tmp_path / ".horizon" / "bin" / ("lark-cli.cmd" if os.name == "nt" else "lark-cli")
     binary.parent.mkdir(parents=True)
     binary.write_text("", encoding="utf-8")
 
