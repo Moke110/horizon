@@ -163,10 +163,13 @@ class AgentService:
     def start_child(self, command, *, token):
         return self._child_command(command, token=token, finishing=False)
 
+    def attempt_child(self, command, *, token):
+        return self._child_command(command, token=token, finishing=True, attempting=True)
+
     def finish_child(self, command, *, token):
         return self._child_command(command, token=token, finishing=True)
 
-    def _child_command(self, command, *, token, finishing):
+    def _child_command(self, command, *, token, finishing, attempting=False):
         self._authorize(token)
         if not isinstance(command, dict):
             raise CommandError('invalid_command', 'Command must be an object')
@@ -178,7 +181,10 @@ class AgentService:
         identity = command.get('child_id' if finishing else 'task_id')
         if not isinstance(identity, str) or not identity:
             raise CommandError('invalid_command', 'Entity identity is required')
-        if finishing:
+        if attempting:
+            if not isinstance(command.get('snapshots'), dict):
+                raise CommandError('invalid_command', 'snapshots required')
+        elif finishing:
             if command.get('status') not in ('succeeded', 'failed'):
                 raise CommandError('invalid_command', 'Invalid child status')
             for field in ('result', 'error'):
@@ -191,7 +197,7 @@ class AgentService:
             text = command.get('input_text')
             if not isinstance(text, str) or not text.strip() or len(text) > 16000:
                 raise CommandError('invalid_command', 'Child input must be bounded text')
-        request = json.dumps({'action':'finish_child' if finishing else 'start_child','command':command},sort_keys=True)
+        request = json.dumps({'action':'attempt_child' if attempting else 'finish_child' if finishing else 'start_child','command':command},sort_keys=True)
         with self._connect() as db:
             db.execute('BEGIN IMMEDIATE')
             previous = db.execute('SELECT request,result FROM agent_operations WHERE operation_id=?',(operation,)).fetchone()
@@ -208,8 +214,13 @@ class AgentService:
                     raise CommandError('version_conflict', 'expected_version conflicts with child version')
                 if result['status'] != 'running':
                     raise CommandError('version_conflict', 'Child already completed')
-                result.update(status=command['status'], result=command.get('result',''), error=command.get('error',''),version=2,operation_id=operation)
-                event_type = 'agent.child_finished'
+                if attempting:
+                    result.setdefault('attempts', []).append({'operation_id':operation,'snapshots':command['snapshots']})
+                    result['snapshots'] = command['snapshots']
+                    event_type = 'agent.child_attempted'
+                else:
+                    result.update(status=command['status'], result=command.get('result',''), error=command.get('error',''),version=result['version']+1,operation_id=operation)
+                    event_type = 'agent.child_finished'
             else:
                 row = db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(identity,)).fetchone()
                 if not row:
@@ -276,7 +287,7 @@ class AgentService:
                 if any(t['status']=='running' for t in active): raise CommandError('version_conflict','Task has an unfinished turn')
                 if not task['messages']: task['title'] = text[:24]
                 task['messages'].append({'role':'You','text':text}); task['version'] += 1
-                turn = {'schema_version':1,'turn_id':operation,'task_id':task['task_id'],'session_id':task['session_id'],'input_version':task['version'],'version':1,'status':'running','text':text,'result':'','error':'','attempts':[]}
+                turn = {'schema_version':1,'turn_id':operation,'operation_id':operation,'entity_id':operation,'task_id':task['task_id'],'session_id':task['session_id'],'input_version':task['version'],'version':1,'status':'running','text':text,'result':'','error':'','attempts':[]}
                 db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?',(json.dumps(task),task['task_id']))
             else:
                 row = db.execute('SELECT result FROM agent_turns WHERE turn_id=?',(command.get('turn_id'),)).fetchone()
@@ -298,6 +309,8 @@ class AgentService:
                         task = json.loads(db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(turn['task_id'],)).fetchone()[0])
                         task['messages'].append({'role':'Horizon','text':result}); task['version'] += 1
                         db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?',(json.dumps(task),task['task_id']))
+            turn['operation_id'] = operation
+            turn['entity_id'] = turn['turn_id']
             encoded = json.dumps(turn)
             db.execute('INSERT INTO agent_turns VALUES(?,?,?) ON CONFLICT(turn_id) DO UPDATE SET result=excluded.result',(turn['turn_id'],turn['task_id'],encoded))
             db.execute('INSERT INTO agent_operations VALUES(?,?,?)',(operation,request,encoded))

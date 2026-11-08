@@ -134,7 +134,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   ];
   const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   let inputReader: ReturnType<typeof createInterface> | undefined;
-  const occurrences = new Map<string, number>();
+
   const delegate = defineTool({ name: "delegate", label: "Delegate development task", description: "Run an independent restricted development_reader or development_summarizer session. These are development test roles, not Voyager or Editor. Return includes stable artifact reference, child session identity and success/failure. Give bounded input only, never credentials or the entire conversation.",
     parameters: Type.Object({ role: Type.Union([Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
     execute: async (_id, p, signal) => {
@@ -146,10 +146,9 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       }
       let requestId = _id;
       if (values["turn-id"]) {
-        const semantic = createHash("sha256").update(JSON.stringify([p.role, p.input])).digest("hex");
-        const occurrence = (occurrences.get(semantic) || 0) + 1;
-        occurrences.set(semantic, occurrence);
-        requestId = `${semantic}:${occurrence}`;
+        const entry = [...sessionManager.getBranch()].reverse().find((entry: any) => entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((part: any) => part.type === "toolCall" && part.id === _id));
+        if (!entry) throw new Error("Tool call must be persisted before execution");
+        requestId = createHash("sha256").update(JSON.stringify([entry.id, _id])).digest("hex");
       }
       return await new Promise<any>((resolveReply, reject) => {
         const abort = () => { pending.delete(requestId); reject(new Error("Delegation cancelled")); };
@@ -188,9 +187,15 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
     }
   }
+  let recoveredMessages: any[] = [];
   if (values["turn-id"]) {
     const marker = sessionManager.getEntries().find((entry: any) => entry.type === "custom" && entry.customType === "horizon.turn" && entry.data?.turnId === values["turn-id"]) as any;
-    if (marker) sessionManager.branch(marker.id);
+    if (marker) {
+      const branch = sessionManager.getBranch();
+      const index = branch.findIndex(entry => entry.id === marker.id);
+      if (index < 0) throw new Error("Turn marker is not on active session branch");
+      recoveredMessages = branch.slice(index + 1).filter((entry: any) => entry.type === "message").map((entry: any) => entry.message);
+    }
     else sessionManager.appendCustomEntry("horizon.turn", { turnId: values["turn-id"] });
   }
   const { session } = await createAgentSession({ cwd: code, agentDir, modelRuntime: models, model,
@@ -223,7 +228,24 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     if (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason)) failure = event.message.errorMessage || event.message.stopReason;
   });
   try {
-    await session.prompt(values.task);
+    if (recoveredMessages.length) {
+      const lastAssistant = recoveredMessages.findLast(message => message.role === "assistant");
+      const calls = lastAssistant?.content.filter((part: any) => part.type === "toolCall") || [];
+      if (!(lastAssistant?.stopReason === "stop" && calls.length === 0)) {
+        if (lastAssistant) {
+          const after = recoveredMessages.slice(recoveredMessages.lastIndexOf(lastAssistant) + 1);
+          for (const call of calls) {
+            if (after.some(message => message.role === "toolResult" && message.toolCallId === call.id)) continue;
+            const tool = session.agent.state.tools.find(tool => tool.name === call.name);
+            if (!tool || !["read_file", "delegate", "developer_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
+            const output = await tool.execute(call.id, call.arguments, undefined);
+            sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });
+          }
+        }
+        session.agent.state.messages = sessionManager.buildSessionContext().messages;
+        await session.agent.continue();
+      }
+    } else await session.prompt(values.task);
     if (failure) throw new Error(failure);
     emit({ type: "final", text: session.getLastAssistantText() || "" });
     emit({ type: "status", phase: "turn_end", reason: "completed" });

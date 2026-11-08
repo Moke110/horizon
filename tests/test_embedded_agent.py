@@ -230,7 +230,7 @@ def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_co
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='recovery-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
         session_id=str(uuid.uuid4()); identities=[]
         args=embedded_agent.argv(tmp_path,'Recovery unique question',kind='agent',code=ROOT,session_id=session_id)+['--turn-id','stable-turn']
-        for _ in range(2):
+        for attempt in range(3):
             proc=subprocess.Popen(args,cwd=ROOT,env={**os.environ,'HORIZON_PYTHON':sys.executable},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
             timer=threading.Timer(35,proc.kill);timer.start();ids=[]
             try:
@@ -238,19 +238,22 @@ def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_co
                     event=json.loads(line)
                     if event['type']=='delegate_request':
                         ids.append(event['requestId'])
+                        if attempt == 0:
+                            proc.kill(); break  # owner committed, reply not yet persisted by Pi
                         proc.stdin.write(json.dumps({'requestId':event['requestId'],'result':{'status':'succeeded','artifact_ref':'agent-child:'+str(len(ids)),'result':'read result'}})+'\n');proc.stdin.flush()
-                assert proc.wait(timeout=5)==0,proc.stderr.read()
+                code=proc.wait(timeout=5)
+                if attempt: assert code==0,proc.stderr.read()
             finally:
                 timer.cancel()
                 if proc.poll() is None:proc.kill();proc.wait()
             identities.append(ids)
-        assert len(identities[0])==3 and len(set(identities[0]))==3
-        assert identities[1]==identities[0]
-        assert len(requests)==6
-        for index in (0,3):
-            encoded=json.dumps(requests[index]['messages'])
-            assert encoded.count('Recovery unique question')==1
-            assert 'Both child artifacts received' not in encoded
-            assert {t['function']['name'] for t in requests[index]['tools']}=={'read_file','delegate'}
+        assert len(identities[0]) == 1
+        assert len(identities[1]) == 3 and len(set(identities[1])) == 3
+        assert identities[1][0] == identities[0][0]
+        assert identities[2] == []  # completed assistant result is handed to owner without planning
+        assert len(requests) == 3
+        assert json.dumps(requests[0]['messages']).count('Recovery unique question') == 1
+        assert 'same bounded input' in json.dumps(requests[1]['messages'])
+        assert any(m.get('role') == 'tool' for m in requests[1]['messages'])
     finally:
         server.shutdown();server.server_close();thread.join()

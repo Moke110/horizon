@@ -207,3 +207,27 @@ def test_turn_attempt_snapshots_preserve_previous_versions(tmp_path):
     state=service.recoverable_turns(token='s')[0]
     assert [a['snapshots']['knowledge']['version'] for a in state['attempts']]==[1,2]
     assert state['input_version']==turn['input_version']
+
+
+def test_turn_dto_and_unfinished_child_snapshot_refresh(tmp_path):
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    begin = {'schema_version':1,'operation_id':'turn','task_id':task['task_id'],'expected_version':1,'text':'work'}
+    turn = service.begin_turn(begin,token='s')
+    assert turn['operation_id']=='turn' and turn['entity_id']=='turn'
+    assert service.begin_turn(begin,token='s')==turn
+    attempt = {'schema_version':1,'operation_id':'attempt','turn_id':'turn','snapshots':{'knowledge':{'version':2}}}
+    observed=service.attempt_turn(attempt,token='s')
+    assert observed['operation_id']=='attempt' and observed['entity_id']=='turn'
+    assert service.attempt_turn(attempt,token='s')==observed
+    child=service.start_child({'schema_version':1,'operation_id':'child','task_id':task['task_id'],'input_version':2,'role':'development_reader','input_text':'read','snapshots':{'knowledge':{'version':1}}},token='s')
+    child=service.attempt_child({'schema_version':1,'operation_id':'retry','child_id':child['child_id'],'expected_version':1,'snapshots':{'knowledge':{'version':2}}},token='s')
+    assert child['snapshots']['knowledge']['version']==2
+    done=service.finish_child({'schema_version':1,'operation_id':'finish','child_id':child['child_id'],'expected_version':1,'status':'succeeded','result':'read'},token='s')
+    with pytest.raises(ValueError):
+        service.attempt_child({'schema_version':1,'operation_id':'late','child_id':child['child_id'],'expected_version':2,'snapshots':{'knowledge':{'version':3}}},token='s')
+    assert service.list_children(task['task_id'],token='s')[0]['snapshots']==done['snapshots']
+    commit={'schema_version':1,'operation_id':'commit','turn_id':'turn','expected_version':1,'status':'completed','result':'done'}
+    result=service.commit_turn(commit,token='s')
+    assert result['entity_id']=='turn' and result['operation_id']=='commit'
+    assert service.commit_turn(commit,token='s')==result

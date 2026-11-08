@@ -97,6 +97,7 @@ class DesktopWorker:
             child = next(item for item in self.service.list_children(self.task_id, token=self.service_token) if item['child_id'] == child['child_id'])
         if child['status'] != 'running':
             return child
+        child = self.service.attempt_child({'schema_version':1,'operation_id':str(uuid.uuid4()),'child_id':child['child_id'],'expected_version':child['version'],'snapshots':getattr(self,'current_snapshots',{})},token=self.service_token)
         self.events.put(('children', None))
         output = ''
         status, error = 'failed', ''
