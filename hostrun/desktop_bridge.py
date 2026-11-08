@@ -212,4 +212,7 @@ def serve(resolved):
         app.closed = True; app.stop(); app.answers.put(None)
         if exit_code:
             raise RuntimeError(f'Electron exited before completing desktop session (exit {exit_code:#x})')
-        if os.name == 'nt': os._exit(0)
+        if os.name == 'nt':
+            record_event(service.home, 'desktop_exit', pid=os.getpid(), exit_code=0,
+                         status='explicit_exit' if exiting.is_set() else 'renderer_closed')
+            os._exit(0)

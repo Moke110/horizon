@@ -42,7 +42,7 @@ def export_report(home,output,*,code=None,tasks=()):
                 for line in stream.read(LIMIT+4096).splitlines():
                     try: row=json.loads(line)
                     except ValueError: continue
-                    if not isinstance(row,dict) or row.get('event') not in _EVENTS: continue
+                    if not isinstance(row,dict) or not isinstance(row.get('event'),str) or row['event'] not in _EVENTS: continue
                     timestamp=row.get('time','')
                     try: datetime.fromisoformat(timestamp.replace('Z','+00:00'))
                     except (ValueError,TypeError,AttributeError): continue
@@ -76,7 +76,7 @@ def export_report(home,output,*,code=None,tasks=()):
                 package=json.loads((Path(code)/component/'package.json').read_text(encoding='utf-8'))
                 version=package.get('version','unknown')
                 if isinstance(version,str) and len(version)<100: build['components'][component]=version
-            except (OSError,ValueError): pass
+            except (OSError,ValueError,TypeError,AttributeError): pass
         for name in ('manifest.json','runtime-components.json'):
             path=Path(code)/name
             try:
@@ -86,7 +86,7 @@ def export_report(home,output,*,code=None,tasks=()):
                         if component.get('name') in ('python','node','electron','@earendil-works/pi-coding-agent') and isinstance(component.get('version'),str):
                             build['components'][component['name']]=component['version'][:100]
                 build[name]={'sha256':hashlib.sha256(raw).hexdigest(),**{key:document[key] for key in ('version','built_from_commit','artifact_sha256') if isinstance(document.get(key),str) and len(document[key])<100}}
-            except (OSError,ValueError): pass
+            except (OSError,ValueError,TypeError,AttributeError): pass
     (folder/'build.json').write_text(json.dumps(build,indent=2),encoding='utf-8')
     (folder/'summary.md').write_text('# Horizon local diagnostic report\n\nCopy this entire folder for review. No automatic upload.\n\nContains bounded event metadata, OS/component versions and task states. Configuration, credentials, conversation text, database and Pi transcripts are excluded. Missing events may mean logging was unavailable.\n',encoding='utf-8')
     with (folder/'summary.md').open('a',encoding='utf-8') as summary:

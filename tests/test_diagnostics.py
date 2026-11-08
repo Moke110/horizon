@@ -1,6 +1,19 @@
 import json
 from hostrun.diagnostics import record_event, export_report
 
+def test_report_survives_malformed_event_and_build_shapes(tmp_path):
+    home = tmp_path / 'home'
+    (home / 'diagnostics').mkdir(parents=True)
+    (home / 'diagnostics/events.jsonl').write_text('{"event": []}\n', encoding='utf-8')
+    code = tmp_path / 'code'
+    (code / 'agent').mkdir(parents=True)
+    (code / 'agent/package.json').write_text('[]', encoding='utf-8')
+    (code / 'manifest.json').write_text('[]', encoding='utf-8')
+    (code / 'runtime-components.json').write_text('{"components": [null]}', encoding='utf-8')
+    report = export_report(home, tmp_path / 'out', code=code)
+    assert (report / 'summary.md').exists()
+    assert (report / 'events.jsonl').read_text() == ''
+
 def test_export_is_allowlisted_and_without_configuration(tmp_path):
     home=tmp_path/'home'
     record_event(home,'task_started',task_id='task-1',message='secret',api_key='secret')

@@ -109,7 +109,12 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     monkeypatch.setenv('HORIZON_DATA_HOME', str(tmp_path))
     monkeypatch.setattr(bridge.desktop_runtime, 'executable', lambda code: Path('electron'))
     monkeypatch.setattr(bridge.embedded_agent, 'runtime', lambda *a, **k: {'model': 'test', 'provider': 'test', 'configured': True})
-    monkeypatch.setattr(bridge.os, '_exit', lambda code: None)
+    def hard_exit(code):
+        events = [json.loads(line) for line in (tmp_path / 'diagnostics/events.jsonl').read_text(encoding='utf-8').splitlines()]
+        assert events[-1]['event'] == 'desktop_exit'
+        assert events[-1]['status'] == 'explicit_exit'
+        assert events[-1]['exit_code'] == code
+    monkeypatch.setattr(bridge.os, '_exit', hard_exit)
     finished = threading.Event()
     failures = []
     calls = []
