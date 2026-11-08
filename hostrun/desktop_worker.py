@@ -98,7 +98,7 @@ class DesktopWorker:
             self.child_process = None
         completed = self.service.finish_child({'schema_version': 1,
             'operation_id': str(uuid.uuid5(uuid.UUID(operation), 'finish')),
-            'child_id': child['child_id'], 'status': status, 'result': output, 'error': error}, token=self.service_token)
+            'child_id': child['child_id'], 'expected_version': child['version'], 'status': status, 'result': output, 'error': error}, token=self.service_token)
         self.events.put(('children', None))
         return completed
 

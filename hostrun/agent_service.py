@@ -203,6 +203,8 @@ class AgentService:
                 if not row:
                     raise CommandError('not_found', 'Unknown child_id')
                 result = json.loads(row[0])
+                if type(command.get('expected_version')) is not int or command['expected_version'] != result['version']:
+                    raise CommandError('version_conflict', 'expected_version conflicts with child version')
                 if result['status'] != 'running':
                     raise CommandError('version_conflict', 'Child already completed')
                 result.update(status=command['status'], result=command.get('result',''), error=command.get('error',''),version=2,operation_id=operation)

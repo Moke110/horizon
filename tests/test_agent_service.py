@@ -133,9 +133,11 @@ def test_child_results_are_isolated_replayable_and_persistent(tmp_path):
     assert child['parent_session_id'] == task['session_id']
     assert child['session_id'] != task['session_id']
     assert service.start_child(cmd,token='s') == child
-    done = service.finish_child({'schema_version':1,'operation_id':'f1','child_id':child['child_id'],'status':'succeeded','result':'read complete'},token='s')
+    with pytest.raises(ValueError):
+        service.finish_child({'schema_version':1,'operation_id':'stale-finish','child_id':child['child_id'],'expected_version':0,'status':'succeeded'}, token='s')
+    done = service.finish_child({'schema_version':1,'operation_id':'f1','expected_version':1,'child_id':child['child_id'],'status':'succeeded','result':'read complete'},token='s')
     other = service.start_child({**cmd,'operation_id':'c2','role':'development_summarizer'},token='s')
-    service.finish_child({'schema_version':1,'operation_id':'f2','child_id':other['child_id'],'status':'failed','error':'provider failed'},token='s')
+    service.finish_child({'schema_version':1,'operation_id':'f2','expected_version':1,'child_id':other['child_id'],'status':'failed','error':'provider failed'},token='s')
     reopened = AgentService(tmp_path,token='new')
     children = reopened.list_children(task['task_id'],token='new')
     assert children[0] == done
@@ -161,3 +163,4 @@ def test_child_commit_fault_replay_preserves_single_result(tmp_path,phase,commit
     assert reopened.list_children(task['task_id'],token='s')==[child]
     assert len(reopened.events(token='s'))==2
     with pytest.raises(ValueError): reopened.start_child({**command,'input_text':'changed'},token='s')
+
