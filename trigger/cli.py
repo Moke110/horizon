@@ -27,8 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trigger", description=__doc__)
     parser.add_argument("--repo", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
-    parser.add_argument("--owner", help="owner open_id (default: $FRONTIER_OWNER_ID)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
+    parser.add_argument("--owner", help="owner open_id (default: $HORIZON_OWNER_ID)")
     parser.add_argument("--timeout", type=int, default=1800, help="agent timeout seconds")
     parser.add_argument("--dry-run", action="store_true", help="ack locally, do not call Lark/agent")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -63,11 +63,11 @@ def main(argv: list[str] | None = None) -> int:
         home=Path(resolved["runtime"]),
         owner=load_owner(args.owner),
         timeout=args.timeout,
-        dry_run=args.dry_run or os.environ.get("FRONTIER_DRY_RUN") == "1",
+        dry_run=args.dry_run or os.environ.get("HORIZON_DRY_RUN") == "1",
     )
     if args.cmd == "listen":
         if not config.owner and not config.dry_run:
-            print(json.dumps({"ok": False, "error": "FRONTIER_OWNER_ID is not set"}), file=sys.stderr)
+            print(json.dumps({"ok": False, "error": "HORIZON_OWNER_ID is not set"}), file=sys.stderr)
             return 1
         return listen(config, args.max_events, args.event_timeout, args.identity)
 

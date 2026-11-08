@@ -257,7 +257,7 @@ def test_migration_is_idempotent_and_rolls_back(tmp_path):
     first = migrate.migrate(home)
     assert first["status"] == "migrated"
     assert (home / "archive" / "cards" / "card_hmbs.json").exists()
-    assert not (home / "frontier.yaml").exists()
+    assert not (home / "horizon.yaml").exists()
     assert not (home / "archive" / "kg").exists()
     assert first["checkpoint_map"]["virtual-cell"] == "card_virtual_cell"
     assert migrate.migrate(home)["status"] == "already-migrated"
@@ -271,7 +271,7 @@ def test_migration_is_idempotent_and_rolls_back(tmp_path):
     backup = Path(first["backup"]).name
     out = migrate.rollback(home, backup)
     assert out["status"] == "rolled-back"
-    assert (home / "frontier.yaml").exists()
+    assert (home / "horizon.yaml").exists()
     assert (home / "archive" / "kg" / "nodes" / "kg_hmbs.json").exists()
     assert not (home / "archive" / "cards").exists()
 

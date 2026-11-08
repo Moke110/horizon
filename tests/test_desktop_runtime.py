@@ -14,7 +14,7 @@ def test_runtime_deployment_reuses_cache_and_tracks_resource_changes(tmp_path):
     local = tmp_path / 'local'
     first = executable(code, local_app_data=local)
     assert first.read_bytes() == b'runtime'
-    assert first.parent.parent == local / 'Frontier/desktop-runtime'
+    assert first.parent.parent == local / 'Horizon/desktop-runtime'
     assert executable(code, local_app_data=local) == first
     (source / 'icudtl.dat').write_bytes(b'updated')
     second = executable(code, local_app_data=local)

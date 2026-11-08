@@ -27,21 +27,21 @@ INTENTS = ("daily", "feedback", "maintenance")
 MAINTENANCE_REL = Path("library") / "maintenance"
 RUNS_REL = Path("hostrun") / "runs.jsonl"
 
-PIPELINE_BRIEF = """frontier 有界运行（{intent}）：请在**当前会话**中完成一篇论文推送，只处理一篇。
+PIPELINE_BRIEF = """horizon 有界运行（{intent}）：请在**当前会话**中完成一篇论文推送，只处理一篇。
 
 硬约束：
-- 工作目录 {repo}；运行时区 {home}（沿用环境变量 FRONTIER_CODE/FRONTIER_ARCHIVE/FRONTIER_RUNTIME，模块命令不要再传位置参数）；
+- 工作目录 {repo}；运行时区 {home}（沿用环境变量 HORIZON_CODE/HORIZON_ARCHIVE/HORIZON_RUNTIME，模块命令不要再传位置参数）；
 - 只走「检索 → 排序 → 写作 → 渲染 → 推送」这一条正向链路；不另起 OpenCode 或脱离本宿主的 agent；
-- 评分题与更新题由统一队列发送，不要手写审批卡；不要运行 frontier record / editor fit；
+- 评分题与更新题由统一队列发送，不要手写审批卡；不要运行 horizon record / editor fit；
 - 论文必须来自本次检索候选，不得编造；没有新候选就输出「今天没有新的」并结束；
 - 完成后调用 `{finish}` 记录结果（ok 或 error），不要留常驻进程。
 
 步骤：
-1. python -m frontier.cli validate
-2. python -m frontier.cli plan --date {date} --days 7 --out {tmp}/frontier-plan.json
-3. python -m retriever.cli fetch --plan {tmp}/frontier-plan.json --out {tmp}/frontier-candidates.jsonl --source live
+1. python -m horizon.cli validate
+2. python -m horizon.cli plan --date {date} --days 7 --out {tmp}/horizon-plan.json
+3. python -m retriever.cli fetch --plan {tmp}/horizon-plan.json --out {tmp}/horizon-candidates.jsonl --source live
 4. 逐条 python -m archive.cli add-paper --file <临时 json>（自动去重）
-5. python -m editor.cli task --candidates {tmp}/frontier-candidates.jsonl --date {date} --out {tmp}/editor-task.json
+5. python -m editor.cli task --candidates {tmp}/horizon-candidates.jsonl --date {date} --out {tmp}/editor-task.json
 6. 你亲自读 task、写 {tmp}/selection.json，并 python -m editor.cli check ...
 7. 从 selection 里只选 1 篇；python -m writer.cli task ...；python -m writer.cli figures ...
 8. 你亲自写 push（七段 HTML + assets）；python -m writer.cli check ...
@@ -69,7 +69,7 @@ def owner(home: Path) -> str:
     """The recipient the legacy callers resolve, kept out of the install report.
 
     ``install/recipient.json`` is the current source (written by the Console's
-    ``/frontier-init`` transport test, #86).  The config fallback is read-only
+    ``/horizon-init`` transport test, #86).  The config fallback is read-only
     for pre-existing installs; it is never copied into a report. Public so the
     Console can route replies and apply the DM allow-list without a private
     bridge.

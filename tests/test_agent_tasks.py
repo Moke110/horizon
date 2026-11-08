@@ -2,13 +2,13 @@ import json
 
 from editor import model as editor_model
 from editor import tasks as editor_tasks
-from frontier import model as frontier_model
+from horizon import model as horizon_model
 from retriever import cli as retriever_cli
 from writer import model as writer_model
 from writer import tasks as writer_tasks
 
 def _pipeline(kl_home, fixtures_dir):
-    plan = frontier_model.plan(kl_home, day="2026-10-20", days=7)
+    plan = horizon_model.plan(kl_home, day="2026-10-20", days=7)
     rows = retriever_cli.run(plan, "fixture", fixtures_dir, check_window=True)
     selection = editor_model.rank(kl_home, rows, day="2026-10-20", limit=4, per_checkpoint=2)
     return rows, selection

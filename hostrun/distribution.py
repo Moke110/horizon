@@ -1,23 +1,23 @@
 """Build the installable distribution package, its manifest and its digest.
 
 ADR 0010 splits development from installation: the Git repository holds the
-development inputs, while an installed frontier is an extracted distribution
+development inputs, while an installed horizon is an extracted distribution
 package.  This module is the single build entry both a developer and CI use:
 
     python -m hostrun.distribution --source . --version 0.1.0 \
         --channel stable --out dist --runtime-dir <prepared-runtime>
 
 It reads a source tree, copies only runtime code and agent-readable assets into
-``<out>/frontier-<version>-<channel>/``, then writes:
+``<out>/horizon-<version>-<channel>/``, then writes:
 
 - ``manifest.json`` *inside* the package: every packaged file's path, byte count,
   sha256 and executable flag, plus version, channel, build commit and the
   compatibility range.  The manifest never lists itself.
-- ``<out>/frontier-<version>-<channel>.digest.json``: the artifact summary — the
+- ``<out>/horizon-<version>-<channel>.digest.json``: the artifact summary — the
   sha256 of the manifest bytes, file count, total bytes, the same identity
   facts, and an ``artifact`` block naming the zip, its byte length and sha256.
   This is what a release index can publish without unpacking.
-- ``<out>/frontier-<version>-<channel>.zip``: a deterministic zip of the package
+- ``<out>/horizon-<version>-<channel>.zip``: a deterministic zip of the package
   directory.  Entries are path-sorted, timestamps are fixed at 1980-01-01, and
   every entry declares its POSIX mode, so building the same source twice yields
   byte-identical zip, manifest and digest files.
@@ -47,7 +47,7 @@ preserves every file's bytes.  The expected layout is::
     runtime/DLLs/*.pyd                       # extension modules (or flat *.pyd next to python.exe)
     runtime/Lib/site-packages/...            # PyYAML, PyMuPDF and their dependencies
 
-A bundled runtime also generates ``<package>/bin/frontier.cmd``, the launcher
+A bundled runtime also generates ``<package>/bin/horizon.cmd``, the launcher
 wrapper described in :mod:`hostrun.launcher` and ``contracts/distribution-runtime.md``.
 Both the runtime tree and the wrapper are written *before* the manifest is
 assembled, so the existing manifest schema covers them automatically.  A build
@@ -103,7 +103,7 @@ PACKAGED_DIRS = (
     "contracts",
     "docs",
     "editor",
-    "frontier",
+    "horizon",
     "hostrun",
     "initial_build",
     "knowledge",
@@ -132,8 +132,8 @@ EXCLUDED_TOP_LEVEL = {
     ".git": "version-control metadata; history is development evidence, not runtime content",
     ".worktrees": "other development worktrees are separate checkouts, not this package",
     ".venv": "private environment of a source installation; #95 ships a bundled runtime instead",
-    ".frontier": "runtime state (install records, config, queue, logs, archive index)",
-    ".frontier-archive": "legacy archive/data root; research data is never package content",
+    ".horizon": "runtime state (install records, config, queue, logs, archive index)",
+    ".horizon-archive": "legacy archive/data root; research data is never package content",
     ".dev": "developer-local scratch directory",
     ".pytest_cache": "pytest cache, recreated on demand",
     "__pycache__": "interpreter bytecode cache, recreated on demand",
@@ -156,7 +156,7 @@ _EXCLUDED_TOP_LEVEL_PATTERNS = tuple(
 )
 
 # Names pruned anywhere below a packaged directory.  Hidden entries are pruned
-# by prefix, which covers .git/.venv/.frontier/.dev/.pytest-* wherever they
+# by prefix, which covers .git/.venv/.horizon/.dev/.pytest-* wherever they
 # appear; only the visible caches need naming here.
 EXCLUDED_ENTRY_NAMES = {
     "__pycache__": "interpreter bytecode cache",
@@ -511,7 +511,7 @@ def build(
         if runtime_path is not None and not (runtime_path / "node.exe").is_file():
             raise BuildError("runtime/node.exe is required for the bundled Pi agent")
 
-    package_name = f"frontier-{version}-{channel}"
+    package_name = f"horizon-{version}-{channel}"
     package_dir = out_path / package_name
     manifest_path = package_dir / MANIFEST_FILENAME
     digest_path = out_path / f"{package_name}{DIGEST_SUFFIX}"
@@ -646,7 +646,7 @@ def build(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m hostrun.distribution",
-        description="Build a frontier distribution package, manifest and digest (offline).",
+        description="Build a horizon distribution package, manifest and digest (offline).",
     )
     parser.add_argument("--source", required=True, help="source tree to package")
     parser.add_argument("--out", required=True, help="directory that receives the package and digest")
@@ -673,7 +673,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="runtime_dir",
         help=(
             "prepared CPython runtime to bundle verbatim under runtime/; it must "
-            f"contain {RUNTIME_PYTHON_NAME} and also generates bin/frontier.cmd "
+            f"contain {RUNTIME_PYTHON_NAME} and also generates bin/horizon.cmd "
             "(release builds always pass it)"
         ),
     )

@@ -1,6 +1,6 @@
 # Issue tracker: GitHub Issues
 
-Repository: **Moke110/frontier**, remote `origin`. All issues, specs, tickets and wayfinder maps live in GitHub Issues. Use authenticated `gh`; inspect `gh auth status` and the actual command result before claiming a write succeeded.
+Repository: **Moke110/horizon**, remote `origin`. All issues, specs, tickets and wayfinder maps live in GitHub Issues. Use authenticated `gh`; inspect `gh auth status` and the actual command result before claiming a write succeeded.
 
 **PRs as a request surface: no.**
 
@@ -10,7 +10,7 @@ Repository: **Moke110/frontier**, remote `origin`. All issues, specs, tickets an
 - Ticket: one issue per approved vertical slice, normally `ready-for-agent`; set its source spec as the native parent. Do not close or rewrite the parent as part of decomposition.
 - Wayfinder map: `wayfinder:map`; its native child tickets carry `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling` or `wayfinder:task`. Keep Destination / Notes / Decisions so far / Not yet specified / Out of scope in the map.
 - Triage vocabulary: [triage-labels.md](triage-labels.md). Inspect labels before creating missing ones; preserve existing labels.
-- Use native blocking edges. Ready frontier = open, unassigned children whose blockers are all closed. Claim a ticket by assigning yourself before implementation.
+- Use native blocking edges. Ready horizon = open, unassigned children whose blockers are all closed. Claim a ticket by assigning yourself before implementation.
 - Comments hold progress and resolution history; never append a Comments section or a Status field to the body. Open/closed is GitHub state.
 - Refer to issues by their exact title linked to the issue URL. For an ambiguous issue/PR reference, read its type before acting.
 - Temporary body files belong in the OS temporary directory; they are transport for `--body-file`, not local tracker entries. Clean up after a verified write.
@@ -20,16 +20,16 @@ Repository: **Moke110/frontier**, remote `origin`. All issues, specs, tickets an
 Replace placeholders with verified issue numbers and temporary paths. In PowerShell use actual newlines or argument arrays rather than Bash continuations.
 
 ```text
-gh issue list --repo Moke110/frontier --state open
-gh issue view <n> --repo Moke110/frontier --json title,body,comments,state
-gh issue create --repo Moke110/frontier --title <title> --label <label> --body-file <temp-file>
-gh issue edit <child> --repo Moke110/frontier --parent <parent>
-gh issue edit <ticket> --repo Moke110/frontier --add-blocked-by <blocker>
-gh issue edit <ticket> --repo Moke110/frontier --add-assignee @me
-gh issue comment <ticket> --repo Moke110/frontier --body-file <temp-file>
-gh issue close <ticket> --repo Moke110/frontier
-gh api repos/Moke110/frontier/issues/<map>/sub_issues --paginate
-gh api repos/Moke110/frontier/issues/<ticket>/dependencies/blocked_by --paginate
+gh issue list --repo Moke110/horizon --state open
+gh issue view <n> --repo Moke110/horizon --json title,body,comments,state
+gh issue create --repo Moke110/horizon --title <title> --label <label> --body-file <temp-file>
+gh issue edit <child> --repo Moke110/horizon --parent <parent>
+gh issue edit <ticket> --repo Moke110/horizon --add-blocked-by <blocker>
+gh issue edit <ticket> --repo Moke110/horizon --add-assignee @me
+gh issue comment <ticket> --repo Moke110/horizon --body-file <temp-file>
+gh issue close <ticket> --repo Moke110/horizon
+gh api repos/Moke110/horizon/issues/<map>/sub_issues --paginate
+gh api repos/Moke110/horizon/issues/<ticket>/dependencies/blocked_by --paginate
 ```
 
 If a CLI flag is unavailable, inspect `gh issue edit --help` and use the native GitHub API. After publication, read back bodies, labels, parent and blocker relationships. Close work only with evidence for its acceptance criteria; consolidation closes replaced work with an explicit replacement link and reason.

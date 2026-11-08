@@ -169,7 +169,7 @@ def render_html(home: Path, review: dict, out_path: Path) -> Path:
 </head>
 <body>
 <header class="masthead">
-  <div class="kicker">FRONTIER · 命题综述</div>
+  <div class="kicker">HORIZON · 命题综述</div>
   <h1 class="title">{html.escape(prop.get('title', ''))}</h1>
   <p class="dek">{html.escape(review['prop_id'])} · 基于 {len(evidence)} 条证据（支持 {supports} / 反证 {contradicts}）</p>
 </header>
@@ -180,7 +180,7 @@ def render_html(home: Path, review: dict, out_path: Path) -> Path:
 </main>
 <footer class="colophon">
   <span>{html.escape(review['prop_id'])} · {html.escape(str(review.get('generated_at') or now())[:10])}</span>
-  <span>frontier · 命题综述</span>
+  <span>horizon · 命题综述</span>
 </footer>
 </body>
 </html>

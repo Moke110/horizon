@@ -168,7 +168,7 @@ def _decision_rows(lib: Library, path: Path) -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="library", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     parser.add_argument(
         "--offline", action="store_true",
         help="use the persisted JSON Drive/Base fixture (no lark-cli calls)",
@@ -210,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--candidates", action="store_true")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--limit", type=int)
-    p.add_argument("--backup-root", default="~/frontier-offline")
+    p.add_argument("--backup-root", default="~/horizon-offline")
     p.add_argument("--dry-run", action="store_true")
 
     p = sub.add_parser("restore", help="upload an archived source back into the library")

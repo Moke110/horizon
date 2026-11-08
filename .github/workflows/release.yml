@@ -134,7 +134,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Desktop build failed" }
           npm --prefix desktop prune --omit=dev --ignore-scripts
 
-      - name: Build the bundled Frontier Pi agent
+      - name: Build the bundled Horizon Pi agent
         shell: pwsh
         run: |
           npm --prefix agent ci --ignore-scripts
@@ -158,25 +158,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "first distribution build failed" }
           python -m hostrun.distribution --source . --out $env:DIST_REPRO_DIR --version $version --channel $channel --built-from-commit ${{ github.sha }} --runtime-dir $env:RUNTIME_DIR --os windows --arch x86_64 --python 3.13 --dsh '*'
           if ($LASTEXITCODE -ne 0) { throw "second distribution build failed" }
-          python -m hostrun.release verify-artifact --zip "$env:DIST_DIR/frontier-$version-$channel.zip"
-          if ($LASTEXITCODE -ne 0) { throw "artifact layout verification failed: runtime/ or bin/frontier.cmd is missing" }
+          python -m hostrun.release verify-artifact --zip "$env:DIST_DIR/horizon-$version-$channel.zip"
+          if ($LASTEXITCODE -ne 0) { throw "artifact layout verification failed: runtime/ or bin/horizon.cmd is missing" }
           python -m hostrun.release check-reproducible --first-dir $env:DIST_DIR --second-dir $env:DIST_REPRO_DIR --version $version --channel $channel
           if ($LASTEXITCODE -ne 0) { throw "the same tag metadata did not produce the same artifact sha256" }
 
       # Spec #92 testing seam 5: the released zip must install and report as a
       # package installation on a clean runner.  The runner's Python only runs
       # the CLI; the point is the installed tree under the temporary code dir.
-      # --check-wrapper executes the installed bin\frontier.cmd with a sanitized
+      # --check-wrapper executes the installed bin\horizon.cmd with a sanitized
       # PATH (no PYTHONHOME/PYTHONPATH/venv) and asserts it prints usage.
       - name: Smoke-test installing the built package into a clean code directory
         shell: pwsh
         run: |
           $version = "${{ steps.release.outputs.version }}"
           $channel = "${{ steps.release.outputs.channel }}"
-          $zip = "$env:DIST_DIR/frontier-$version-$channel.zip"
+          $zip = "$env:DIST_DIR/horizon-$version-$channel.zip"
           $smoke = Join-Path $env:RUNNER_TEMP "install-smoke"
           New-Item -ItemType Directory -Force -Path $smoke | Out-Null
-          python scripts/ci_install_smoke.py --zip $zip --code (Join-Path $smoke "code") --archive (Join-Path $smoke "archive") --skills-target (Join-Path $smoke "runtime-skills/frontier-run") --bootstrap (Join-Path $smoke "bootstrap") --check-wrapper
+          python scripts/ci_install_smoke.py --zip $zip --code (Join-Path $smoke "code") --archive (Join-Path $smoke "archive") --skills-target (Join-Path $smoke "runtime-skills/horizon-run") --bootstrap (Join-Path $smoke "bootstrap") --check-wrapper
           if ($LASTEXITCODE -ne 0) { throw "the built artifact failed the install smoke test; the JSON above names the failing step" }
 
       - name: Render release notes
@@ -184,7 +184,7 @@ jobs:
         run: |
           $version = "${{ steps.release.outputs.version }}"
           $channel = "${{ steps.release.outputs.channel }}"
-          python -m hostrun.release notes --tag "${{ steps.release.outputs.tag }}" --digest "$env:DIST_DIR/frontier-$version-$channel.digest.json" --out release-notes.md
+          python -m hostrun.release notes --tag "${{ steps.release.outputs.tag }}" --digest "$env:DIST_DIR/horizon-$version-$channel.digest.json" --out release-notes.md
           if ($LASTEXITCODE -ne 0) { throw "release notes rendering failed" }
 
       - name: Create stable release
@@ -196,7 +196,7 @@ jobs:
           $version = "${{ steps.release.outputs.version }}"
           $channel = "${{ steps.release.outputs.channel }}"
           $tag = "${{ steps.release.outputs.tag }}"
-          gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --title "frontier $version ($channel)" --notes-file release-notes.md "$env:DIST_DIR/frontier-$version-$channel.zip" "$env:DIST_DIR/frontier-$version-$channel.digest.json" "$env:DIST_DIR/frontier-$version-$channel/manifest.json"
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --title "horizon $version ($channel)" --notes-file release-notes.md "$env:DIST_DIR/horizon-$version-$channel.zip" "$env:DIST_DIR/horizon-$version-$channel.digest.json" "$env:DIST_DIR/horizon-$version-$channel/manifest.json"
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed for $tag" }
 
       - name: Create prerelease
@@ -208,7 +208,7 @@ jobs:
           $version = "${{ steps.release.outputs.version }}"
           $channel = "${{ steps.release.outputs.channel }}"
           $tag = "${{ steps.release.outputs.tag }}"
-          gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --prerelease --title "frontier $version ($channel)" --notes-file release-notes.md "$env:DIST_DIR/frontier-$version-$channel.zip" "$env:DIST_DIR/frontier-$version-$channel.digest.json" "$env:DIST_DIR/frontier-$version-$channel/manifest.json"
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --verify-tag --prerelease --title "horizon $version ($channel)" --notes-file release-notes.md "$env:DIST_DIR/horizon-$version-$channel.zip" "$env:DIST_DIR/horizon-$version-$channel.digest.json" "$env:DIST_DIR/horizon-$version-$channel/manifest.json"
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed for $tag" }
 
       - name: Update the release index and commit it to main
@@ -237,7 +237,7 @@ jobs:
             # never retry on top of the local commit it just failed to push.
             git reset --hard origin/main
             if ($LASTEXITCODE -ne 0) { throw "could not reset the checkout to origin/main" }
-            python scripts/update_release_index.py --index $env:RELEASE_INDEX --digest "$env:DIST_DIR/frontier-$version-$channel.digest.json" --release-url $releaseUrl --published-at $publishedAt
+            python scripts/update_release_index.py --index $env:RELEASE_INDEX --digest "$env:DIST_DIR/horizon-$version-$channel.digest.json" --release-url $releaseUrl --published-at $publishedAt
             if ($LASTEXITCODE -ne 0) { throw "release index update failed" }
             git merge-base --is-ancestor $tagCommit origin/main
             if ($LASTEXITCODE -ne 0) {

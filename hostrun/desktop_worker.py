@@ -11,7 +11,7 @@ class DesktopWorker:
     def run_agent(self, task):
         try:
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']))
-            env = dict(os.environ, FRONTIER_PYTHON=sys.executable)
+            env = dict(os.environ, HORIZON_PYTHON=sys.executable)
             self.process = subprocess.Popen(argv, cwd=self.resolved['code'], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             # Drain stderr without exposing provider credentials in UI logs.
             threading.Thread(target=lambda p=self.process: p.stderr.read(), daemon=True).start()

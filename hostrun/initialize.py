@@ -1,8 +1,8 @@
 """Formal knowledge initialization from literature, requirements and a draft.
 
 This module starts the research library.  It no longer waits for the retired
-temporary keyword smoke loop: the Console's ``/frontier-init`` transport test and
-``/frontier-update-kb`` review are the current gate (ADR 0009).
+temporary keyword smoke loop: the Console's ``/horizon-init`` transport test and
+``/horizon-update-kb`` review are the current gate (ADR 0009).
 
 Input modes:
 
@@ -492,7 +492,7 @@ def standard_retrieval(home: Path, *, days: int = 7) -> dict:
     cards = store.list_cards()
     if not cards:
         raise HostRunError("正式知识库还没有知识卡片")
-    from frontier.model import plan as build_plan
+    from horizon.model import plan as build_plan
 
     result = build_plan(home, days=days)
     if not result.get("queries"):

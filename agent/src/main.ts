@@ -1,4 +1,4 @@
-import { readFile, mkdir, writeFile, realpath } from "node:fs/promises";
+import { readFile, mkdir, writeFile, realpath, stat } from "node:fs/promises";
 import { resolve, relative, dirname, join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -20,15 +20,15 @@ const { values } = parseArgs({ options: {
 } });
 
 async function main() {
-  if (values.check) { emit({ type: "status", runtime: "frontier-pi", version: "1.5.0" }); return; }
+  if (values.check) { emit({ type: "status", runtime: "horizon-pi", version: "1.5.0" }); return; }
   if (!values.home || !values.task) throw new Error("--home and --task are required");
   const home = resolve(values.home), code = process.cwd();
   const config = JSON.parse(await readFile(join(home, "agent", "model.json"), "utf8"));
   secret = String(config.apiKey || "");
-  if (!secret) throw new Error("Configure a model API key in Frontier first");
+  if (!secret) throw new Error("Configure a model API key in Horizon first");
   const install = JSON.parse(await readFile(join(home, "install", "config.json"), "utf8").catch(() => "{}"));
-  const python = process.env.FRONTIER_PYTHON || install.paths?.python;
-  if (!python) throw new Error("Frontier Python runtime is missing");
+  const python = process.env.HORIZON_PYTHON || install.paths?.python;
+  if (!python) throw new Error("Horizon Python runtime is missing");
   const settings = SettingsManager.inMemory({ retry: { enabled: false }, packages: [] });
   const agentDir = join(home, "agent", "pi");
   await mkdir(agentDir, { recursive: true });
@@ -45,18 +45,18 @@ async function main() {
   if (!model) throw new Error("Unknown model; configure a supported provider/model or an OpenAI-compatible base URL");
   const judgement = values.kind === "intent_judgement";
   const reading = values.kind === "kb_read";
-  const skill = judgement ? "" : await readFile(join(code, "skills", "frontier-run", "SKILL.md"), "utf8");
+  const skill = judgement ? "" : await readFile(join(code, "skills", "horizon-run", "SKILL.md"), "utf8");
   const loader = new DefaultResourceLoader({ cwd: code, agentDir, settingsManager: settings,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
     systemPrompt: judgement ? "Return only the requested intent JSON. You have no tools and must perform no actions."
-      : `You are Frontier's built-in research agent. Complete the current bounded task using Frontier business tools.
-Read the workflow references before performing a workflow. Existing Python commands in references map to frontier_cli(module, args).
-Use the installed interpreter implicitly through frontier_cli; no shell or external agent is needed.
+      : `You are Horizon's built-in research agent. Complete the current bounded task using Horizon business tools.
+Read the workflow references before performing a workflow. Existing Python commands in references map to horizon_cli(module, args).
+Use the installed interpreter implicitly through horizon_cli; no shell or external agent is needed.
 Never modify application code or credentials. Never bypass validators or user review. Never repeat an ambiguous delivery.
 Use read_file and write_file for task JSON and artifacts. Do not claim delivery without tool evidence.\n${skill}` });
   await loader.reload();
   const result = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
-  const modules = new Set(["archive.cli", "editor.cli", "writer.cli", "frontier.cli", "hostrun.cli",
+  const modules = new Set(["archive.cli", "editor.cli", "writer.cli", "horizon.cli", "hostrun.cli",
     "initial_build.cli", "knowledge.cli", "library.cli", "pdf_ingest.cli", "publisher.cli",
     "question_queue.cli", "retriever.cli", "trigger.cli"]);
   const inside = (root: string, path: string) => { const rel = relative(root, path); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); };
@@ -69,29 +69,38 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; const parent = dirname(ancestor); if (parent === ancestor) throw error; ancestor = parent; }
     }
     if (["agent", "install", "lark-cli", "lark-workspace"].some(name => inside(join(home, name), path))) throw new Error("Private configuration is not an agent artifact");
-    const archive = process.env.FRONTIER_ARCHIVE;
-    if (writing ? !(inside(home, path) || (archive && inside(resolve(archive), path))) :
-      !(inside(home, path) || inside(join(code, "skills"), path) || inside(join(code, "contracts"), path) || (archive && inside(resolve(archive), path)))) throw new Error("Path is outside Frontier's artifact roots");
+    if (writing) {
+      const local = relative(home, path).toLowerCase();
+      if (/^horizon\.sqlite3(?:$|[-.])/.test(local)) throw new Error("Business storage requires Horizon business tools");
+      const existing = await stat(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return null;
+      });
+      if (existing && existing.nlink > 1) throw new Error("Hard-linked artifacts cannot be written");
+    }
+    const archive = process.env.HORIZON_ARCHIVE;
+    if (writing ? !inside(join(home, "outbox"), path) :
+      !(inside(home, path) || inside(join(code, "skills"), path) || inside(join(code, "contracts"), path) || (archive && inside(resolve(archive), path)))) throw new Error("Path is outside Horizon's artifact roots");
     return path;
   }
   const tools: ToolDefinition[] = [
-    defineTool({ name: "read_file", label: "Read artifact", description: "Read a Frontier task, artifact or workflow reference as UTF-8.",
+    defineTool({ name: "read_file", label: "Read artifact", description: "Read a Horizon task, artifact or workflow reference as UTF-8.",
       parameters: Type.Object({ path: Type.String() }), execute: async (_id, p) => result(await readFile(await filePath(p.path, false), "utf8")) }),
-    defineTool({ name: "write_file", label: "Write artifact", description: "Write a task/result artifact inside Frontier runtime or archive. Run its business validator afterwards.",
+    defineTool({ name: "write_file", label: "Write artifact", description: "Write a task/result artifact inside Horizon home/outbox only. Run its business validator afterwards.",
       parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id, p) => {
         const path = await filePath(p.path, true); await mkdir(dirname(path), { recursive: true }); await writeFile(path, p.content, "utf8"); return result("Written"); } }),
-    defineTool({ name: "frontier_cli", label: "Frontier business operation", description: "Run a Frontier Python business CLI. Supply module and argv tokens, without python/-m or shell syntax. Returns exit code and output; nonzero is failure.",
+    defineTool({ name: "horizon_cli", label: "Horizon business operation", description: "Run a Horizon Python business CLI. Supply module and argv tokens, without python/-m or shell syntax. Returns exit code and output; nonzero is failure.",
       parameters: Type.Object({ module: Type.String(), args: Type.Array(Type.String()) }),
       execute: async (_id, p, signal) => {
-        if (!modules.has(p.module)) throw new Error("Unknown Frontier business module");
+        if (!modules.has(p.module)) throw new Error("Unknown Horizon business module");
         const args: string[] = [];
         for (let i = 0; i < p.args.length; i++) {
           const token = p.args[i], flag = token.split("=", 1)[0];
           if (flag === "--offline") throw new Error("Production agent runs cannot simulate delivery with --offline");
           if (flag === "--code" || flag === "--archive") {
             const value = token.includes("=") ? token.slice(token.indexOf("=") + 1) : p.args[++i];
-            const expected = flag === "--code" ? code : process.env.FRONTIER_ARCHIVE;
-            if (!value || !expected || resolve(value).toLowerCase() !== resolve(expected).toLowerCase()) throw new Error("The console owns Frontier's workspace locations");
+            const expected = flag === "--code" ? code : process.env.HORIZON_ARCHIVE;
+            if (!value || !expected || resolve(value).toLowerCase() !== resolve(expected).toLowerCase()) throw new Error("The console owns Horizon's workspace locations");
             continue;
           }
           if (["--out", "--outbox", "--output", "--dest"].includes(flag)) {
@@ -101,7 +110,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
           }
           args.push(token);
         }
-        if (p.module === "hostrun.cli" && !["run", "status", "feedback", "audit"].includes(args[0])) throw new Error("Installation and console control belong to Frontier, not agent runs");
+        if (p.module === "hostrun.cli" && !["run", "status", "feedback", "audit"].includes(args[0])) throw new Error("Installation and console control belong to Horizon, not agent runs");
         if (p.module === "archive.cli" && ["card-put", "prop-put", "apply-proposal", "apply-group", "apply-decisions", "migrate-v2", "migrate-v3"].includes(args[0])) throw new Error("Knowledge mutations require the console's user-review workflow");
         if (p.module === "library.cli" && ["setup", "evict", "decisions"].includes(args[0])) throw new Error("This operation requires user interaction in the console");
         return await new Promise((resolveResult, reject) => {

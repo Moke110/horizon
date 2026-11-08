@@ -1,17 +1,17 @@
 [Unit]
-Description=frontier library daily reconcile, quota check and alert delivery
+Description=horizon library daily reconcile, quota check and alert delivery
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/frontier
-Environment=FRONTIER_RUNTIME=%h/knowledge-loop
+WorkingDirectory=%h/horizon
+Environment=HORIZON_RUNTIME=%h/knowledge-loop
 Environment=TZ=Asia/Shanghai
 Environment=PATH=%h/.opencode/bin:%h/.npm-global/bin:%h/.local/bin:%h/miniconda3/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=%h/.config/frontier/env
+EnvironmentFile=%h/.config/horizon/env
 ExecStart=-__PYTHON__ -m library.cli reconcile
 ExecStart=__PYTHON__ -m library.cli quota --check
-ExecStart=-__PYTHON__ -m publisher.cli alerts --to ${FRONTIER_OWNER_ID}
+ExecStart=-__PYTHON__ -m publisher.cli alerts --to ${HORIZON_OWNER_ID}
 StandardOutput=journal
 StandardError=journal

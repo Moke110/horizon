@@ -10,14 +10,14 @@ starts an Agent run.  This module owns that lifecycle:
 - **catch-up.**  Starting the service (or resuming from pause) after today's
   slot marks one push for the day.  Missed days are not replayed one by one:
   ``last_push_date`` being older than today still produces exactly one catch-up.
-- **pause/resume.**  ``/frontier-stop`` pauses (persisted ``paused`` + service
+- **pause/resume.**  ``/horizon-stop`` pauses (persisted ``paused`` + service
   ``paused``); no scheduled push, no manual push and no Feishu-derived run is
   started while paused, and the Feishu surface replies only the pause notice.
-  ``/frontier-start`` resumes and lets the next tick catch up.
+  ``/horizon-start`` resumes and lets the next tick catch up.
 - **knowledge gate.**  A daily push is refused (``knowledge_not_ready``) until
-  the knowledge base is initialized; the Console and ``/frontier-status`` say
+  the knowledge base is initialized; the Console and ``/horizon-status`` say
   "待初始化知识库" and the next step (:mod:`hostrun.console_gate`).  A completed
-  ``/frontier-update-kb`` review releases it automatically.
+  ``/horizon-update-kb`` review releases it automatically.
 - **restore.**  ``restore()`` keeps a paused session paused and starts a session
   that was running when the window was closed.
 - **shutdown.**  ``shutdown()`` sets the stop signal (``agent_run.run``'s
@@ -469,7 +469,7 @@ class Service:
         last_error = str(request.get("last_error") or "")
         if last_error and last_error != PUSH_SHUTDOWN_REASON:
             # US35: a failed Agent run is reported, never retried automatically.
-            # The queue record stays visible in /frontier-status so the owner
+            # The queue record stays visible in /horizon-status so the owner
             # can decide to request a push again.
             self._recovery_done = True
             self._log(
@@ -477,7 +477,7 @@ class Service:
                 "service",
                 "发现上次失败的推送请求"
                 f"（reason={last_error}，attempts={request.get('attempts') or 0}），"
-                "按“不自动重试”保留，不恢复；可用 /frontier-push 重新请求",
+                "按“不自动重试”保留，不恢复；可用 /horizon-push 重新请求",
             )
             return None
         # A still-started record belongs to the run that is finishing; wait for
@@ -689,7 +689,7 @@ class Service:
         }
 
     def status(self) -> dict:
-        """The same read-only snapshot ``/frontier-status`` renders."""
+        """The same read-only snapshot ``/horizon-status`` renders."""
         snapshot = console.status_snapshot(self.home, status=self._status_provider)
         state = self._state()
         snapshot["schedule"] = {

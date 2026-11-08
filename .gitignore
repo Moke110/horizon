@@ -5,7 +5,7 @@ __pycache__/
 pytest-of-*/
 .scratch/
 # Install workspace pointer and privately installed CLI (ADR 0007).
-.frontier/
+.horizon/
 # Generated launcher scripts (migration / console install write these; ADR 0009).
 /bin/
 # Retired development agent: keep regenerated local metadata out of Git.
@@ -15,7 +15,12 @@ node_modules/
 .pytest-pi-*/
 /.build-pi/
 
-/Frontier.lnk
+/Horizon.lnk
 
 /desktop/dist/
 /.pytest-desktop-*/
+
+/.pytest-*/
+/.gh-cache/
+/horizon-archive/
+/.venv/

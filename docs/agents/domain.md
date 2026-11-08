@@ -54,4 +54,4 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 - Single context: root `GLOSSARY.md`; there is no `GLOSSARY-MAP.md`.
 - The glossary defines vocabulary only. Field schemas, state machines and compatibility rules live in `contracts/`; current acceptance evidence and gaps live in `docs/acceptance/README.md`.
 - Remove superseded product and interaction requirements when an explicitly confirmed decision requires cleanup; preserve applicable technical contracts. New ADRs follow the current short format: title, one-paragraph context/decision/why, with optional status, considered options or consequences only when they add value.
-- Development rules are in `AGENTS.md`; user installation and usage are in `README.md`; host runtime instructions are in `skills/frontier-run/`.
+- Development rules are in `AGENTS.md`; user installation and usage are in `README.md`; host runtime instructions are in `skills/horizon-run/`.

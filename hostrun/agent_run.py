@@ -1,4 +1,4 @@
-"""Run the bundled Frontier Pi agent with bounded execution, events and leases."""
+"""Run the bundled Horizon Pi agent with bounded execution, events and leases."""
 
 from __future__ import annotations
 
@@ -264,7 +264,7 @@ def run(
             argv = embedded_agent.argv(home, task, kind=kind, code=Path(cwd))
         except HostRunError as exc:
             return refuse("agent_unavailable", error=str(exc))
-        child_env["FRONTIER_PYTHON"] = str(paths.get("python") or sys.executable)
+        child_env["HORIZON_PYTHON"] = str(paths.get("python") or sys.executable)
         path = log_path(home, run_id)
 
         lease_taken = False
@@ -281,7 +281,7 @@ def run(
             lease_taken = True
 
         ensure_dir(path.parent)
-        _append_log(path, f"# frontier agent run {run_id} kind={kind} host={host} at={started}")
+        _append_log(path, f"# horizon agent run {run_id} kind={kind} host={host} at={started}")
         _append_log(path, "# argv: " + json.dumps(argv, ensure_ascii=False))
 
         events: list[dict] = []
@@ -388,7 +388,7 @@ def run(
 
         _append_log(
             path,
-            f"# frontier agent run {run_id} finished reason={reason} exit={returncode} "
+            f"# horizon agent run {run_id} finished reason={reason} exit={returncode} "
             f"timed_out={timed_out} session={summary['session_id']}",
         )
         result.update(

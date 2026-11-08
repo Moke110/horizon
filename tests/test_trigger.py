@@ -76,7 +76,7 @@ def test_handle_event_runs_one_job_and_replies(kl_home):
         return {"ok": True}
 
     def runner(config, prompt):
-        assert "FRONTIER_RUNTIME=" + str(kl_home) in prompt
+        assert "HORIZON_RUNTIME=" + str(kl_home) in prompt
         _record_push(kl_home, "2026-10-20_hmbs_01")
         return subprocess.CompletedProcess([], 0, "已推送 2026-10-20_hmbs_01", "")
 

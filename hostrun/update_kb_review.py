@@ -1,4 +1,4 @@
-"""``/frontier-update-kb`` review side: one key per candidate, then write (ADR 0009 §8).
+"""``/horizon-update-kb`` review side: one key per candidate, then write (ADR 0009 §8).
 
 The console consumes the candidate area written by the read side
 (:mod:`hostrun.update_kb`) and never re-runs the read.  It shows one candidate at
@@ -492,7 +492,7 @@ def _default_service(home: Path):
 def _restore_service(home: Path, service) -> tuple[bool, str]:
     """Restore the service after the review, unless the owner had paused it.
 
-    The chained ``/frontier-update-kb`` read leaves the service paused until
+    The chained ``/horizon-update-kb`` read leaves the service paused until
     this point; restoring here — not before the review — keeps the scheduler
     quiet for the whole human-paced review (US25).  The first-push drill is
     started by the caller after this returns.
@@ -578,7 +578,7 @@ def run(
                 "ok": False,
                 "action": "review_kb",
                 "reason": "no_candidates",
-                "text": "没有待审阅的候选；先运行 /frontier-update-kb 读取资料。",
+                "text": "没有待审阅的候选；先运行 /horizon-update-kb 读取资料。",
                 "counts": {"total": 0, ACCEPTED: 0, DISCARDED: 0, KEPT: 0, "remaining": 0},
             },
         )

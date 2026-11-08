@@ -1,4 +1,4 @@
-"""Frontier-owned Pi runtime and model configuration (no external agent)."""
+"""Horizon-owned Pi runtime and model configuration (no external agent)."""
 from __future__ import annotations
 
 import json
@@ -43,7 +43,7 @@ def runtime(home: Path, *, code: Path | None = None) -> dict:
             raise ValueError("model configuration must be an object")
     except (ValueError, OSError):
         model = {}
-        problems.append("模型配置无法读取，请在 Frontier 内重新配置")
+        problems.append("模型配置无法读取，请在 Horizon 内重新配置")
     if not node:
         problems.append("内置 Node.js 运行时缺失；开发环境需要 Node.js >=22.19")
     if not entry.is_file():
@@ -58,6 +58,6 @@ def argv(home: Path, task: str, *, kind: str, code: Path | None = None) -> list[
     if not facts["ok"]:
         raise HostRunError("；".join(facts["problems"]))
     if not facts["configured"]:
-        raise HostRunError("请在 Frontier 初始化流程中配置模型 API Key")
+        raise HostRunError("请在 Horizon 初始化流程中配置模型 API Key")
     return [facts["node"], facts["entry"], "--home", str(Path(home).resolve()),
             "--kind", kind, "--task", task]

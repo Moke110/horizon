@@ -1,8 +1,8 @@
-# frontier 原型 · Agent 任务契约
+# horizon 原型 · Agent 任务契约
 
 > 实现范围：本文保留现有模块的字段、命令、校验和业务流程。产品定位与交互以[已确认决策](../docs/adr/0001-product-direction.md)为准；论文专用字段、飞书适配与现有确认门禁不构成新产品的全局限制。执行现有模块时仍遵守其校验，不据此绕过门禁。
 
-本项目的 editor 与 writer **不内置模型调用**。它们把「需要判断」的部分打包成任务文件，由 Frontier 内置 Pi Agent 读取、推理、写回；脚本只负责取数、校验与落盘。这样换 agent 或换模型不需要改代码。
+本项目的 editor 与 writer **不内置模型调用**。它们把「需要判断」的部分打包成任务文件，由 Horizon 内置 Pi Agent 读取、推理、写回；脚本只负责取数、校验与落盘。这样换 agent 或换模型不需要改代码。
 
 ```
 editor task  →  agent 排序  →  editor check  →  writer task  →  agent 写作  →  writer check
@@ -238,9 +238,9 @@ python -m question_queue.cli status
 | 动作 | 谁做 | 怎么做 |
 |---|---|---|
 | 读知识卡 / 命题 / 上下文 | agent | 任务文件已附带；需要更多时调 `archive.cli card-get / card-list / context / prop-list` |
-| 写知识卡 / 命题 | **只有 archive** | `archive.cli apply-proposal` 或 `apply-decisions`（用户审批后） |
+| 写知识卡 / 命题 | **只有 archive** | `archive.cli apply-proposal` 或 `apply-decisions`（探索者审批后） |
 | 提出更新 | agent（writer） | 写进 push 的 `proposals`，状态 `draft` |
-| 让用户同意 | publisher | 评分后发审批卡，落 `decisions.jsonl` |
+| 让探索者同意 | publisher | 评分后发审批卡，落 `decisions.jsonl` |
 
 agent **永远不直接编辑** `<运行时区>/archive/**` 下的 JSON；所有知识库写入都必须经过 archive CLI，保证可追溯、可回滚。
 

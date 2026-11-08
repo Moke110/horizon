@@ -23,21 +23,21 @@ from publisher import feishu
 from question_queue.store import LEASE_MINUTES, QueueStore
 from trigger.keywords import parse, resolve_checkpoint
 
-PROMPT = """使用 frontier-run skill（{repo}/skills/frontier-run/SKILL.md）执行一次检索推送，只处理一篇论文。
+PROMPT = """使用 horizon-run skill（{repo}/skills/horizon-run/SKILL.md）执行一次检索推送，只处理一篇论文。
 
 硬约束：
-- 工作目录 {repo}；运行时区 FRONTIER_RUNTIME={home}（模块命令沿用该环境变量，不要再传位置参数）；
+- 工作目录 {repo}；运行时区 HORIZON_RUNTIME={home}（模块命令沿用该环境变量，不要再传位置参数）；
 - 只允许执行「检索 → 排序 → 写作 → 渲染 → 推送」这一条正向链路；
-- 评分题与更新题由统一队列发送，不要手写审批卡；不要运行 frontier record / editor fit；
+- 评分题与更新题由统一队列发送，不要手写审批卡；不要运行 horizon record / editor fit；
 - 收件人固定为 {owner}，推送前不用再次询问；
 - 论文必须来自本次检索候选，不得编造；没有新候选就直接结束并输出「今天没有新的」。
 
 步骤：
-1. python -m frontier.cli validate
-2. python -m frontier.cli plan --date {date} --days 7 --out {tmp}/frontier-plan.json
-3. python -m retriever.cli fetch --plan {tmp}/frontier-plan.json --out {tmp}/frontier-candidates.jsonl --source live
+1. python -m horizon.cli validate
+2. python -m horizon.cli plan --date {date} --days 7 --out {tmp}/horizon-plan.json
+3. python -m retriever.cli fetch --plan {tmp}/horizon-plan.json --out {tmp}/horizon-candidates.jsonl --source live
 4. 逐条 python -m archive.cli add-paper --file <临时 json>（自动去重）
-5. python -m editor.cli task --candidates {tmp}/frontier-candidates.jsonl --date {date} --out {tmp}/editor-task.json
+5. python -m editor.cli task --candidates {tmp}/horizon-candidates.jsonl --date {date} --out {tmp}/editor-task.json
 6. 你亲自读 task、写 {tmp}/selection.json，并 python -m editor.cli check ...
 7. 从 selection 里只选 1 篇；python -m writer.cli task ...；python -m writer.cli figures ...
 8. 你亲自写 push（七段 HTML + assets）；python -m writer.cli check ...
@@ -52,22 +52,22 @@ PROMPT = """使用 frontier-run skill（{repo}/skills/frontier-run/SKILL.md）�
 
 CHECKPOINT_LINE = "- 本次只处理知识卡片：{checkpoint}"
 
-REVIEW_PROMPT = """使用 frontier-run skill（{repo}/skills/frontier-run/SKILL.md），按其 references/workflow.md 处理一条命题综述更新题：{item_id}。
+REVIEW_PROMPT = """使用 horizon-run skill（{repo}/skills/horizon-run/SKILL.md），按其 references/workflow.md 处理一条命题综述更新题：{item_id}。
 
 硬约束：
-- 工作目录 {repo}；运行时区 FRONTIER_RUNTIME={home}（模块命令沿用该环境变量，不要再传位置参数）；
+- 工作目录 {repo}；运行时区 HORIZON_RUNTIME={home}（模块命令沿用该环境变量，不要再传位置参数）；
 - 只处理这一条综述题；不检索、不排序、不写 archive；
 - review 固定四节（结论 / 支持证据 / 反证与边界 / 待验证），≤2000 字，只基于 task.evidence；
 - body_html 用 <h2>/<p>/<ul>/<blockquote>；相对上一版的改动用 <span class="diff-del">/ <span class="diff-add">；
 - 校验失败就修正后重试，不要绕过 review-check。
 
 步骤：
-1. python -m writer.cli review-task --prop {prop_id} --item {item_id} --out {tmp}/frontier-review-task-{item_id}.json
-2. 你亲自读 task，写 {tmp}/frontier-review-{prop_id}.json（schema_version=1, kind=proposition-review,
+1. python -m writer.cli review-task --prop {prop_id} --item {item_id} --out {tmp}/horizon-review-task-{item_id}.json
+2. 你亲自读 task，写 {tmp}/horizon-review-{prop_id}.json（schema_version=1, kind=proposition-review,
    prop_id, review, body_html, proposal{{op=update_proposition_review,...}}）；
-3. python -m writer.cli review-check --task {tmp}/frontier-review-task-{item_id}.json --review {tmp}/frontier-review-{prop_id}.json
-4. python -m writer.cli review-render --review {tmp}/frontier-review-{prop_id}.json --out {tmp}/frontier-review-{prop_id}.html
-5. python -m question_queue.cli review-ready --item {item_id} --review {tmp}/frontier-review-{prop_id}.json --html {tmp}/frontier-review-{prop_id}.html
+3. python -m writer.cli review-check --task {tmp}/horizon-review-task-{item_id}.json --review {tmp}/horizon-review-{prop_id}.json
+4. python -m writer.cli review-render --review {tmp}/horizon-review-{prop_id}.json --out {tmp}/horizon-review-{prop_id}.html
+5. python -m question_queue.cli review-ready --item {item_id} --review {tmp}/horizon-review-{prop_id}.json --html {tmp}/horizon-review-{prop_id}.html
 6. python -m publisher.cli deliver --to {owner}
 
 完成后输出一句：已发送命题综述 {prop_id}。"""
@@ -83,17 +83,17 @@ class Config:
 
 
 def _env_file_owner(home: Path) -> str:
-    path = Path.home() / ".config" / "frontier" / "env"
+    path = Path.home() / ".config" / "horizon" / "env"
     if not path.exists():
         return ""
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("FRONTIER_OWNER_ID="):
+        if line.startswith("HORIZON_OWNER_ID="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
     return ""
 
 
 def load_owner(explicit: str | None = None) -> str:
-    return explicit or os.environ.get("FRONTIER_OWNER_ID") or _env_file_owner(Path.home())
+    return explicit or os.environ.get("HORIZON_OWNER_ID") or _env_file_owner(Path.home())
 
 
 @contextmanager
@@ -186,7 +186,7 @@ def run_agent(config: Config, prompt: str) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess([], 0, "dry-run 已推送", "")
     env = os.environ.copy()
     env.update(layout.handoff(config.home))
-    env["FRONTIER_OWNER_ID"] = config.owner
+    env["HORIZON_OWNER_ID"] = config.owner
     session_kwargs: dict = (
         {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         if os.name == "nt"

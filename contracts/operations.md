@@ -17,7 +17,7 @@ Instruction whitelist、Intent judgement、Console command。
 3. 未命中不执行、不猜测，交给**意图判定**（#83）：只读运行把消息映射到操作
    白名单中的至多一个操作，再由 owner 在确认卡片上点击执行。
 4. 明确排除的动作（初始化、更新知识库、停止服务、改代码/配置/权限）直接拒绝：
-   需要终端交互的回复"请在控制台执行"，修改 frontier 自身的回复"无权限"。
+   需要终端交互的回复"请在控制台执行"，修改 horizon 自身的回复"无权限"。
 5. 执行入口只接受**操作 id + 经参数 schema 校验的 params**，绝不把消息原文透传
    给 agent 或执行端。
 
@@ -31,7 +31,7 @@ Instruction whitelist、Intent judgement、Console command。
 | `pause` | 暂停服务：停止定时推送与飞书响应，控制台仍在前台 | 无 | 是 | `pause` |
 | `resume` | 恢复服务并按上次状态继续 | 无 | 是 | `resume` |
 | `test_message` | 向已核实 owner 发送一条测试消息 | 无 | 是 | `test_message` |
-| `change_schedule` | 修改每日推送时刻（HH:MM，用户时区） | `time`：`HH:MM`，00:00–23:59 | 是 | `change_schedule` |
+| `change_schedule` | 修改每日推送时刻（HH:MM，探索者时区） | `time`：`HH:MM`，00:00–23:59 | 是 | `change_schedule` |
 | `relocate_archive` | 修改资料目录位置 | `path`：非空路径字符串 | 是 | `relocate_archive` |
 
 参数校验失败时拒绝执行并说明原因，例如"参数不合法：参数 time 格式不正确"。
@@ -64,15 +64,15 @@ Instruction whitelist、Intent judgement、Console command。
 
 | 短语 | 排除原因 | 回执 |
 |---|---|---|
-| `初始化`、`/frontier-init` | 需要在控制台逐项交互 | 请在控制台执行 |
-| `更新知识库`、`/frontier-update-kb` | 需要终端逐条审阅 | 请在控制台执行 |
-| `停止服务`、`/frontier-stop` | 关闭控制台即停止服务 | 请在控制台执行 |
-| `改代码`、`修改代码`、`修改配置`、`修改权限` | 修改 frontier 自身 | 无权限 |
+| `初始化`、`/horizon-init` | 需要在控制台逐项交互 | 请在控制台执行 |
+| `更新知识库`、`/horizon-update-kb` | 需要终端逐条审阅 | 请在控制台执行 |
+| `停止服务`、`/horizon-stop` | 关闭控制台即停止服务 | 请在控制台执行 |
+| `改代码`、`修改代码`、`修改配置`、`修改权限` | 修改 horizon 自身 | 无权限 |
 
 ## 回执与失败
 
 - 成功：操作自己的回执，例如 `push_again` 回"已请求再推一篇（推送请求已记录）。"，
-  `status` 回与 `/frontier-status` 相同的快照文本。
+  `status` 回与 `/horizon-status` 相同的快照文本。
 - 参数不合法：`参数不合法：<原因>`，且不调用执行入口。
 - 未知操作 id：`无权限：该操作不在操作白名单内……`。
 - 执行入口抛错：`操作执行失败（<异常类型>: <信息>）。`，控制台继续运行。

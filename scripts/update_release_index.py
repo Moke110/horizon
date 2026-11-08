@@ -7,8 +7,8 @@ digest and compat) plus the GitHub Release URL:
 
     python scripts/update_release_index.py \
         --index releases/index.json \
-        --digest dist/frontier-0.1.0-stable.digest.json \
-        --release-url https://github.com/Moke110/frontier/releases/tag/v0.1.0
+        --digest dist/horizon-0.1.0-stable.digest.json \
+        --release-url https://github.com/Moke110/horizon/releases/tag/v0.1.0
 
 ``published_at`` is the only build-time timestamp; when omitted it is recorded
 as the current UTC time.  The merge replaces the same version, keeps every other

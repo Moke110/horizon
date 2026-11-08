@@ -16,8 +16,8 @@ import pytest
 from hostrun import release
 
 ARTIFACT_URL = (
-    "https://github.com/Moke110/frontier/releases/download/"
-    "v0.1.0/frontier-0.1.0-stable.zip"
+    "https://github.com/Moke110/horizon/releases/download/"
+    "v0.1.0/horizon-0.1.0-stable.zip"
 )
 
 
@@ -40,7 +40,7 @@ class _FakeUrlResponse:
 
 
 def test_resolve_release_source_returns_local_paths_and_file_urls(tmp_path, monkeypatch):
-    artifact = tmp_path / "frontier-0.1.0-stable.zip"
+    artifact = tmp_path / "horizon-0.1.0-stable.zip"
     artifact.write_bytes(b"PK artifact")
 
     assert release.resolve_release_source(str(artifact)) == artifact.resolve()
@@ -64,7 +64,7 @@ def test_resolve_release_source_downloads_an_https_url_with_a_timeout(tmp_path):
         urlopen=fake_urlopen,
     )
 
-    assert downloaded == (tmp_path / "downloads" / "frontier-0.1.0-stable.zip").resolve()
+    assert downloaded == (tmp_path / "downloads" / "horizon-0.1.0-stable.zip").resolve()
     assert downloaded.read_bytes() == b"PK downloaded artifact"
     assert downloaded.parent.is_dir()
     assert seen == {"url": ARTIFACT_URL, "timeout": 7.5}
@@ -77,7 +77,7 @@ def test_resolve_release_source_downloads_into_a_fresh_temp_dir_by_default(tmp_p
     downloaded = release.resolve_release_source(ARTIFACT_URL, urlopen=fake_urlopen)
     try:
         assert downloaded.is_file()
-        assert downloaded.name == "frontier-0.1.0-stable.zip"
+        assert downloaded.name == "horizon-0.1.0-stable.zip"
     finally:
         shutil.rmtree(downloaded.parent, ignore_errors=True)
 
@@ -85,10 +85,10 @@ def test_resolve_release_source_downloads_into_a_fresh_temp_dir_by_default(tmp_p
 @pytest.mark.parametrize(
     ("source", "reason"),
     [
-        pytest.param("http://example.com/frontier.zip", "https", id="plain-http"),
-        pytest.param("ftp://example.com/frontier.zip", "https", id="ftp"),
+        pytest.param("http://example.com/horizon.zip", "https", id="plain-http"),
+        pytest.param("ftp://example.com/horizon.zip", "https", id="ftp"),
         pytest.param("https://example.com/releases/", "filename", id="no-filename"),
-        pytest.param("https:///frontier.zip", "host", id="no-host"),
+        pytest.param("https:///horizon.zip", "host", id="no-host"),
         pytest.param("https://example.com/a b.zip", "whitespace", id="whitespace"),
         pytest.param("", "empty", id="empty"),
     ],

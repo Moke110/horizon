@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "frontier distribution manifest",
+  "title": "horizon distribution manifest",
   "description": "In-package index of every file's digest plus the package identity and compatibility facts (spec #92, ticket #93). The manifest does not list or digest itself.",
   "type": "object",
   "additionalProperties": false,

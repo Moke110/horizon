@@ -24,7 +24,7 @@ def executable(code, *, local_app_data=None):
     base = local_app_data or os.environ.get('LOCALAPPDATA')
     if not base:
         raise RuntimeError('LOCALAPPDATA is required for the Windows desktop runtime')
-    root = Path(base) / 'Frontier/desktop-runtime'
+    root = Path(base) / 'Horizon/desktop-runtime'
     root.mkdir(parents=True, exist_ok=True)
     target = root / digest.hexdigest()
     with file_lock(root / 'install.lock', blocking=True):

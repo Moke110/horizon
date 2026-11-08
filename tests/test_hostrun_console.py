@@ -4,12 +4,12 @@ The Console is the single resident frontend.  These tests drive its public
 surface without a real TTY, a real ``dsh``, a network or a second process:
 
 - the slash-command parser and dispatcher (known, unknown, stub),
-- ``/frontier-status`` backed by ``intents.status`` and the persisted console
+- ``/horizon-status`` backed by ``intents.status`` and the persisted console
   state (never a fresh probe),
-- ``/frontier-logs`` tailing the most recent ``logs/agent-<run_id>.log``,
+- ``/horizon-logs`` tailing the most recent ``logs/agent-<run_id>.log``,
 - the linear event stream (timestamp, level, source) and the rolling log,
 - the single-instance lock and the non-TTY refusal,
-- the ``<code>/bin/frontier-console.cmd`` launcher (title and argv fixed).
+- the ``<code>/bin/horizon-console.cmd`` launcher (title and argv fixed).
 
 The real Windows console window, the real 60-second heartbeat cadence and a
 real double-click startup stay ``untested``; the ticket report records that.
@@ -41,8 +41,8 @@ def _resolved(tmp_path: Path) -> dict:
     return {
         "mode": "code",
         "code": str(code),
-        "runtime": str(code / ".frontier"),
-        "home": str(code / ".frontier"),
+        "runtime": str(code / ".horizon"),
+        "home": str(code / ".horizon"),
         "archive": str(archive),
     }
 
@@ -69,9 +69,9 @@ def _no_worker(function) -> None:
 # --------------------------------------------------------------- command parser
 def test_known_console_commands_are_recognised():
     for name in (
-        "/frontier-help",
-        "/frontier-status",
-        "/frontier-logs",
+        "/horizon-help",
+        "/horizon-status",
+        "/horizon-logs",
         "/exit",
     ):
         parsed = console.parse_command(f"  {name}  ")
@@ -80,11 +80,11 @@ def test_known_console_commands_are_recognised():
 
 
 def test_unknown_console_command_is_rejected_with_the_command_name():
-    parsed = console.parse_command("/frontier-delete-everything")
+    parsed = console.parse_command("/horizon-delete-everything")
 
     assert parsed["ok"] is False
     assert parsed["reason"] == "unknown_command"
-    assert parsed["command"] == "/frontier-delete-everything"
+    assert parsed["command"] == "/horizon-delete-everything"
 
 
 def test_non_slash_and_blank_input_give_usage_instead_of_executing():
@@ -105,23 +105,23 @@ def test_unknown_command_prints_a_usage_hint_and_runs_nothing(tmp_path):
         called.append(repo)
         return _status()
 
-    result = console.dispatch(home, "/frontier-nope", status=status)
+    result = console.dispatch(home, "/horizon-nope", status=status)
 
     assert result["ok"] is False
     assert result["reason"] == "unknown_command"
-    assert "/frontier-help" in result["text"]
+    assert "/horizon-help" in result["text"]
     assert called == []
 
 
 def test_help_lists_every_console_command(tmp_path):
-    text = console.dispatch(_home(tmp_path), "/frontier-help")["text"]
+    text = console.dispatch(_home(tmp_path), "/horizon-help")["text"]
 
     for name in console.COMMANDS:
         assert name in text
 
 
 # --------------------------------------------------------------- status query
-def test_frontier_status_reports_service_next_push_and_queue(tmp_path):
+def test_horizon_status_reports_service_next_push_and_queue(tmp_path):
     home = _home(tmp_path)
     console.write_state(
         home,
@@ -135,7 +135,7 @@ def test_frontier_status_reports_service_next_push_and_queue(tmp_path):
             executor={"state": "free"},
         )
 
-    result = console.dispatch(home, "/frontier-status", status=status)
+    result = console.dispatch(home, "/horizon-status", status=status)
 
     assert result["ok"] is True
     assert "服务：运行中" in result["text"]
@@ -146,11 +146,11 @@ def test_frontier_status_reports_service_next_push_and_queue(tmp_path):
     assert "执行端：free" in result["text"]
 
 
-def test_frontier_status_shows_a_paused_service_and_an_unscheduled_push(tmp_path):
+def test_horizon_status_shows_a_paused_service_and_an_unscheduled_push(tmp_path):
     home = _home(tmp_path)
     console.write_state(home, paused=True)
 
-    text = console.dispatch(home, "/frontier-status", status=lambda repo: _status())["text"]
+    text = console.dispatch(home, "/horizon-status", status=lambda repo: _status())["text"]
 
     assert "服务：已暂停" in text
     assert "暂停：是" in text
@@ -158,7 +158,7 @@ def test_frontier_status_shows_a_paused_service_and_an_unscheduled_push(tmp_path
 
 
 # ----------------------------------------------------------------- log tail
-def test_frontier_logs_tails_the_latest_agent_run(tmp_path):
+def test_horizon_logs_tails_the_latest_agent_run(tmp_path):
     home = _home(tmp_path)
     logs = home / "logs"
     logs.mkdir()
@@ -176,7 +176,7 @@ def test_frontier_logs_tails_the_latest_agent_run(tmp_path):
     assert tail["lines"] == ["b", "c"]
 
 
-def test_frontier_logs_reports_when_no_agent_run_exists(tmp_path):
+def test_horizon_logs_reports_when_no_agent_run_exists(tmp_path):
     home = _home(tmp_path)
 
     tail = console.tail_agent_log(home)
@@ -186,13 +186,13 @@ def test_frontier_logs_reports_when_no_agent_run_exists(tmp_path):
     assert "暂无" in tail["text"]
 
 
-def test_frontier_logs_slash_command_prints_the_tail(tmp_path):
+def test_horizon_logs_slash_command_prints_the_tail(tmp_path):
     home = _home(tmp_path)
     logs = home / "logs"
     logs.mkdir()
     (logs / "agent-only.log").write_text("line-1\nline-2\n", encoding="utf-8")
 
-    result = console.dispatch(home, "/frontier-logs", status=lambda repo: _status())
+    result = console.dispatch(home, "/horizon-logs", status=lambda repo: _status())
 
     assert result["ok"] is True
     assert "line-2" in result["text"]
@@ -227,12 +227,12 @@ def test_console_start_script_is_written_in_the_code_directory(tmp_path):
     python = "C:/python/python.exe"
 
     first = console.ensure_script(code, archive, python)
-    path = code / "bin" / "frontier-console.cmd"
+    path = code / "bin" / "horizon-console.cmd"
     text = path.read_text(encoding="utf-8")
 
     assert first["written"] is True
     assert path == console.script_path(code)
-    assert text.startswith("title frontier-console\n")
+    assert text.startswith("title horizon-console\n")
     assert f'cd /d "{code}"' in text
     assert f'-m hostrun.cli --code "{code}" --archive "{archive}" console' in text
 
@@ -266,7 +266,7 @@ def test_console_serves_a_status_command_then_exits_cleanly(tmp_path):
     home = _home(tmp_path)
     resolved = _resolved(tmp_path)
     code = Path(resolved["code"])
-    reader = iter(["/frontier-status", "/exit"])
+    reader = iter(["/horizon-status", "/exit"])
     out = io.StringIO()
 
     result = console.serve(
@@ -283,15 +283,15 @@ def test_console_serves_a_status_command_then_exits_cleanly(tmp_path):
     assert result["ok"] is True
     assert result["reason"] == "stopped"
     assert result["commands"] == 2
-    assert (code / "bin" / "frontier-console.cmd").is_file()
+    assert (code / "bin" / "horizon-console.cmd").is_file()
     rendered = out.getvalue()
-    assert "frontier>" in rendered
+    assert "horizon>" in rendered
     assert "服务：运行中" in rendered
     assert "正在退出控制台" in rendered
 
     log = console.log_path(home).read_text(encoding="utf-8")
     assert "[console] 控制台已启动" in log
-    assert "/frontier-status" in log
+    assert "/horizon-status" in log
 
     beat = json.loads(console.heartbeat_path(home).read_text(encoding="utf-8"))
     assert beat["state"] == "stopped"
@@ -345,7 +345,7 @@ def test_console_sets_the_fixed_window_title_before_the_prompt(tmp_path):
     )
 
     assert titles == [console.WINDOW_TITLE]
-    assert console.WINDOW_TITLE == "frontier-console"
+    assert console.WINDOW_TITLE == "horizon-console"
 
 
 def test_eof_stops_the_console_without_an_error(tmp_path):
@@ -386,7 +386,7 @@ def test_non_tty_is_rejected_with_the_start_script_hint(tmp_path):
 
     assert result["ok"] is False
     assert result["reason"] == "not_a_tty"
-    assert "frontier-console.cmd" in result["note"]
+    assert "horizon-console.cmd" in result["note"]
     assert not console.lock_path(home).exists()
     assert console.read_state(home)["service"] != "running"
 
@@ -413,5 +413,5 @@ def test_cli_dispatches_console_with_the_resolved_layout(tmp_path, monkeypatch):
     rc = cli.main(["--code", str(code), "--archive", str(archive), "console"])
 
     assert rc == 0
-    assert captured["home"] == code.resolve() / ".frontier"
+    assert captured["home"] == code.resolve() / ".horizon"
     assert captured["resolved"]["archive"] == str(archive.resolve())

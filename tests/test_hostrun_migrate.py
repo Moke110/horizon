@@ -39,8 +39,8 @@ def _write(path: Path, content) -> Path:
 def build_legacy(tmp_path):
     """A legacy ``--home`` installation shaped like the one on this machine."""
     workspace_root = tmp_path / "workspace"
-    legacy = workspace_root / "frontier-archive"
-    code = workspace_root / "frontier"
+    legacy = workspace_root / "horizon-archive"
+    code = workspace_root / "horizon"
     code.mkdir(parents=True)
     legacy.mkdir(parents=True)
     uv = _write(workspace_root / "uv.exe", b"fake uv")
@@ -62,12 +62,12 @@ def build_legacy(tmp_path):
             "timezone": "Asia/Shanghai",
             "workspace": {
                 "root": str(workspace_root),
-                "code_dirname": "frontier",
-                "data_dirname": "frontier-archive",
+                "code_dirname": "horizon",
+                "data_dirname": "horizon-archive",
             },
             "listener": {
-                "start_command": str(legacy / "bin" / "frontier-listener.cmd"),
-                "stop_command": str(legacy / "bin" / "frontier-listener-stop.cmd"),
+                "start_command": str(legacy / "bin" / "horizon-listener.cmd"),
+                "stop_command": str(legacy / "bin" / "horizon-listener-stop.cmd"),
                 "dsh_args": ["--patch", "account.yml"],
             },
         },
@@ -81,8 +81,8 @@ def build_legacy(tmp_path):
     _write(legacy / "executor" / "lease.json", {"holder": "workbuddy"})
     _write(legacy / "console" / "state.json", {"service": "paused"})
     _write(legacy / "lark-cli" / "bin" / "lark-cli.exe", b"fake lark")
-    _write(legacy / "bin" / "frontier-listener.cmd", "title frontier-listener\n")
-    _write(legacy / "bin" / "frontier-listener-stop.cmd", "title frontier-listener\n")
+    _write(legacy / "bin" / "horizon-listener.cmd", "title horizon-listener\n")
+    _write(legacy / "bin" / "horizon-listener-stop.cmd", "title horizon-listener\n")
     _write(legacy / "ratings.jsonl", "")
     _write(old_python, b"fake python")
 
@@ -95,13 +95,13 @@ def build_legacy(tmp_path):
     _write(legacy / "archive" / "applied" / "group.json", {})
 
     _write(
-        workspace_root / ".frontier" / "install.json",
+        workspace_root / ".horizon" / "install.json",
         {
             "schema_version": 1,
             "root": str(workspace_root),
             "repo": str(code),
             "home": str(legacy),
-            "repo_url": "https://github.com/Moke110/frontier.git",
+            "repo_url": "https://github.com/Moke110/horizon.git",
             "uv": str(uv),
             "python": str(old_python),
             "venv": str(legacy / ".venv"),
@@ -174,10 +174,10 @@ def test_migration_moves_runtime_state_and_keeps_materials_in_the_archive(tmp_pa
     assert config["paths"]["python"] == result["environment"]["python"]
     assert config["paths"]["lark_cli"] == str(runtime / "lark-cli" / "bin" / "lark-cli.exe")
     # The informational workspace record survives the rewrite unredacted.
-    assert config["workspace"]["code_dirname"] == "frontier"
+    assert config["workspace"]["code_dirname"] == "horizon"
     assert config["workspace"]["home"] == str(runtime)
     # The listener section is retired; its Agent-run settings move to agent_run.
-    console = code / "bin" / "frontier-console.cmd"
+    console = code / "bin" / "horizon-console.cmd"
     assert "listener" not in config
     assert "schedules" not in config
     assert config["agent_run"]["dsh_args"] == ["--patch", "account.yml"]
@@ -185,17 +185,17 @@ def test_migration_moves_runtime_state_and_keeps_materials_in_the_archive(tmp_pa
     text = console.read_text(encoding="utf-8")
     # The shared generator must produce exactly the pre-#95 bytes.
     assert text == (
-        "title frontier-console\n"
+        "title horizon-console\n"
         f'cd /d "{code}"\n'
         f'"{result["environment"]["python"]}" -m hostrun.cli --code "{code}" '
         f'--archive "{legacy}" console %*\n'
     )
-    assert text.splitlines()[0] == "title frontier-console"
+    assert text.splitlines()[0] == "title horizon-console"
     assert "--code" in text and "--archive" in text and "console" in text
     assert text.rstrip().endswith("%*")
-    assert not (runtime / "bin" / "frontier-listener.cmd").exists()
-    assert not (runtime / "bin" / "frontier-listener-stop.cmd").exists()
-    assert not (legacy / "bin" / "frontier-listener.cmd").exists()
+    assert not (runtime / "bin" / "horizon-listener.cmd").exists()
+    assert not (runtime / "bin" / "horizon-listener-stop.cmd").exists()
+    assert not (legacy / "bin" / "horizon-listener.cmd").exists()
     # The retired listener runtime directory is not moved into the new layout.
     assert not (runtime / "listener").exists()
 
@@ -416,7 +416,7 @@ def test_cli_persists_a_custom_archive(tmp_path, capsys):
 
 # ------------------------------------------------------------------- CLI seam
 def test_cli_install_migrate_reports_a_missing_legacy_install(tmp_path, capsys):
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
 
     rc = cli.main([*cli_locations(home), "install", "migrate"])
 

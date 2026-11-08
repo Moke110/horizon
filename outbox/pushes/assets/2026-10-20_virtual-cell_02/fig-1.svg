@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
   <rect width="1200" height="675" fill="#0f4c5c"/>
   <rect x="0" y="0" width="14" height="675" fill="#e36414"/>
-  <text x="72" y="98" fill="#e36414" font-family="Noto Sans CJK SC, sans-serif" font-size="26" font-weight="700" letter-spacing="4">FRONTIER · VISUAL ABSTRACT</text>
+  <text x="72" y="98" fill="#e36414" font-family="Noto Sans CJK SC, sans-serif" font-size="26" font-weight="700" letter-spacing="4">HORIZON · VISUAL ABSTRACT</text>
   <text x="72" y="230" fill="#ffffff" font-family="Noto Serif CJK SC, serif" font-size="36" font-weight="700">
     <tspan x="72" dy="0">Genetic Perturbation Prediction Models</tspan>
     <tspan x="72" dy="62">Fail Out-of-Distribution: A Rigorous</tspan>

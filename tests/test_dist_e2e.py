@@ -2,14 +2,14 @@
 
 The real acceptance run installs a package from a GitHub Release on a machine
 without a system Python, generates the skill pointer and console launcher, then
-upgrades, rolls back and runs ``/frontier-init`` against independent Feishu
+upgrades, rolls back and runs ``/horizon-init`` against independent Feishu
 facilities.  That live run needs the Lead, a real release and external side
 effects, so it stays ``untested`` in ``docs/acceptance/README.md``.
 
 This module drives the same *mechanics* through the public CLI seams with a
 small fixture package (including a synthetic bundled runtime), no network and no
 process execution: package -> console launcher -> skill pointer -> verify,
-upgrade, rollback and report, with a run-state sentinel proving ``.frontier``
+upgrade, rollback and report, with a run-state sentinel proving ``.horizon``
 survives every swap.
 """
 
@@ -28,20 +28,20 @@ PACKAGE_FILES = {
     "agent/dist/main.js": "// bundled agent fixture\n",
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
-    "skills/frontier-run/references/installation.md": "# installation\n",
-    "skills/frontier-run/references/workflow.md": "# workflow\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
+    "skills/horizon-run/references/installation.md": "# installation\n",
+    "skills/horizon-run/references/workflow.md": "# workflow\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
 }
 
 #: A synthetic version of the CI-produced runtime layout.  The builder copies it
-#: verbatim and generates ``bin/frontier.cmd``; nothing here is executed.
+#: verbatim and generates ``bin/horizon.cmd``; nothing here is executed.
 RUNTIME_FILES = {
     "node.exe": b"MZ fixture",
     "python.exe": b"MZ fake bundled interpreter",
@@ -167,7 +167,7 @@ def _readme_install_section(rel_path: str, start_marker: str, end_marker: str) -
 def test_readme_documented_install_steps_exist_and_are_in_order() -> None:
     for rel_path, start_marker, end_marker in README_INSTALL_HEADINGS:
         section = _readme_install_section(rel_path, start_marker, end_marker)
-        positions = [section.index(step) for step in ("console install", "/frontier-init")]
+        positions = [section.index(step) for step in ("console install", "/horizon-init")]
 
         assert positions == sorted(positions), f"{rel_path} install steps are out of order"
 
@@ -194,7 +194,7 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     archive = workspace_root / "archive"
     code.mkdir(parents=True)
     archive.mkdir(parents=True)
-    host_skills = workspace_root / "host-skills" / "frontier-run"
+    host_skills = workspace_root / "host-skills" / "horizon-run"
     fake_dsh = tmp_path / "dsh.cmd"
     fake_dsh.write_text("@echo off\n", encoding="utf-8")
 
@@ -214,9 +214,9 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert payload["ok"] is True
     assert payload["distribution"] == "package"
     assert payload["version"] == "1.0.0"
-    assert (code / ".frontier" / "dist.lock.json").is_file()
-    assert (code / ".frontier" / "current").read_text(encoding="utf-8").strip() == "1.0.0"
-    assert (code / "bin" / "frontier.cmd").is_file()
+    assert (code / ".horizon" / "dist.lock.json").is_file()
+    assert (code / ".horizon" / "current").read_text(encoding="utf-8").strip() == "1.0.0"
+    assert (code / "bin" / "horizon.cmd").is_file()
 
     # 2. console install -> the package-mode launcher delegates to the wrapper.
     exit_code, payload, _ = _cli(
@@ -225,11 +225,11 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert exit_code == 0
     assert payload["ok"] is True
     assert payload["processes_started"] is False
-    console_path = code / "bin" / "frontier-console.cmd"
+    console_path = code / "bin" / "horizon-console.cmd"
     console_text = console_path.read_text(encoding="utf-8")
     assert console_text == (
-        "title frontier-console\n"
-        f'call "%~dp0frontier.cmd" --code "{code}" '
+        "title horizon-console\n"
+        f'call "%~dp0horizon.cmd" --code "{code}" '
         f'--archive "{archive}" console %*\n'
     )
     assert "python.exe" not in console_text
@@ -261,19 +261,19 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert f"制品摘要：{v1['artifact']['sha256']}" in pointer
     assert f"发行包来源：{lock['source_url']}" in pointer
     assert f"技能摘要：{digest}" in pointer
-    assert f"安装锁：{code / '.frontier' / 'dist.lock.json'}" in pointer
-    assert f"- 入口点：{code / 'bin' / 'frontier.cmd'}" in pointer
+    assert f"安装锁：{code / '.horizon' / 'dist.lock.json'}" in pointer
+    assert f"- 入口点：{code / 'bin' / 'horizon.cmd'}" in pointer
     assert "使用上面记录的入口点" in pointer
     assert "不要自行拼接 `-m hostrun.cli`" in pointer
 
     record = workspace.load_record(code)
     assert record["repo"] == str(code.resolve())
-    assert record["home"] == str((code / ".frontier").resolve())
+    assert record["home"] == str((code / ".horizon").resolve())
     assert record["root"] == str(code.resolve())
     assert record["repo_url"] == lock["source_url"]
     assert record["commit"] == v1_manifest["built_from_commit"]
     assert record["python"] == str(code / "runtime" / "python.exe")
-    assert record["entry"] == str(code / "bin" / "frontier.cmd")
+    assert record["entry"] == str(code / "bin" / "horizon.cmd")
     assert record["dirty"] is False
     assert lock["distribution"] == "package"
     assert lock["version"] == "1.0.0"
@@ -287,16 +287,16 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert status["reasons"] == []
 
     # 4. a tampered lock version or pointer/lock digest blocks verification.
-    lock_bytes = (code / ".frontier" / "dist.lock.json").read_bytes()
+    lock_bytes = (code / ".horizon" / "dist.lock.json").read_bytes()
     tampered = json.loads(lock_bytes)
     tampered["version"] = "9.9.9"
-    (code / ".frontier" / "dist.lock.json").write_text(
+    (code / ".horizon" / "dist.lock.json").write_text(
         json.dumps(tampered), encoding="utf-8"
     )
     status = workspace.verify_skill(workspace.load_record(code))
     assert status["ok"] is False
     assert "lock_version_mismatch" in status["reasons"]
-    (code / ".frontier" / "dist.lock.json").write_bytes(lock_bytes)
+    (code / ".horizon" / "dist.lock.json").write_bytes(lock_bytes)
 
     pointer_bytes = pointer_path.read_bytes()
     pointer_path.write_text(
@@ -325,11 +325,11 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     # A package swap must leave every runtime file alone.  This sentinel is not
     # ``install/state.json`` because re-running the documented ``install skill``
     # remediation legitimately records the refreshed skill step there.
-    state_path = code / ".frontier" / "e2e-run-state.json"
+    state_path = code / ".horizon" / "e2e-run-state.json"
     sentinel = b'{"schema_version": 1, "steps": {}, "sentinel": "e2e-run-state"}\n'
     state_path.write_bytes(sentinel)
     console_before = console_path.read_bytes()
-    wrapper_before = (code / "bin" / "frontier.cmd").read_bytes()
+    wrapper_before = (code / "bin" / "horizon.cmd").read_bytes()
 
     # 6. upgrade -> v1 retained, current/lock v2, verify passes.
     exit_code, payload, _ = _cli(
@@ -346,8 +346,8 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert exit_code == 0
     assert payload["version"] == "2.0.0"
     assert payload["previous_version"] == "1.0.0"
-    assert (code / ".frontier" / "releases" / "1.0.0" / "manifest.json").is_file()
-    assert (code / ".frontier" / "current").read_text(encoding="utf-8").strip() == "2.0.0"
+    assert (code / ".horizon" / "releases" / "1.0.0" / "manifest.json").is_file()
+    assert (code / ".horizon" / "current").read_text(encoding="utf-8").strip() == "2.0.0"
     assert dist.read_lock(code)["version"] == "2.0.0"
     assert dist.read_lock(code)["artifact_sha256"] == v2["artifact"]["sha256"]
     exit_code, payload, _ = _cli(capsys, code, archive, "install", "verify")
@@ -355,7 +355,7 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert payload["status"] == "verified"
     assert state_path.read_bytes() == sentinel
     assert console_path.read_bytes() == console_before
-    assert (code / "bin" / "frontier.cmd").read_bytes() == wrapper_before
+    assert (code / "bin" / "horizon.cmd").read_bytes() == wrapper_before
 
     # 6b. the documented remediation: re-run install skill, then verify_skill.
     exit_code, payload, _ = _cli(
@@ -384,10 +384,10 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert payload["previous_version"] == "2.0.0"
     assert dist.read_lock(code)["version"] == "1.0.0"
     assert dist.read_lock(code)["artifact_sha256"] == v1["artifact"]["sha256"]
-    assert (code / ".frontier" / "current").read_text(encoding="utf-8").strip() == "1.0.0"
+    assert (code / ".horizon" / "current").read_text(encoding="utf-8").strip() == "1.0.0"
     assert state_path.read_bytes() == sentinel
     assert console_path.read_bytes() == console_before
-    assert (code / "bin" / "frontier.cmd").read_bytes() == wrapper_before
+    assert (code / "bin" / "horizon.cmd").read_bytes() == wrapper_before
     assert dist.verify_install(code)["status"] == "verified"
 
     # 7b. the same refresh works after rollback.
@@ -426,11 +426,11 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
 
     # 9. an unknown rollback target is blocked and changes nothing.
     before = {
-        "lock": (code / ".frontier" / "dist.lock.json").read_bytes(),
-        "current": (code / ".frontier" / "current").read_bytes(),
+        "lock": (code / ".horizon" / "dist.lock.json").read_bytes(),
+        "current": (code / ".horizon" / "current").read_bytes(),
         "state": state_path.read_bytes(),
         "console": console_path.read_bytes(),
-        "wrapper": (code / "bin" / "frontier.cmd").read_bytes(),
+        "wrapper": (code / "bin" / "horizon.cmd").read_bytes(),
     }
     exit_code, payload, _ = _cli(
         capsys, code, archive, "install", "rollback", "--to", "9.9.9"
@@ -440,9 +440,9 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert payload["status"] == "blocked"
     assert payload["reason"] == "release_not_found"
     assert {
-        "lock": (code / ".frontier" / "dist.lock.json").read_bytes(),
-        "current": (code / ".frontier" / "current").read_bytes(),
+        "lock": (code / ".horizon" / "dist.lock.json").read_bytes(),
+        "current": (code / ".horizon" / "current").read_bytes(),
         "state": state_path.read_bytes(),
         "console": console_path.read_bytes(),
-        "wrapper": (code / "bin" / "frontier.cmd").read_bytes(),
+        "wrapper": (code / "bin" / "horizon.cmd").read_bytes(),
     } == before

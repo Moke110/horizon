@@ -27,7 +27,7 @@ def _dsh_file(tmp_path):
 
 
 def _home(tmp_path):
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     home.mkdir(parents=True, exist_ok=True)
     return home
 
@@ -84,7 +84,7 @@ def test_console_install_uses_bundled_agent_without_starting_it(tmp_path, capsys
     payload = json.loads(capsys.readouterr().out)
     assert payload["agent"]["ok"]
     assert payload["processes_started"] is False
-    assert (home.parent / "bin/frontier-console.cmd").is_file()
+    assert (home.parent / "bin/horizon-console.cmd").is_file()
     assert load_config(home)["host"]["mode"] == "embedded-pi"
 
 
@@ -93,7 +93,7 @@ def test_console_install_reports_missing_bundled_agent(tmp_path, capsys):
     assert cli.main([*cli_locations(home), "console", "install"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert "Agent" in payload["note"]
-    assert (home.parent / "bin/frontier-console.cmd").is_file()
+    assert (home.parent / "bin/horizon-console.cmd").is_file()
 
 
 # ------------------------------------------------------------------- serve

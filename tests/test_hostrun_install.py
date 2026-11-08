@@ -106,9 +106,9 @@ def _seed_repo_files(repo: Path) -> None:
     for rel in (
         "common.py",
         "contracts/README.md",
-        "skills/frontier-run/SKILL.md",
-        "skills/frontier-run/references/installation.md",
-        "skills/frontier-run/references/workflow.md",
+        "skills/horizon-run/SKILL.md",
+        "skills/horizon-run/references/installation.md",
+        "skills/horizon-run/references/workflow.md",
     ):
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +149,7 @@ def test_probe_dependencies_accepts_the_bundled_runtime_of_a_package_install(tmp
     bundled = repo / "runtime" / "python.exe"
     bundled.parent.mkdir(parents=True)
     bundled.write_text("", encoding="utf-8")
-    lock = repo / ".frontier" / "dist.lock.json"
+    lock = repo / ".horizon" / "dist.lock.json"
     lock.parent.mkdir(parents=True)
     lock.write_text(
         json.dumps({"schema_version": 1, "distribution": "package"}),
@@ -218,7 +218,7 @@ def _package_install_tree(tmp_path: Path) -> Path:
     repo = tmp_path / "code"
     _seed_repo_files(repo)
     (repo / "bin").mkdir(parents=True)
-    (repo / "bin" / "frontier.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    (repo / "bin" / "horizon.cmd").write_text("@echo off\r\n", encoding="utf-8")
     (repo / "runtime").mkdir()
     (repo / "runtime" / "python.exe").write_bytes(b"MZ fake")
     (repo / "manifest.json").write_text(
@@ -234,8 +234,8 @@ def _package_install_tree(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    (repo / ".frontier").mkdir()
-    (repo / ".frontier" / "dist.lock.json").write_text(
+    (repo / ".horizon").mkdir()
+    (repo / ".horizon" / "dist.lock.json").write_text(
         json.dumps(
             {
                 "schema_version": 1,
@@ -243,7 +243,7 @@ def _package_install_tree(tmp_path: Path) -> Path:
                 "version": "1.2.3",
                 "channel": "stable",
                 "artifact_sha256": "a" * 64,
-                "source_url": (tmp_path / "frontier-1.2.3-stable.zip").as_uri(),
+                "source_url": (tmp_path / "horizon-1.2.3-stable.zip").as_uri(),
                 "installed_at": "2026-10-31T10:00:00+08:00",
                 "requires": {"os": "windows", "arch": "x86_64", "dsh": "*", "python": "3.13"},
                 "skill_digest": "",
@@ -254,7 +254,7 @@ def _package_install_tree(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     assert workspace_mod.register_skill(
-        repo, tmp_path / "host-skills" / "frontier-run"
+        repo, tmp_path / "host-skills" / "horizon-run"
     )["ok"] is True
     return repo
 
@@ -262,10 +262,10 @@ def _package_install_tree(tmp_path: Path) -> Path:
 def test_install_check_for_a_package_reports_workspace_and_bundled_dependencies(tmp_path):
     repo = _package_install_tree(tmp_path)
     runtime_python = repo / "runtime" / "python.exe"
-    wrapper = repo / "bin" / "frontier.cmd"
+    wrapper = repo / "bin" / "horizon.cmd"
 
     result = install.check(
-        repo / ".frontier",
+        repo / ".horizon",
         workspace_root=repo,
         host=_host(),
         runner=_import_probe_runner(["3.13.1", "6.0.1", "1.24.0"]),
@@ -273,11 +273,11 @@ def test_install_check_for_a_package_reports_workspace_and_bundled_dependencies(
 
     assert result["steps"]["workspace"] == "ok"
     assert result["steps"]["dependencies"] == "ok"
-    evidence = install.load_state(repo / ".frontier")["steps"]["dependencies"]["evidence"]
+    evidence = install.load_state(repo / ".horizon")["steps"]["dependencies"]["evidence"]
     assert evidence["bundled_runtime"] is True
     assert evidence["python"] == str(runtime_python)
     config = json.loads(
-        (repo / ".frontier" / "install" / "config.json").read_text(encoding="utf-8")
+        (repo / ".horizon" / "install" / "config.json").read_text(encoding="utf-8")
     )
     assert config["paths"]["python"] == str(runtime_python)
     assert config["paths"]["python"] != str(wrapper)
@@ -461,7 +461,7 @@ def test_check_merges_host_and_lark_permissions_once(tmp_path, monkeypatch):
 def test_cli_rejected_layout_records_workspace_blocked(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
 
     code = cli.main(
         [
@@ -471,7 +471,7 @@ def test_cli_rejected_layout_records_workspace_blocked(tmp_path):
             "--root",
             str(ws),
             "--data-dir",
-            "frontier/archive",
+            "horizon/archive",
         ]
     )
 
@@ -484,7 +484,7 @@ def test_cli_rejected_layout_records_workspace_blocked(tmp_path):
     assert [row["step"] for row in report["blocked"]] == ["workspace"]
     assert report["next"] == "workspace"
     assert any("资料目录不能放在代码目录内" in line for line in report["limitations"])
-    assert not (ws / "frontier").exists()
+    assert not (ws / "horizon").exists()
 
 
 def test_stale_evidence_flags_old_steps(tmp_path):
@@ -541,8 +541,8 @@ def test_probe_writes_creates_and_removes_unique_probes(tmp_path):
     # must not create the credential store as a side effect.
     assert not store.exists()
     assert result["lark_store"]["probe_root"] == str(tmp_path)
-    assert not list(home.glob(".frontier-write-probe-*"))
-    assert not list(tmp_path.glob(".frontier-write-probe-*"))
+    assert not list(home.glob(".horizon-write-probe-*"))
+    assert not list(tmp_path.glob(".horizon-write-probe-*"))
 
 
 def test_probe_writes_uses_lark_cli_home(tmp_path, monkeypatch):
@@ -657,9 +657,9 @@ def test_check_reads_explicit_tokens_without_attaching_the_library(tmp_path):
 # -------------------------------------------------- install toolchain step
 def _fake_workspace(tmp_path):
     root = tmp_path / "ws"
-    repo = root / "frontier"
+    repo = root / "horizon"
     (repo / ".git").mkdir(parents=True)
-    home = root / "frontier-archive"
+    home = root / "horizon-archive"
     home.mkdir()
     workspace_mod.save_record(
         root,

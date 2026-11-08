@@ -12,7 +12,7 @@ from pathlib import Path
 
 from archive.store import Archive, is_under_review, v3_prop_from_v2
 from common import clip, now, read_json, write_json
-from frontier.model import is_temporary_card
+from horizon.model import is_temporary_card
 
 SENTENCE_RE = re.compile(r"(?<=[.!?。！？])\s+")
 
@@ -75,7 +75,7 @@ def _cards(home: Path) -> list[dict]:
     card_dir = Path(home) / "archive" / "cards"
     rows = [read_json(p) for p in sorted(card_dir.glob("*.json"))] if card_dir.exists() else []
     # Temporary acceptance cards are not formal context; keep the same rule as
-    # frontier.model.load_cards (#55).  Under review cards are kept but excluded
+    # horizon.model.load_cards (#55).  Under review cards are kept but excluded
     # from writing context (#88).
     return [
         r

@@ -236,7 +236,7 @@ def build_html(push: dict, *, web: bool = False) -> str:
     sections = push.get("sections") or {}
     paper = push.get("paper") or {}
     label = push.get("checkpoint_label") or push.get("checkpoint_id") or ""
-    kicker = f"FRONTIER · {label}"
+    kicker = f"HORIZON · {label}"
 
     template = TEMPLATE.read_text(encoding="utf-8")
     css = (WEB_STYLE if web else STYLE).read_text(encoding="utf-8")

@@ -73,7 +73,7 @@ def run(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="retriever", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("fetch")
     p.add_argument("--plan", required=True)

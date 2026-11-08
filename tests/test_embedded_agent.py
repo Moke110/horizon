@@ -38,9 +38,13 @@ def test_model_config_is_not_in_public_facts_or_argv(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("node") or not (ROOT / "agent/dist/main.js").exists(), reason="build the Pi agent first")
-@pytest.mark.parametrize("kind", ["intent_judgement", "kb_read", "push", "push_tool", "push_private"])
+@pytest.mark.parametrize("kind", ["intent_judgement", "kb_read", "push", "push_tool", "push_private", "push_database", "push_snapshot", "push_hardlink"])
 def test_real_pi_stream_and_tool_policy(tmp_path, kind):
     requests = []
+    database = tmp_path / "horizon.sqlite3"
+    database.write_text("preserved database")
+    if kind == "push_hardlink":
+        (tmp_path / "alias.json").hardlink_to(database)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -51,9 +55,12 @@ def test_real_pi_stream_and_tool_policy(tmp_path, kind):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            chunks = [({"role": "assistant", "content": "Frontier ready"}, None), ({}, "stop")]
-            if kind in {"push_tool", "push_private"} and len(requests) == 1:
+            chunks = [({"role": "assistant", "content": "Horizon ready"}, None), ({}, "stop")]
+            if kind in {"push_tool", "push_private", "push_database", "push_snapshot", "push_hardlink"} and len(requests) == 1:
                 target = tmp_path / ("agent/model.json" if kind == "push_private" else "outbox/result.json")
+                if kind == "push_database": target = database
+                if kind == "push_snapshot": target = tmp_path / "snapshots/state.json"
+                if kind == "push_hardlink": target = tmp_path / "alias.json"
                 chunks = [({"role": "assistant", "tool_calls": [{"index": 0, "id": "call_test", "type": "function",
                     "function": {"name": "write_file", "arguments": json.dumps({"path": str(target), "content": '{"ok":true}'})}}]}, None), ({}, "tool_calls")]
             for delta, finish in chunks:
@@ -66,24 +73,28 @@ def test_real_pi_stream_and_tool_policy(tmp_path, kind):
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        embedded_agent.configure(tmp_path, provider="frontier-test", model="test-model", api_key="private-test-key",
+        embedded_agent.configure(tmp_path, provider="horizon-test", model="test-model", api_key="private-test-key",
                                  base_url=f"http://127.0.0.1:{server.server_port}/v1")
         import os, sys
         proc = subprocess.run(embedded_agent.argv(tmp_path, "Say ready", kind=kind, code=ROOT), cwd=ROOT,
-                              env={**os.environ, "FRONTIER_PYTHON": sys.executable}, capture_output=True,
+                              env={**os.environ, "HORIZON_PYTHON": sys.executable}, capture_output=True,
                               text=True, encoding="utf-8", timeout=45)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         events = [json.loads(line) for line in proc.stdout.splitlines()]
-        assert next(e for e in events if e["type"] == "final")["text"] == "Frontier ready"
+        assert next(e for e in events if e["type"] == "final")["text"] == "Horizon ready"
         assert "private-test-key" not in proc.stdout + proc.stderr
         names = {t["function"]["name"] for t in requests[0].get("tools", [])}
-        expected = set() if kind == "intent_judgement" else {"read_file"} if kind == "kb_read" else {"frontier_cli", "read_file", "write_file"}
+        expected = set() if kind == "intent_judgement" else {"read_file"} if kind == "kb_read" else {"horizon_cli", "read_file", "write_file"}
         assert names == expected
         assert "Development responsibilities" not in json.dumps(requests)
         if kind == "push_tool":
             assert json.loads((tmp_path / "outbox/result.json").read_text()) == {"ok": True}
             assert len(requests) == 2
             assert any(e["type"] == "tool_result" and not e["isError"] for e in events)
+        if kind in {"push_database", "push_snapshot", "push_hardlink"}:
+            assert database.read_text() == "preserved database"
+            assert not (tmp_path / "snapshots/state.json").exists()
+            assert any(e["type"] == "tool_result" and e["isError"] for e in events)
         if kind == "push_private":
             assert json.loads(embedded_agent.config_path(tmp_path).read_text())["apiKey"] == "private-test-key"
             assert any(e["type"] == "tool_result" and e["isError"] for e in events)

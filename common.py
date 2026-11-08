@@ -20,8 +20,8 @@ from typing import Any, Iterable, Iterator
 
 import yaml
 
-RUNTIME_DIRNAME = ".frontier"
-RUNTIME_ENV = "FRONTIER_RUNTIME"
+RUNTIME_DIRNAME = ".horizon"
+RUNTIME_ENV = "HORIZON_RUNTIME"
 
 
 def _replace_with_retry(tmp: Path, target: Path, *, attempts: int = 20) -> None:
@@ -49,7 +49,7 @@ def runtime_root() -> Path:
     Commands resolve the two locations through ``hostrun.layout`` and export
     this path, so in-process helpers such as :func:`recorded_lark_cli` read the
     same area the command was given.  The fallback is this checkout's own
-    ``.frontier``, which is also what the resolver defaults to.
+    ``.horizon``, which is also what the resolver defaults to.
     """
     override = os.environ.get(RUNTIME_ENV)
     if override:

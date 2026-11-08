@@ -18,9 +18,9 @@ README_ZH = ROOT / "README.zh-CN.md"
 AGENTS = ROOT / "AGENTS.md"
 ACCEPTANCE = ROOT / "docs" / "acceptance" / "README.md"
 ADR = ROOT / "docs" / "adr" / "0010-distribution-packages-for-installation.md"
-SKILL = ROOT / "skills" / "frontier-run" / "SKILL.md"
-INSTALLATION = ROOT / "skills" / "frontier-run" / "references" / "installation.md"
-WORKFLOW = ROOT / "skills" / "frontier-run" / "references" / "workflow.md"
+SKILL = ROOT / "skills" / "horizon-run" / "SKILL.md"
+INSTALLATION = ROOT / "skills" / "horizon-run" / "references" / "installation.md"
+WORKFLOW = ROOT / "skills" / "horizon-run" / "references" / "workflow.md"
 
 POINTER_LABELS = (
     "发行来源",

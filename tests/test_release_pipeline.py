@@ -110,22 +110,22 @@ def test_explicit_channel_must_agree_with_the_tag():
 def test_artifact_name_is_derived_from_version_and_channel(version, channel):
     assert (
         release.expected_artifact_name(version, channel)
-        == f"frontier-{version}-{channel}.zip"
+        == f"horizon-{version}-{channel}.zip"
     )
 
 
 def test_release_title_and_notes_describe_the_tag_and_assets():
     meta = release.parse_tag("v0.2.0-rc.1")
-    assert release.release_title(meta) == "frontier 0.2.0-rc.1 (prerelease)"
+    assert release.release_title(meta) == "horizon 0.2.0-rc.1 (prerelease)"
 
     notes = release.release_notes(
         meta,
-        artifact_name="frontier-0.2.0-rc.1-prerelease.zip",
+        artifact_name="horizon-0.2.0-rc.1-prerelease.zip",
         artifact_sha256=FIXED_SHA,
         manifest_sha256=FIXED_SHA_B,
         compat={"os": "windows", "arch": "x86_64", "dsh": "*", "python": "3.13"},
         built_from_commit="deadbeef",
-        repository="Moke110/frontier",
+        repository="Moke110/horizon",
     )
     assert "0.2.0-rc.1" in notes
     assert "prerelease" in notes
@@ -134,7 +134,7 @@ def test_release_title_and_notes_describe_the_tag_and_assets():
     assert "deadbeef" in notes
     assert "windows" in notes
     assert "3.13" in notes
-    assert "frontier-0.2.0-rc.1-prerelease.zip" in notes
+    assert "horizon-0.2.0-rc.1-prerelease.zip" in notes
     assert "releases/index.json" in notes
 
 
@@ -144,11 +144,11 @@ def _entry(**overrides):
         "version": "1.2.3",
         "channel": "stable",
         "artifact_sha256": FIXED_SHA,
-        "artifact_name": "frontier-1.2.3-stable.zip",
+        "artifact_name": "horizon-1.2.3-stable.zip",
         "manifest_sha256": FIXED_SHA_B,
         "compat": {"os": "windows", "arch": "x86_64", "dsh": "*", "python": "3.13"},
         "published_at": "2026-10-31T05:00:00+00:00",
-        "release_url": "https://github.com/Moke110/frontier/releases/tag/v1.2.3",
+        "release_url": "https://github.com/Moke110/horizon/releases/tag/v1.2.3",
     }
     entry.update(overrides)
     if "artifact_name" not in overrides and (
@@ -291,25 +291,25 @@ def test_index_validation_rejects_wrong_schema_and_duplicate_versions():
 def test_release_entry_is_built_from_the_digest_file():
     digest = {
         "schema_version": 1,
-        "package": "frontier-0.1.0-stable",
+        "package": "horizon-0.1.0-stable",
         "version": "0.1.0",
         "channel": "stable",
         "built_from_commit": "deadbeef",
         "compat": {"os": "windows", "arch": "x86_64", "dsh": "*", "python": "3.13"},
         "manifest_sha256": FIXED_SHA_B,
         "artifact": {
-            "name": "frontier-0.1.0-stable.zip",
+            "name": "horizon-0.1.0-stable.zip",
             "bytes": 123,
             "sha256": FIXED_SHA,
         },
     }
     entry = release.entry_from_digest(
         digest,
-        release_url="https://github.com/Moke110/frontier/releases/tag/v0.1.0",
+        release_url="https://github.com/Moke110/horizon/releases/tag/v0.1.0",
         published_at="2026-10-31T05:00:00+00:00",
     )
     assert entry["version"] == "0.1.0"
-    assert entry["artifact_name"] == "frontier-0.1.0-stable.zip"
+    assert entry["artifact_name"] == "horizon-0.1.0-stable.zip"
     assert entry["artifact_sha256"] == FIXED_SHA
     assert entry["manifest_sha256"] == FIXED_SHA_B
     assert entry["compat"]["python"] == "3.13"
@@ -319,7 +319,7 @@ def test_release_entry_is_built_from_the_digest_file():
     with pytest.raises(release.ReleaseError):
         release.entry_from_digest(
             bad,
-            release_url="https://github.com/Moke110/frontier/releases/tag/v0.1.0",
+            release_url="https://github.com/Moke110/horizon/releases/tag/v0.1.0",
             published_at="2026-10-31T05:00:00+00:00",
         )
 
@@ -611,14 +611,14 @@ def test_prepare_runtime_refuses_a_non_empty_output_and_reports_cli_errors(tmp_p
 def _digest_payload(version: str = "0.1.0", channel: str = "stable") -> dict:
     return {
         "schema_version": 1,
-        "package": f"frontier-{version}-{channel}",
+        "package": f"horizon-{version}-{channel}",
         "version": version,
         "channel": channel,
         "built_from_commit": "deadbeef",
         "compat": {"os": "windows", "arch": "x86_64", "dsh": "*", "python": "3.13"},
         "manifest_sha256": FIXED_SHA_B,
         "artifact": {
-            "name": f"frontier-{version}-{channel}.zip",
+            "name": f"horizon-{version}-{channel}.zip",
             "bytes": 321,
             "sha256": FIXED_SHA,
         },
@@ -630,7 +630,7 @@ def test_update_release_index_writes_a_deterministic_newest_first_index(tmp_path
     index_path = tmp_path / "releases" / "index.json"
     digest = tmp_path / "digest.json"
     digest.write_text(json.dumps(_digest_payload()), encoding="utf-8")
-    url = "https://github.com/Moke110/frontier/releases/tag/v0.1.0"
+    url = "https://github.com/Moke110/horizon/releases/tag/v0.1.0"
 
     exit_code = script.main(
         [
@@ -650,7 +650,7 @@ def test_update_release_index_writes_a_deterministic_newest_first_index(tmp_path
     assert first["schema_version"] == 1
     assert [row["version"] for row in first["releases"]] == ["0.1.0"]
     entry = first["releases"][0]
-    assert entry["artifact_name"] == "frontier-0.1.0-stable.zip"
+    assert entry["artifact_name"] == "horizon-0.1.0-stable.zip"
     assert entry["artifact_sha256"] == FIXED_SHA
     assert entry["manifest_sha256"] == FIXED_SHA_B
     assert entry["release_url"] == url
@@ -664,7 +664,7 @@ def test_update_release_index_writes_a_deterministic_newest_first_index(tmp_path
             "--digest",
             str(digest),
             "--release-url",
-            "https://github.com/Moke110/frontier/releases/tag/v0.2.0-rc.1",
+            "https://github.com/Moke110/horizon/releases/tag/v0.2.0-rc.1",
             "--published-at",
             "2026-11-01T05:00:00+00:00",
         ]
@@ -710,7 +710,7 @@ def test_update_release_index_rejects_a_bad_digest_and_leaves_the_index_alone(tm
             "--digest",
             str(digest),
             "--release-url",
-            "https://github.com/Moke110/frontier/releases/tag/v0.1.0",
+            "https://github.com/Moke110/horizon/releases/tag/v0.1.0",
         ]
     )
 
@@ -723,11 +723,11 @@ def _fixture_source(root: Path) -> Path:
     files = {
         "common.py": "RUNTIME = True\n",
         "requirements.txt": "PyYAML>=6.0\n",
-        "README.md": "# fixture frontier\n",
+        "README.md": "# fixture horizon\n",
         "LICENSE": "MIT\n",
         "hostrun/__init__.py": "",
         "hostrun/cli.py": "CLI = 1\n",
-        "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+        "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
         "contracts/README.md": "contracts\n",
         "docs/adr/0010-distribution.md": "# decision\n",
     }
@@ -761,7 +761,7 @@ def test_verify_artifact_requires_runtime_wrapper_and_expected_digest(tmp_path):
     )
     assert report["ok"] is True
     assert "runtime/python.exe" in report["required"]
-    assert "bin/frontier.cmd" in report["required"]
+    assert "bin/horizon.cmd" in report["required"]
 
     with pytest.raises(release.ReleaseError) as excinfo:
         release.verify_artifact(built["artifact"]["path"], expected_sha256="0" * 64)
@@ -1115,3 +1115,11 @@ def test_release_contract_documents_tag_channel_index_and_ci():
     ):
         assert fragment in contract
 
+
+@pytest.mark.parametrize('number', range(1, 7))
+def test_historical_frontier_release_records_survive_new_release(number):
+    version = f'0.1.0-rc.{number}'
+    old = _entry(version=version, channel='prerelease', artifact_name=f'frontier-{version}-prerelease.zip')
+    merged = release.merge_release_index({'schema_version': 1, 'releases': [old]}, _entry(version='1.2.3'))
+    assert merged['releases'][1]['artifact_name'] == old['artifact_name']
+    assert release.expected_artifact_name(version, 'prerelease') == f'horizon-{version}-prerelease.zip'

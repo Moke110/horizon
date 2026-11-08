@@ -15,7 +15,7 @@ import pytest
 from archive.store import Archive, ArchiveError, is_under_review, v3_prop_from_v2
 from editor import model as editor_model
 from editor import tasks as editor_tasks
-from frontier import model as frontier_model
+from horizon import model as horizon_model
 from hostrun import kb
 from knowledge import bitable
 from retriever import cli as retriever_cli
@@ -95,7 +95,7 @@ def _set_flag(home, kind, record_id, flag=True):
 
 
 def _pipeline(home, fixtures_dir):
-    plan = frontier_model.plan(home, day="2026-10-20", days=7)
+    plan = horizon_model.plan(home, day="2026-10-20", days=7)
     rows = retriever_cli.run(plan, "fixture", fixtures_dir, check_window=True)
     selection = editor_model.rank(home, rows, day="2026-10-20", limit=4, per_checkpoint=2)
     return rows, selection
@@ -169,7 +169,7 @@ def test_v2_proposition_conversion_keeps_the_optional_flag():
 def test_retrieval_plan_skips_under_review_cards(kl_home):
     _set_flag(kl_home, "cards", "card_hmbs", True)
 
-    plan = frontier_model.plan(kl_home, day="2026-10-20", days=7)
+    plan = horizon_model.plan(kl_home, day="2026-10-20", days=7)
 
     card_ids = {query["card_id"] for query in plan["queries"]}
     assert "card_hmbs" not in card_ids

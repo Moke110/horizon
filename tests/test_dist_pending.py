@@ -12,11 +12,11 @@ from hostrun import dist, distribution
 PACKAGE_FILES = {
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
     "contracts/README.md": "contracts\n",
 }
 
@@ -53,11 +53,11 @@ def _install(code: Path, result: dict) -> dict:
 
 
 def _lock(code: Path) -> dict:
-    return json.loads((code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8"))
+    return json.loads((code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8"))
 
 
 def _marker(code: Path) -> Path:
-    return code / ".frontier" / "dist.pending.json"
+    return code / ".horizon" / "dist.pending.json"
 
 
 def _fail_on_staging_copy(monkeypatch):
@@ -99,7 +99,7 @@ def test_fresh_install_failure_removes_applied_files_and_marker(tmp_path, monkey
     assert not _marker(code).exists()
     assert not (code / "manifest.json").exists()
     assert not (code / "common.py").exists()
-    assert not (code / ".frontier" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
 
 
 def test_fresh_install_failure_after_lock_write_removes_lock_and_current(tmp_path, monkeypatch):
@@ -116,8 +116,8 @@ def test_fresh_install_failure_after_lock_write_removes_lock_and_current(tmp_pat
     assert payload["status"] == "blocked"
     assert payload["restored"] is True
     assert not _marker(code).exists()
-    assert not (code / ".frontier" / "dist.lock.json").exists()
-    assert not (code / ".frontier" / "current").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "current").exists()
     assert not (code / "manifest.json").exists()
 
 
@@ -126,8 +126,8 @@ def test_upgrade_failure_restores_retained_tree_lock_and_current(tmp_path, monke
     v2 = _build(tmp_path, name="v2", version="2.0.0")
     code = tmp_path / "code"
     assert _install(code, v1)["ok"] is True
-    before_lock = (code / ".frontier" / "dist.lock.json").read_bytes()
-    before_current = (code / ".frontier" / "current").read_bytes()
+    before_lock = (code / ".horizon" / "dist.lock.json").read_bytes()
+    before_current = (code / ".horizon" / "current").read_bytes()
     before_common = (code / "common.py").read_bytes()
     _fail_on_staging_copy(monkeypatch)
 
@@ -137,8 +137,8 @@ def test_upgrade_failure_restores_retained_tree_lock_and_current(tmp_path, monke
     assert payload["restored"] is True
     assert payload["recovery"]["restored_version"] == "1.0.0"
     assert not _marker(code).exists()
-    assert (code / ".frontier" / "dist.lock.json").read_bytes() == before_lock
-    assert (code / ".frontier" / "current").read_bytes() == before_current
+    assert (code / ".horizon" / "dist.lock.json").read_bytes() == before_lock
+    assert (code / ".horizon" / "current").read_bytes() == before_current
     assert (code / "common.py").read_bytes() == before_common
     assert dist.verify_install(code)["status"] == "verified"
     assert _lock(code)["version"] == "1.0.0"
@@ -150,8 +150,8 @@ def test_rollback_failure_restores_the_outgoing_tree(tmp_path, monkeypatch):
     code = tmp_path / "code"
     assert _install(code, v1)["ok"] is True
     assert _install(code, v2)["ok"] is True
-    before_lock = (code / ".frontier" / "dist.lock.json").read_bytes()
-    before_current = (code / ".frontier" / "current").read_bytes()
+    before_lock = (code / ".horizon" / "dist.lock.json").read_bytes()
+    before_current = (code / ".horizon" / "current").read_bytes()
     before_common = (code / "common.py").read_bytes()
     _fail_on_retained_rollback_copy(monkeypatch, "1.0.0")
 
@@ -160,8 +160,8 @@ def test_rollback_failure_restores_the_outgoing_tree(tmp_path, monkeypatch):
     assert payload["status"] == "blocked"
     assert payload["restored"] is True
     assert not _marker(code).exists()
-    assert (code / ".frontier" / "dist.lock.json").read_bytes() == before_lock
-    assert (code / ".frontier" / "current").read_bytes() == before_current
+    assert (code / ".horizon" / "dist.lock.json").read_bytes() == before_lock
+    assert (code / ".horizon" / "current").read_bytes() == before_current
     assert (code / "common.py").read_bytes() == before_common
     assert dist.verify_install(code)["status"] == "verified"
     assert _lock(code)["version"] == "2.0.0"
@@ -205,7 +205,7 @@ def test_a_stale_marker_blocks_a_later_install_with_guidance(tmp_path):
     assert payload["reason"] == "pending_operation_incomplete"
     assert payload["pending_marker"] == str(marker)
     assert payload["guidance"]
-    assert not (code / ".frontier" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
     assert not (code / "manifest.json").exists()
     assert marker.exists()
 

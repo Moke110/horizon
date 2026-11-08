@@ -1,7 +1,7 @@
-"""frontier: knowledge cards -> retrieval queries, plus rating-driven state.
+"""horizon: knowledge cards -> retrieval queries, plus rating-driven state.
 
 Cards live in ``<运行时区>/archive/cards/<card_id>.json`` and carry
-``id / label / ontology / annotation``. ``frontier.yaml`` is retired: retrieval
+``id / label / ontology / annotation``. ``horizon.yaml`` is retired: retrieval
 reads the archive directly. Rating state stays in ``state/checkpoints.yaml`` but
 is keyed by card id.
 """
@@ -19,7 +19,7 @@ SOURCES = ("arxiv", "europepmc")
 CARD_FIELDS = ("id", "label", "ontology", "annotation")
 
 
-class FrontierError(RuntimeError):
+class HorizonError(RuntimeError):
     pass
 
 
@@ -51,7 +51,7 @@ def load_cards(home: Path, *, include_temporary: bool = False) -> list[dict]:
     if not include_temporary:
         rows = [r for r in rows if not is_temporary_card(r)]
     if not rows:
-        raise FrontierError(f"no knowledge cards under {card_dir}")
+        raise HorizonError(f"no knowledge cards under {card_dir}")
     return rows
 
 
@@ -184,10 +184,10 @@ def validate(home: Path, *, include_temporary: bool = False) -> dict:
 
 def record(home: Path, card_id: str, verdict: str, pushed: bool = False) -> dict:
     if verdict not in VERDICT_VALUE:
-        raise FrontierError(f"verdict must be one of {sorted(VERDICT_VALUE)}")
+        raise HorizonError(f"verdict must be one of {sorted(VERDICT_VALUE)}")
     cards, state = load(home)
     if card_id not in {c["id"] for c in cards}:
-        raise FrontierError(f"unknown card: {card_id}")
+        raise HorizonError(f"unknown card: {card_id}")
     st = state["checkpoints"].setdefault(
         card_id,
         {

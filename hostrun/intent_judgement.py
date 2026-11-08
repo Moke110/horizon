@@ -16,7 +16,7 @@ message onto at most one operation from the #82 registry:
 
 A valid judgement sends a Feishu confirmation card carrying the operation, its
 parameters, the reason and an expiry, plus explicit ``执行``/``取消`` buttons
-and the promise that the operation does not modify frontier itself.  A one-shot
+and the promise that the operation does not modify horizon itself.  A one-shot
 nonce is embedded in the callback value, so a card executes at most once.  Only
 the verified owner's click is accepted; other clicks are logged and ignored.
 Expired, cancelled, unknown and already-used nonces get an explicit receipt and
@@ -47,9 +47,9 @@ CACHE_TTL_SECONDS = 600
 #: A confirmation card expires after ten minutes.
 CONFIRM_TTL_SECONDS = 600
 
-CONFIRM_KIND = "frontier_confirmation"
-CONFIRM_ACTION_EXECUTE = "frontier_confirm_execute"
-CONFIRM_ACTION_CANCEL = "frontier_confirm_cancel"
+CONFIRM_KIND = "horizon_confirmation"
+CONFIRM_ACTION_EXECUTE = "horizon_confirm_execute"
+CONFIRM_ACTION_CANCEL = "horizon_confirm_cancel"
 CONFIRM_ACTIONS = (CONFIRM_ACTION_EXECUTE, CONFIRM_ACTION_CANCEL)
 CONFIRM_DECISIONS = {"execute": CONFIRM_ACTION_EXECUTE, "cancel": CONFIRM_ACTION_CANCEL}
 
@@ -80,8 +80,8 @@ def judgement_brief(text: str, *, registry: dict | None = None) -> str:
     """The task for the read-only judgement run: the closed set and the JSON shape."""
     reg = registry if registry is not None else operations.load_registry()
     lines = [
-        "只读意图判定任务（frontier 控制台）。",
-        "你只负责判断，不执行任何操作：不得调用工具、不得写文件、不得修改 frontier。",
+        "只读意图判定任务（horizon 控制台）。",
+        "你只负责判断，不执行任何操作：不得调用工具、不得写文件、不得修改 horizon。",
         "",
         "用户消息：",
         str(text),
@@ -196,7 +196,7 @@ def build_confirmation_card(judgement: dict, *, nonce: str, expires_at: float) -
                 {
                     "tag": "markdown",
                     "content": (
-                        "该操作不会修改 frontier 程序本身。\n"
+                        "该操作不会修改 horizon 程序本身。\n"
                         f"<font color='grey'>确认有效期至 {expires}（10 分钟内有效）；"
                         "仅 owner 点击有效，重复点击只执行一次。</font>"
                     ),

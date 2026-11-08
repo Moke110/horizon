@@ -1,4 +1,4 @@
-"""Create or attach the Feishu facilities frontier needs, by confirmed names.
+"""Create or attach the Feishu facilities horizon needs, by confirmed names.
 
 One Base holds every table; two Drive folders hold originals and push
 artifacts.  The agent creates the Base itself — the user is not asked to
@@ -40,9 +40,9 @@ from library.drive import LarkDrive
 
 FACILITIES_REL = Path("install") / "facilities.json"
 NAMES_REL = Path("install") / "facilities-names.json"
-DEFAULT_BASE = "frontier 知识库"
+DEFAULT_BASE = "horizon 知识库"
 DEFAULT_TABLES = {**kb.KNOWLEDGE_TABLES, **kb.LIBRARY_TABLES, **feedback_mod.TABLE_NAMES}
-DEFAULT_FOLDERS = {"root": "frontier", "source": "原文", "push": "推送"}
+DEFAULT_FOLDERS = {"root": "horizon", "source": "原文", "push": "推送"}
 KEYS = tuple(DEFAULT_TABLES)
 
 

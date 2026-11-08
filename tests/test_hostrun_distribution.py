@@ -29,24 +29,24 @@ PACKAGED_FILES = {
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "print('fixture')\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
     # A nested file happens to share the manifest's name; only the package-root
     # manifest is special and must not hide this asset from the index.
     "docs/manifest.json": '{"note": "asset, not the package manifest"}\n',
     # archive/ is runtime code in this checkout (archive.cli / archive.store);
-    # runtime archive *data* lives under .frontier/archive and is excluded.
+    # runtime archive *data* lives under .horizon/archive and is excluded.
     "archive/store.py": "STORE = 1\n",
 }
 
 EXCLUDED_FILES = {
     ".git/HEAD": "ref: refs/heads/main\n",
     ".venv/pyvenv.cfg": "home = /usr/bin\n",
-    ".frontier/install/config.json": "{}\n",
-    ".frontier/archive/raw/paper.json": "{}\n",
+    ".horizon/install/config.json": "{}\n",
+    ".horizon/archive/raw/paper.json": "{}\n",
     ".worktrees/other/common.py": "OTHER = True\n",
-    "bin/frontier-console.cmd": "@echo off\n",
+    "bin/horizon-console.cmd": "@echo off\n",
     "__pycache__/common.cpython-313.pyc": "bytecode",
     "hostrun/__pycache__/cli.cpython-313.pyc": "bytecode",
     ".pytest_cache/v/cache/nodeids": "[]\n",
@@ -58,12 +58,12 @@ EXCLUDED_FILES = {
     "scantest/evidence.txt": "scratch\n",
     "tmpgap/evidence.txt": "scratch\n",
     ".dev/notes.md": "dev\n",
-    ".frontier-archive/originals/paper.pdf": "pdf",
+    ".horizon-archive/originals/paper.pdf": "pdf",
     "scripts/demo.py": "print('demo')\n",
-    "deploy/frontier.service.in": "[Unit]\n",
+    "deploy/horizon.service.in": "[Unit]\n",
     "AGENTS.md": "# dev guide\n",
     "GLOSSARY.md": "# glossary\n",
-    "skills/frontier-run/.DS_Store": "junk",
+    "skills/horizon-run/.DS_Store": "junk",
 }
 
 
@@ -147,7 +147,7 @@ def test_manifest_covers_generated_runtime_and_wrapper(source, tmp_path):
         "runtime/python313.dll",
         "runtime/DLLs/select.pyd",
         "runtime/Lib/site-packages/yaml.py",
-        "bin/frontier.cmd",
+        "bin/horizon.cmd",
     } <= set(listed)
     assert not any("__pycache__" in path for path in listed)
     for rel, path in on_disk.items():
@@ -188,7 +188,7 @@ def test_manifest_covers_every_packaged_file_with_correct_bytes_and_digest(sourc
     # Program code and agent-readable assets both ship; dev-only/private content
     # is covered by the exclusion test below.
     assert {"common.py", "hostrun/cli.py", "archive/store.py"} <= set(listed)
-    assert "skills/frontier-run/SKILL.md" in listed
+    assert "skills/horizon-run/SKILL.md" in listed
     assert "contracts/README.md" in listed
     assert "docs/adr/0010-distribution.md" in listed
 
@@ -305,7 +305,7 @@ def test_ignored_entries_are_not_copied_even_when_their_parent_ships(source, tmp
     package = Path(result["package"])
     assert (package / "hostrun" / "cli.py").is_file()
     assert not (package / "hostrun" / "__pycache__").exists()
-    assert not (package / "skills" / "frontier-run" / ".DS_Store").exists()
+    assert not (package / "skills" / "horizon-run" / ".DS_Store").exists()
 
 
 # ----------------------------------------------------------- reproducibility
@@ -384,7 +384,7 @@ def test_explicit_commit_wins_over_git(source, tmp_path):
 # ------------------------------------------------------------------- package
 def test_version_and_channel_name_the_package_and_are_validated(source, tmp_path):
     result = _build(source, tmp_path / "out", version="1.2.3", channel="prerelease")
-    assert Path(result["package"]).name == "frontier-1.2.3-prerelease"
+    assert Path(result["package"]).name == "horizon-1.2.3-prerelease"
     assert _manifest(result)["channel"] == "prerelease"
 
     with pytest.raises(distribution.BuildError):
@@ -396,8 +396,8 @@ def test_version_and_channel_name_the_package_and_are_validated(source, tmp_path
 def test_version_strips_a_leading_v_before_naming_the_package(source, tmp_path):
     result = _build(source, tmp_path / "out", version="v1.2.3", channel="stable")
 
-    assert Path(result["package"]).name == "frontier-1.2.3-stable"
-    assert Path(result["artifact"]["path"]).name == "frontier-1.2.3-stable.zip"
+    assert Path(result["package"]).name == "horizon-1.2.3-stable"
+    assert Path(result["artifact"]["path"]).name == "horizon-1.2.3-stable.zip"
     assert _manifest(result)["version"] == "1.2.3"
     assert result["version"] == "1.2.3"
     assert result["requested_version"] == "v1.2.3"
@@ -440,7 +440,7 @@ def test_cli_normalizes_a_v_prefixed_version(source, tmp_path):
     assert completed.returncode == 0, completed.stderr
     summary = json.loads(completed.stdout)
     assert summary["version"] == "0.1.0"
-    assert Path(summary["artifact"]["path"]).name == "frontier-0.1.0-stable.zip"
+    assert Path(summary["artifact"]["path"]).name == "horizon-0.1.0-stable.zip"
     assert summary["version_normalized"] is True
 
 
@@ -484,12 +484,12 @@ def test_real_checkout_build_packages_program_code_and_agent_assets(tmp_path):
     assert "hostrun/distribution.py" in paths
     assert "hostrun/cli.py" in paths
     assert "common.py" in paths
-    assert "skills/frontier-run/SKILL.md" in paths
+    assert "skills/horizon-run/SKILL.md" in paths
     assert "contracts/distribution-manifest.schema.json" in paths
     assert any(path.startswith("docs/") for path in paths)
     assert len(paths) > 40
 
-    for prefix in (".git/", ".venv/", ".frontier/", "tests/", "fixtures/", "drafts/",
+    for prefix in (".git/", ".venv/", ".horizon/", "tests/", "fixtures/", "drafts/",
                    "outbox/", "scantest/", "tmpgap/", "scripts/", "deploy/",
                    "__pycache__/"):
         assert not any(path.startswith(prefix) for path in paths), prefix

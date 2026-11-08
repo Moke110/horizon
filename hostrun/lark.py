@@ -7,7 +7,7 @@ The three facts are reported separately, because none of them implies another:
     access       the granted scopes *and* real read operations on Base/Drive
 
 Installation never delegates to a global npm install and never writes PATH or
-the registry: a missing CLI is installed under ``<root>/.frontier`` and wrapped
+the registry: a missing CLI is installed under ``<root>/.horizon`` and wrapped
 by a small launcher whose absolute path is recorded.  A login is interactive,
 so this module only prepares the exact command, then re-checks; it never stores
 or prints a credential.
@@ -112,7 +112,7 @@ def _refresh_window_open(value) -> bool:
 
 
 def private_bin(root: str | Path) -> Path:
-    return Path(root).expanduser().resolve() / ".frontier" / "bin"
+    return Path(root).expanduser().resolve() / ".horizon" / "bin"
 
 
 STALE_CLI_GUIDANCE = (
@@ -171,10 +171,10 @@ def discover_cli(root: str | Path, *, spec: str | None = None, home: str | Path 
     rediscovery guidance; it never falls back to a different CLI on PATH.
     """
     root = Path(root).expanduser().resolve()
-    # ``.frontier/bin`` is where a private install writes its launcher;
-    # ``.frontier/lark-cli/bin`` is where a migrated private CLI lives (#76).
+    # ``.horizon/bin`` is where a private install writes its launcher;
+    # ``.horizon/lark-cli/bin`` is where a migrated private CLI lives (#76).
     private_dirs = [root / "agent" / "node_modules" / "@larksuite" / "cli" / "bin",
-                    root / ".frontier" / "bin", root / ".frontier" / "lark-cli" / "bin"]
+                    root / ".horizon" / "bin", root / ".horizon" / "lark-cli" / "bin"]
     if home:
         private_dirs.extend([Path(home) / "bin", Path(home) / "lark-cli" / "bin"])
     found = resolve_cli(spec, private_dirs=private_dirs, names=CLI_NAMES)
@@ -227,7 +227,7 @@ def install_cli(
 ) -> dict:
     """Install @larksuite/cli under the workspace and expose a private wrapper."""
     root = Path(root).expanduser().resolve()
-    npm = resolve_executable(None, private_dirs=[root / ".frontier" / "node"], names=["npm", "npm.cmd"])
+    npm = resolve_executable(None, private_dirs=[root / ".horizon" / "node"], names=["npm", "npm.cmd"])
     if not npm["found"]:
         return {
             "ok": False,
@@ -235,7 +235,7 @@ def install_cli(
             "note": "未找到 npm。请先让宿主安装 Node.js/npm，再重试；未修改 PATH 或全局包",
         }
     node = resolve_executable(None, names=["node", "node.exe"])
-    prefix = root / ".frontier" / "lark"
+    prefix = root / ".horizon" / "lark"
     argv = [
         npm["path"],
         "install",
@@ -271,7 +271,7 @@ def install_cli(
     launcher = _launcher(
         entry,
         Path(node["path"]) if node["found"] else None,
-        target=root / ".frontier" / "bin" / "lark-cli",
+        target=root / ".horizon" / "bin" / "lark-cli",
     )
     version = _run([str(launcher), "--version"], runner=runner, timeout=120)
     return {
@@ -712,7 +712,7 @@ def login_command(cli: str | None, *, identity_name: str = "user") -> dict:
                 "在飞书开发者后台为应用开通 bot scope（不要对 bot 执行 auth login）",
                 "用错误响应里的 console_url 直达后台；完成后重跑 lark status",
             ],
-            "storage": "应用凭证由 lark-cli 的 config init 保存；frontier 不读取、不复制",
+            "storage": "应用凭证由 lark-cli 的 config init 保存；horizon 不读取、不复制",
         }
     command = f'"{cli}" auth login --domain all --no-wait --json'
     return {
@@ -726,7 +726,7 @@ def login_command(cli: str | None, *, identity_name: str = "user") -> dict:
             "用户完成授权后，由你运行 `lark-cli auth login --device-code <device_code>`",
             "完成后运行 hostrun lark status 复核；未复核前不声明权限就绪",
         ],
-        "storage": "凭据只保存在 lark-cli 自己的机制里；frontier 不读取、不复制 token",
+        "storage": "凭据只保存在 lark-cli 自己的机制里；horizon 不读取、不复制 token",
     }
 
 

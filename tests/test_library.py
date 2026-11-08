@@ -79,7 +79,7 @@ def _settings(drive, *, limit_bytes=10 * 1024**2, threshold=80):
 
 
 def _home(tmp_path):
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     (home / "archive" / "raw").mkdir(parents=True)
     (home / "archive" / "pushes").mkdir(parents=True)
     (home / "knowledge").mkdir(parents=True)
@@ -473,9 +473,9 @@ def test_setup_creates_tables_folders_and_config_row(tmp_path):
     names = {t["name"] for t in admin.list_tables()}
     assert {"原文", "推送日志", "决定", "配置"} <= names
     folders = {e["name"] for e in drive.list(drive.root)}
-    assert {"frontier"} <= folders
-    frontier = next(e["token"] for e in drive.list(drive.root) if e["name"] == "frontier")
-    assert {"原文", "推送"} <= {e["name"] for e in drive.list(frontier)}
+    assert {"horizon"} <= folders
+    horizon = next(e["token"] for e in drive.list(drive.root) if e["name"] == "horizon")
+    assert {"原文", "推送"} <= {e["name"] for e in drive.list(horizon)}
     config = json.loads((home / "knowledge" / "base.json").read_text())
     assert config["tables"]["sources"].startswith("tbl")
     assert config["tables"]["pushes"].startswith("tbl")
@@ -671,7 +671,7 @@ def test_create_base_reads_the_nested_base_create_envelope(monkeypatch):
             "base": {
                 "base_token": "bas_created",
                 "url": "https://example.feishu.cn/base/bas_created",
-                "name": "frontier 知识库",
+                "name": "horizon 知识库",
             },
             "created": True,
             "table": {"id": "tbl_created", "name": "知识卡片", "fields": []},
@@ -679,12 +679,12 @@ def test_create_base_reads_the_nested_base_create_envelope(monkeypatch):
         },
     )
 
-    created = client.create_base("frontier 知识库", table_name="知识卡片", fields=[])
+    created = client.create_base("horizon 知识库", table_name="知识卡片", fields=[])
 
     assert created["base_token"] == "bas_created"
     assert created["table_id"] == "tbl_created"
     assert created["url"] == "https://example.feishu.cn/base/bas_created"
-    assert created["name"] == "frontier 知识库"
+    assert created["name"] == "horizon 知识库"
 
 def test_library_and_bitable_clients_use_the_recorded_cli(monkeypatch):
     """ADR 0007: the recorded absolute CLI path, never a bare PATH guess."""

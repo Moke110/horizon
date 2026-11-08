@@ -590,7 +590,7 @@ def test_cli_console_control_writes_the_control_file(tmp_path, capsys):
     assert rc == 0
     assert payload["ok"] is True
     assert payload["action"] == "stop"
-    request = read_json(console_service.control_path(code.resolve() / ".frontier"))
+    request = read_json(console_service.control_path(code.resolve() / ".horizon"))
     assert request["action"] == "stop"
     assert request["initiator"] == "host-agent"
 
@@ -600,7 +600,7 @@ def test_cli_status_without_a_console_still_answers_from_persisted_state(tmp_pat
     archive = tmp_path / "papers"
     code.mkdir()
     archive.mkdir()
-    runtime = code.resolve() / ".frontier"
+    runtime = code.resolve() / ".horizon"
     console.write_state(runtime, service="paused", paused=True)
 
     rc = cli.main(
@@ -625,23 +625,23 @@ def test_cli_status_without_a_console_still_answers_from_persisted_state(tmp_pat
 
 
 # ---------------------------------------------------------- slash commands
-def test_frontier_start_and_stop_flip_the_persisted_service_state(tmp_path):
+def test_horizon_start_and_stop_flip_the_persisted_service_state(tmp_path):
     home = _home(tmp_path)
 
-    stopped = console.dispatch(home, "/frontier-stop")
+    stopped = console.dispatch(home, "/horizon-stop")
     assert stopped["ok"] is True
     assert console.read_state(home)["paused"] is True
 
-    started = console.dispatch(home, "/frontier-start")
+    started = console.dispatch(home, "/horizon-start")
     assert started["ok"] is True
     assert console.read_state(home)["paused"] is False
 
 
-def test_frontier_push_uses_the_service_and_reports_paused(tmp_path):
+def test_horizon_push_uses_the_service_and_reports_paused(tmp_path):
     home = _home(tmp_path)
     console.write_state(home, paused=True)
 
-    result = console.dispatch(home, "/frontier-push")
+    result = console.dispatch(home, "/horizon-push")
 
     assert result["ok"] is False
     assert "暂停" in result["text"]
@@ -666,7 +666,7 @@ def test_closing_the_console_keeps_the_paused_state_for_the_next_open(tmp_path):
     clock = Clock(datetime(2026, 10, 30, 9, 0, tzinfo=TZ))
     daily = Daily()
     service = _service(home, clock, daily=daily)
-    reader = iter(["/frontier-stop", "/exit"])
+    reader = iter(["/horizon-stop", "/exit"])
 
     console.serve(
         home,
@@ -695,7 +695,7 @@ def test_console_launcher_forwards_a_control_argument(tmp_path):
     archive = tmp_path / "papers"
     console.ensure_script(code, archive, "C:/python/python.exe")
 
-    text = (code / "bin" / "frontier-console.cmd").read_text(encoding="utf-8")
+    text = (code / "bin" / "horizon-console.cmd").read_text(encoding="utf-8")
 
     assert text.rstrip().endswith("console %*")
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline end-to-end demo: the current pipeline, file contracts only.
 
-  checkpoint -> frontier.plan -> retriever(fixture) -> editor.rank
+  checkpoint -> horizon.plan -> retriever(fixture) -> editor.rank
   -> writer task/check -> archive.add-push -> publisher.send(dry-run)
   -> rating card event -> unified queue -> 逐题同意 -> archive.apply_group
 
@@ -50,13 +50,13 @@ def run(args: list[str], env: dict, quiet: bool = False) -> dict:
 
 def main() -> int:
     code = Path(tempfile.mkdtemp(prefix="kl-demo-")) / "code"
-    home = code / ".frontier"
+    home = code / ".horizon"
     shutil.copytree(ROOT / "fixtures" / "home", home, dirs_exist_ok=True)
     env = {
         **os.environ,
-        "FRONTIER_CODE": str(code),
-        "FRONTIER_ARCHIVE": str(code.parent / "frontier-archive"),
-        "FRONTIER_RUNTIME": str(home),
+        "HORIZON_CODE": str(code),
+        "HORIZON_ARCHIVE": str(code.parent / "horizon-archive"),
+        "HORIZON_RUNTIME": str(home),
     }
     print(f"运行时区 = {home}")
 
@@ -64,11 +64,11 @@ def main() -> int:
     run([PY, "-m", "archive.cli", "reindex"], env)
     run([PY, "-m", "archive.cli", "stats"], env)
 
-    step("2. frontier: 知识卡片 -> 检索式")
-    run([PY, "-m", "frontier.cli", "validate"], env)
+    step("2. horizon: 知识卡片 -> 检索式")
+    run([PY, "-m", "horizon.cli", "validate"], env)
     run(
         [
-            PY, "-m", "frontier.cli", "plan", "--date", "2026-10-20",
+            PY, "-m", "horizon.cli", "plan", "--date", "2026-10-20",
             "--days", "7", "--out", str(home / "plan.json"),
         ],
         env,
@@ -237,7 +237,7 @@ def main() -> int:
     print(f"评分记录：{ratings.read_text().strip() if ratings.exists() else '（无）'}")
     print(f"\n全部产物在 {home}")
     print("可单独重跑任一模块，例如：")
-    print(f"  python -m question_queue.cli status（沿用上面的 FRONTIER_* 环境变量）")
+    print(f"  python -m question_queue.cli status（沿用上面的 HORIZON_* 环境变量）")
     return 0
 
 

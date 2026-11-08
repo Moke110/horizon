@@ -1,4 +1,4 @@
-"""Console ``/frontier-init`` step machine (ADR 0009 §7).
+"""Console ``/horizon-init`` step machine (ADR 0009 §7).
 
 The initialization is an ordered, resumable state machine executed inside the
 Console.  This module delivers the seven ADR §7 steps:
@@ -8,7 +8,7 @@ Console.  This module delivers the seven ADR §7 steps:
    A directory outside the code directory is accepted only after a real
    create/delete write probe, and a failed probe tells the user to restart the
    Console with full permissions while keeping progress.
-2. **model configuration** — use Frontier's bundled Pi Agent; collect the
+2. **model configuration** — use Horizon's bundled Pi Agent; collect the
    provider, model and API key locally, preserving existing Feishu setup.
 3. **Lark CLI** — the three-level detection of ADR 0009 §7: an already
    configured, working CLI is reused (ADR 0007); a CLI installed elsewhere is
@@ -39,9 +39,9 @@ Console.  This module delivers the seven ADR §7 steps:
    :func:`hostrun.console_service.set_push_time` (the #81 clock, no host
    scheduler import), which also records the next occurrence.
 7. **Knowledge-base gate** — "初始化知识库" hands the console over to
-   ``/frontier-update-kb``; "暂不初始化" records an explicit closed gate, starts
+   ``/horizon-update-kb``; "暂不初始化" records an explicit closed gate, starts
    the service and tells the user that the daily push is blocked until the
-   knowledge base exists.  A completed ``/frontier-update-kb`` review releases
+   knowledge base exists.  A completed ``/horizon-update-kb`` review releases
    the gate automatically (:mod:`hostrun.console_gate`).
 
 Initialization completes by applying the archive directory confirmed in step 1
@@ -106,7 +106,7 @@ RECIPIENT_REL = Path("install") / "recipient.json"
 TRANSPORT_HTML_REL = Path("install") / "transport-test.html"
 TEST_HTML = (
     "<html><body>"
-    "<h1>frontier 通道测试</h1>"
+    "<h1>horizon 通道测试</h1>"
     "<p>这是一条测试 HTML：收到它说明控制台能用已记录的 Lark CLI 给你发消息。</p>"
     "<p>请点击随后到达的卡片上的按钮；控制台会核对点击者并写入 owner 记录。</p>"
     "</body></html>"
@@ -189,7 +189,7 @@ def read_state(home: Path) -> dict:
     if not isinstance(state.get("steps"), dict):
         state["steps"] = {}
     previous = (state["steps"].get("agent") or {}).get("value") or {}
-    if "dsh" in previous and previous.get("runtime") != "frontier-pi":
+    if "dsh" in previous and previous.get("runtime") != "horizon-pi":
         state["steps"].pop("agent", None)
         state["complete"] = False
     return state
@@ -270,9 +270,9 @@ def probe_write(directory: str | Path) -> dict:
     try:
         if not path.is_dir():
             return {"ok": False, "path": str(path), "reason": "not_a_directory"}
-        probe = path / f".frontier-init-probe-{uuid.uuid4().hex}"
+        probe = path / f".horizon-init-probe-{uuid.uuid4().hex}"
         with probe.open("w", encoding="utf-8") as handle:
-            handle.write("frontier init write probe\n")
+            handle.write("horizon init write probe\n")
         probe.unlink()
     except OSError as exc:
         return {
@@ -302,7 +302,7 @@ def folder_dialog(default: str | Path) -> str | None:
         root.withdraw()
         chosen = filedialog.askdirectory(
             parent=root,
-            title="选择 frontier 资料目录",
+            title="选择 horizon 资料目录",
             initialdir=str(default),
             mustexist=True,
         )
@@ -362,7 +362,7 @@ def _step_archive(home, code: Path, default: Path, *, reader, out, pick_folder, 
                 "text": (
                     f"资料目录不可写：{chosen}（{detail}）\n"
                     f"请双击 {launcher} {FULL_PERMISSION_HINT}并保留进度；"
-                    "本次已停在“确认资料目录”，之后可继续 /frontier-init。"
+                    "本次已停在“确认资料目录”，之后可继续 /horizon-init。"
                 ),
                 "path": str(chosen),
             }
@@ -384,14 +384,14 @@ def agent_facts(home: Path, *, code: Path, archive: Path) -> dict:
     from hostrun import embedded_agent
     facts = embedded_agent.runtime(home, code=code)
     return {**facts, "usable": facts["ok"], "cwd": str(code), "archive": str(archive),
-            "runtime": "frontier-pi"}
+            "runtime": "horizon-pi"}
 
 
 def _step_agent(home: Path, *, code: Path, archive: Path, reader, out) -> dict:
     from hostrun import embedded_agent
     import getpass
     facts = agent_facts(home, code=code, archive=archive)
-    _say(out, "步骤 2/7：配置 Frontier 内置 Agent 的模型服务")
+    _say(out, "步骤 2/7：配置 Horizon 内置 Agent 的模型服务")
     if not facts["usable"]:
         _say(out, "内置 Agent 不可用：" + "；".join(facts["problems"]))
         return {"ok": False, "reason": "agent_unavailable", "text": "；".join(facts["problems"]), "facts": facts}
@@ -399,7 +399,7 @@ def _step_agent(home: Path, *, code: Path, archive: Path, reader, out) -> dict:
         provider = _ask(reader, out, "模型服务标识（例如 deepseek / anthropic / openai）：").strip()
         model = _ask(reader, out, "模型名称：").strip()
         base_url = _ask(reader, out, "OpenAI 兼容接口地址（使用内置服务时留空）：").strip()
-        _say(out, "API Key 仅保存在本机 .frontier/agent/model.json，请保护此文件；不会写入运行日志。")
+        _say(out, "API Key 仅保存在本机 .horizon/agent/model.json，请保护此文件；不会写入运行日志。")
         key = getpass.getpass("模型 API Key（隐藏输入）：") if sys.stdin is not None and sys.stdin.isatty() else _ask(reader, out, "模型 API Key：")
         try:
             embedded_agent.configure(home, provider=provider, model=model, api_key=key, base_url=base_url)
@@ -477,7 +477,7 @@ def _lark_abort(what: str) -> dict:
         "reason": "lark_aborted",
         "text": (
             f"{what}未完成，已中止；进度已保留（已完成的初始化步骤已保存）。"
-            "下次 /frontier-init 会从 Lark CLI 步骤继续（不允许跳过）。"
+            "下次 /horizon-init 会从 Lark CLI 步骤继续（不允许跳过）。"
         ),
     }
 
@@ -735,10 +735,10 @@ def transport_test_card() -> dict:
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": "frontier 通道测试"},
+            "summary": {"content": "horizon 通道测试"},
         },
         "header": {
-            "title": {"tag": "plain_text", "content": "frontier 通道测试"},
+            "title": {"tag": "plain_text", "content": "horizon 通道测试"},
             "template": "blue",
         },
         "body": {
@@ -889,7 +889,7 @@ def _step_transport(
         return _transport_failure(
             "recipient_unverified",
             "安装记录没有可用的飞书 CLI，无法发送测试消息；"
-            "请先完成 Lark CLI 步骤，再运行 /frontier-init。",
+            "请先完成 Lark CLI 步骤，再运行 /horizon-init。",
         )
     wait_minutes = TRANSPORT_WAIT_SECONDS // 60
     while True:
@@ -1229,7 +1229,7 @@ def _step_knowledge(home: Path, *, reader, out) -> dict:
         answer = _ask(
             reader,
             out,
-            "现在初始化知识库（进入 /frontier-update-kb）？[Y] 是 / [N] 暂不初始化（回车）：",
+            "现在初始化知识库（进入 /horizon-update-kb）？[Y] 是 / [N] 暂不初始化（回车）：",
         )
         choice = answer.lower()
         if choice in ("", "n", "no", "2"):
@@ -1243,12 +1243,12 @@ def _step_knowledge(home: Path, *, reader, out) -> dict:
         if choice in ("y", "yes", "1"):
             value = {"choice": "update_kb", "gate": "pending", "reason": console_gate.REASON}
             record_step(
-                home, "knowledge", value, note="进入 /frontier-update-kb 初始化知识库"
+                home, "knowledge", value, note="进入 /horizon-update-kb 初始化知识库"
             )
             # Closed until #90's completed review releases it: a pending
             # initialization must not let the daily push slip through.
             console_gate.set_knowledge_ready(home, False, source="init.update_kb")
-            _say(out, "[完成] 将进入 /frontier-update-kb 初始化知识库。")
+            _say(out, "[完成] 将进入 /horizon-update-kb 初始化知识库。")
             return {"ok": True, "choice": "update_kb", "value": value}
         _say(out, "请输入 Y（初始化）或 N（暂不初始化）。")
 
@@ -1278,7 +1278,7 @@ def _apply_archive(
                     "path": path,
                     "note": (
                         f"资料目录已不可写：{resolved['archive']}（{detail}）；"
-                        "初始化未完成，可修正权限后重跑 /frontier-init。"
+                        "初始化未完成，可修正权限后重跑 /horizon-init。"
                     ),
                 }
         layout.ensure(resolved)
@@ -1335,7 +1335,7 @@ def _finalize(
         return {
             "ok": False,
             "reason": applied.get("reason") or "archive_apply_failed",
-            "text": f"{applied.get('note')}；初始化未完成，可修正后重跑 /frontier-init。",
+            "text": f"{applied.get('note')}；初始化未完成，可修正后重跑 /horizon-init。",
             "archive": applied,
         }
     try:
@@ -1348,7 +1348,7 @@ def _finalize(
             "reason": "service_start_failed",
             "text": (
                 "初始化步骤已完成，但服务未能自动启动："
-                f"{started.get('reason') or '未知原因'}；请执行 /frontier-start。"
+                f"{started.get('reason') or '未知原因'}；请执行 /horizon-start。"
             ),
             "archive": applied,
             "service": started,
@@ -1359,7 +1359,7 @@ def _finalize(
     handoff = None
     if choice == "update_kb":
         if update_kb is None:
-            lines.append("下一步执行 /frontier-update-kb 初始化知识库（完成后自动放行推送）。")
+            lines.append("下一步执行 /horizon-update-kb 初始化知识库（完成后自动放行推送）。")
         else:
             try:
                 handoff = update_kb()
@@ -1367,7 +1367,7 @@ def _finalize(
                 handoff = {
                     "ok": False,
                     "reason": "update_kb_failed",
-                    "text": f"进入 /frontier-update-kb 失败：{type(exc).__name__}: {exc}",
+                    "text": f"进入 /horizon-update-kb 失败：{type(exc).__name__}: {exc}",
                 }
             handoff = handoff if isinstance(handoff, dict) else {"ok": False}
             if handoff.get("text"):
@@ -1400,7 +1400,7 @@ def _finalize(
 
 # --------------------------------------------------------------------- run
 def console_launcher_path(code: Path) -> Path:
-    return Path(code) / "bin" / "frontier-console.cmd"
+    return Path(code) / "bin" / "horizon-console.cmd"
 
 
 def _inside(child: Path, parent: Path) -> bool:
@@ -1490,7 +1490,7 @@ def run(
     # US23 refuses a second init only while the *formal service* is running,
     # i.e. after initialization completed.  A fresh install has a resident
     # console whose service already reads "running" but nothing initialized
-    # yet; that first /frontier-init must be allowed (B1, US14/US15).
+    # yet; that first /horizon-init must be allowed (B1, US14/US15).
     if console_state.get("service") == "running" and is_complete(home):
         return {
             **base,
@@ -1498,7 +1498,7 @@ def run(
             "reason": "service_running",
             "text": (
                 "服务正在运行，拒绝重跑初始化。"
-                "请先停止服务：执行 /frontier-stop 暂停后即可继续 /frontier-init。"
+                "请先停止服务：执行 /horizon-stop 暂停后即可继续 /horizon-init。"
             ),
         }
 
@@ -1601,7 +1601,7 @@ def run(
             **base,
             "ok": False,
             "reason": "aborted",
-            "text": "初始化已中止；已完成的步骤已保存，下次 /frontier-init 从下一步继续。",
+            "text": "初始化已中止；已完成的步骤已保存，下次 /horizon-init 从下一步继续。",
             "completed": completed_steps(home),
             "next_step": next(
                 (
@@ -1619,7 +1619,7 @@ def run(
             **base,
             "ok": False,
             "reason": "interrupted",
-            "text": "初始化已中止；已完成的步骤已保存，下次 /frontier-init 从下一步继续。",
+            "text": "初始化已中止；已完成的步骤已保存，下次 /horizon-init 从下一步继续。",
             "completed": completed_steps(home),
             "not_yet": not_yet,
         }
@@ -1631,7 +1631,7 @@ def run(
         text = (
             "已完成的步骤已保存；后续步骤尚未接入："
             + "、".join(f"{item['title']}（{item['ticket']}）" for item in not_yet)
-            + "。再次运行 /frontier-init 会跳过已完成的步骤。"
+            + "。再次运行 /horizon-init 会跳过已完成的步骤。"
         )
         return {
             **base,
@@ -1738,6 +1738,6 @@ def _completed_line(step_id: str, value: dict) -> str:
         return f"每日 {value.get('push_time') or '未记录'}（用户本地时区）"
     if step_id == "knowledge":
         if value.get("choice") == "update_kb":
-            return "已选择初始化知识库（进入 /frontier-update-kb）"
+            return "已选择初始化知识库（进入 /horizon-update-kb）"
         return "暂不初始化知识库（每日推送被门禁挡住）"
     return "已完成"

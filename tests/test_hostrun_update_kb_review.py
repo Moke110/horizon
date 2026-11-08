@@ -1,4 +1,4 @@
-"""Offline tests for ``/frontier-update-kb`` per-item review (issue #90, ADR 0009 §8).
+"""Offline tests for ``/horizon-update-kb`` per-item review (issue #90, ADR 0009 §8).
 
 The console consumes the candidate area written by the read side (#89), shows one
 candidate at a time and reads a single key:
@@ -60,7 +60,7 @@ PROP = {
 
 
 def _home(tmp_path: Path) -> Path:
-    home = tmp_path / "code" / ".frontier"
+    home = tmp_path / "code" / ".horizon"
     (home / "install").mkdir(parents=True)
     (home / "archive").mkdir(parents=True)
     return home
@@ -424,7 +424,7 @@ def test_dispatch_reviews_after_a_completed_read_and_combines_the_text(tmp_path)
         return {"ok": True, "completed": True, "text": "审阅完成"}
 
     result = console.dispatch(
-        home, "/frontier-update-kb", update_kb=fake_read, review=fake_review
+        home, "/horizon-update-kb", update_kb=fake_read, review=fake_review
     )
 
     assert calls and calls[0]["runtime"] == home
@@ -452,7 +452,7 @@ def test_dispatch_does_not_review_an_interrupted_read(tmp_path):
         return {"ok": True, "text": "不应审阅"}
 
     result = console.dispatch(
-        home, "/frontier-update-kb", update_kb=fake_read, review=fake_review
+        home, "/horizon-update-kb", update_kb=fake_read, review=fake_review
     )
 
     assert calls == []

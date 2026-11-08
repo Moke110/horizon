@@ -4,7 +4,7 @@ ADR 0009 keeps run state in the code directory and only originals/pushes in the
 archive directory.  An existing installation still has one data root that mixes
 both.  ``install migrate`` moves the run-state halves (config, state, installation
 records, initialization state, queue, proposals, logs, lease, console state,
-private lark-cli) into ``<code>/.frontier``, splits the old ``archive/`` subtree
+private lark-cli) into ``<code>/.horizon``, splits the old ``archive/`` subtree
 into the two allowed archive roots plus code-directory knowledge state, rebuilds
 the private environment under the code directory and replaces the old listener
 scripts with the console start script.
@@ -26,7 +26,7 @@ from common import ensure_dir, now, read_json, write_json
 from hostrun import archive_index, launcher, layout, workspace
 from hostrun.base import HostRunError, default_config, load_config
 
-CONSOLE_START_SCRIPT = "frontier-console.cmd"
+CONSOLE_START_SCRIPT = "horizon-console.cmd"
 CONSOLE_WINDOW_TITLE = launcher.CONSOLE_TITLE
 
 # Legacy top-level entries that hold run state, not research material.
@@ -61,7 +61,7 @@ LEGACY_RUNTIME_FILES = (
 # knowledge state moves into the code directory's archive store root.
 LEGACY_MATERIALS = {"raw": "originals", "pushes": "pushes"}
 LEGACY_ARCHIVE_STATE = ("cards", "propositions", "index", "applied", "legacy", ".tmp")
-LEGACY_SCRIPTS = ("frontier-listener.cmd", "frontier-listener-stop.cmd")
+LEGACY_SCRIPTS = ("horizon-listener.cmd", "horizon-listener-stop.cmd")
 # Missing in both source and destination means the old install was incomplete.
 REQUIRED_RUNTIME = ("install/config.json", "install/state.json")
 
@@ -153,9 +153,9 @@ def _find_workspace_record(legacy: Path, code: Path) -> dict:
     """The old installation record (workspace root) or the new code-side one."""
     candidates = [
         workspace.record_path(code),
-        legacy.parent / ".frontier" / "install.json",
-        code.parent / ".frontier" / "install.json",
-        legacy / ".frontier" / "install.json",
+        legacy.parent / ".horizon" / "install.json",
+        code.parent / ".horizon" / "install.json",
+        legacy / ".horizon" / "install.json",
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -343,7 +343,7 @@ def migrate(
         legacy = _infer_legacy_home(code_path)
         if legacy is None:
             raise HostRunError(
-                "找不到旧安装位置；请用 --from 指定原安装目录（例如 <workspace>/frontier-archive）"
+                "找不到旧安装位置；请用 --from 指定原安装目录（例如 <workspace>/horizon-archive）"
             )
     else:
         legacy = Path(legacy_home).expanduser().resolve()

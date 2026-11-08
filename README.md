@@ -1,7 +1,7 @@
-# frontier
+# Horizon（地平线）
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/Moke110/frontier?include_prereleases&label=release)](https://github.com/Moke110/frontier/releases)
+[![Latest release](https://img.shields.io/github/v/release/Moke110/horizon?include_prereleases&label=release)](https://github.com/Moke110/horizon/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6)](#what-you-need)
 [![Runtime](https://img.shields.io/badge/python-3.13%20bundled-3776AB)](#what-you-need)
 
@@ -9,41 +9,43 @@
 
 **A source discovery, knowledge management and personalized explanation assistant for people who keep learning across industries.**
 
-Frontier has four parts: retrieving original sources (papers, news, posts and blogs); managing its own knowledge base with automatic and manual card and proposition updates; writing explanations grounded in what the user already knows and their accumulated preferences; and an Agent that schedules retrieval, writing and delivery.
+Horizon (地平线) calls each person using the software an **Explorer (探索者)**. Its **Knowledge Base (知识库)** contains **Knowledge Cards (知识卡片)** and **Themes (命题)**.
 
-The Frontier GUI provides reading, ratings and negotiation about interpretations, preferences and knowledge updates. Feishu is an optional external interaction and delivery channel. Collecting a source does not mean the user has mastered its knowledge.
+Horizon has four parts: retrieving original sources (papers, news, posts and blogs); managing its own Knowledge Base with automatic and manual Knowledge Card and Theme updates; writing explanations grounded in what the Explorer already knows and their accumulated preferences; and an Agent that schedules retrieval, writing and delivery.
+
+The Horizon GUI provides reading, ratings and negotiation about interpretations, preferences and knowledge updates. Feishu is an optional external interaction and delivery channel. Collecting a source does not mean the Explorer has mastered its knowledge.
 
 The confirmed [product decision](docs/adr/0001-product-direction.md) defines the direction. The following commands and setup notes describe the existing implementation, including its Feishu adapter; they do not claim that the new knowledge suite and interaction flow are already implemented.
 
 ## Installation
 
-Frontier includes its own Pi-based Agent. You need Windows 10/11 x64, a model API key,
+Horizon includes its own Pi-based Agent. You need Windows 10/11 x64, a model API key,
 and a Feishu account authorized to create and use the required app, Base and Drive resources.
 The distribution includes Node.js, Pi, the Feishu CLI and the Python business runtime.
 No separate DSH or Pi installation is needed.
 
-Extract a Frontier distribution into a writable directory and open PowerShell there:
+Extract a Horizon distribution into a writable directory and open PowerShell there:
 
 ```powershell
-.\bin\frontier.cmd console install
-.\bin\frontier-console.cmd
+.\bin\horizon.cmd console install
+.\bin\horizon-console.cmd
 ```
 
-Run `/frontier-init`: choose an archive folder, enter your model provider, model name and API key,
+Run `/horizon-init`: choose an archive folder, enter your model provider, model name and API key,
 then complete Feishu authorization, resource setup and daily push time. For an OpenAI-compatible
 service, also enter its API base URL. Model/provider names must match your service.
-The key is stored locally in `.frontier/agent/model.json`; protect this file. Installation reports
+The key is stored locally in `.horizon/agent/model.json`; protect this file. Installation reports
 and process arguments do not include it.
 
-Configuration, queues and logs live in `.frontier/`. The separate archive contains `originals/`
+Configuration, queues and logs live in `.horizon/`. The separate archive contains `originals/`
 and `pushes/`. Interrupted setup resumes. Existing DSH installations must complete the new
 model configuration step. No external host skill registration is required.
 
 Use `install package --from <zip> --digest <digest.json>` for verified package upgrades,
 `install verify` to check files, and `install rollback` to restore a retained version.
-Upgrades preserve `.frontier/` and the archive.
+Upgrades preserve `.horizon/` and the archive.
 
-## Using frontier
+## Using horizon
 
 Use the console or Feishu:
 
@@ -54,14 +56,14 @@ Use the console or Feishu:
 
 | Console command | What it does |
 |---|---|
-| `/frontier-init` | first-run setup; also resumes an interrupted setup |
-| `/frontier-start` | start the service again after a pause |
-| `/frontier-stop` | pause pushes and Feishu replies; the console stays open |
-| `/frontier-status` | current state, last run, last failure |
-| `/frontier-push` | request one more report now |
-| `/frontier-update-kb` | incremental knowledge-base initialization with per-item review |
-| `/frontier-logs` | recent console and agent-run logs |
-| `/frontier-help` | command help |
+| `/horizon-init` | first-run setup; also resumes an interrupted setup |
+| `/horizon-start` | start the service again after a pause |
+| `/horizon-stop` | pause pushes and Feishu replies; the console stays open |
+| `/horizon-status` | current state, last run, last failure |
+| `/horizon-push` | request one more report now |
+| `/horizon-update-kb` | incremental knowledge-base initialization with per-item review |
+| `/horizon-logs` | recent console and agent-run logs |
+| `/horizon-help` | command help |
 | `/exit` | stop the console (and with it the whole service) |
 
 | Feishu direct message | Meaning |
@@ -76,7 +78,7 @@ Use the console or Feishu:
 Only your own direct messages are accepted; groups and other people are ignored. While the
 service is paused, only `恢复` gets through and every other message is answered with a pause
 notice. Two commands need arguments — changing the push time and changing the archive
-directory — so frontier first runs a read-only intent check, and only a confirmation card
+directory — so horizon first runs a read-only intent check, and only a confirmation card
 you click executes the change.
 
 Each report arrives with a feedback entry point. Rate it first, then confirm each knowledge
@@ -85,28 +87,28 @@ it. Unanswered questions block the next push, but they do not block storage main
 
 The console keeps time itself: one push per day at your chosen time (default 08:00), with a
 single catch-up run if a day was missed. Feedback is polled every five minutes, and every
-ten minutes frontier pulls text edits and "under review" flags from the Base back into the
+ten minutes horizon pulls text edits and "under review" flags from the Base back into the
 local copy of truth. It stays quiet when nothing changed.
 
-### Initializing or extending the knowledge base
+### Initializing or extending the Knowledge Base
 
-`/frontier-update-kb` pauses the formal service, asks you for a folder, has the agent read
-everything in shards, and prints each candidate card and claim for review: press Enter to
-accept, Backspace to discard, Tab to keep it marked `Under review`. Cards and claims carrying
+`/horizon-update-kb` pauses the formal service, asks you for a folder, has the agent read
+everything in shards, and prints each candidate Knowledge Card and Theme for review: press Enter to
+accept, Backspace to discard, Tab to keep it marked `Under review`. Knowledge Cards and Themes carrying
 that marker are not retrieved or written about until you clear "under review" in the Feishu
 Base. Progress is incremental: a second run reads only files the archive has not registered
 yet.
 
 ## Pausing, moving to another machine and recovering
 
-`/frontier-stop` (or `暂停` in Feishu) pauses scheduled pushes and Feishu replies while the
-console stays open; `/frontier-start` (or `恢复`) resumes. Closing the console window stops
+`/horizon-stop` (or `暂停` in Feishu) pauses scheduled pushes and Feishu replies while the
+console stays open; `/horizon-start` (or `恢复`) resumes. Closing the console window stops
 the whole service and nothing responds in Feishu until you open it again. When you reopen it,
-frontier restores the previous state: paused stays paused, running starts the service again.
+horizon restores the previous state: paused stays paused, running starts the service again.
 
 To move to another machine or host, stop the console on the old machine first, then run the
-installation on the new one and choose to connect to the existing Feishu knowledge base; the
-agent takes over and restores from there. Only one executor may use a knowledge base at a
+installation on the new one and choose to connect to the existing Feishu Knowledge Base; the
+agent takes over and restores from there. Only one executor may use a Knowledge Base at a
 time.
 
 The local copy is rebuildable, but an offline archive can be the only remaining copy of a
@@ -123,8 +125,8 @@ a verified offline backup.
   Feishu responses; queued feedback is processed after the next start.
 - **The queue does not move** — check that answers were explicitly submitted and that there
   is no older unanswered question blocking the next push.
-- **A push failed** — `/frontier-status` shows the last failure and the number of attempts.
-  frontier does not retry automatically: fix the cause, then request a new push.
+- **A push failed** — `/horizon-status` shows the last failure and the number of attempts.
+  horizon does not retry automatically: fix the cause, then request a new push.
 - **"Running" does not mean delivered** — a scheduled run that produced no delivery evidence
   is reported as such. Trust the delivery result, not the timer.
 
@@ -139,7 +141,7 @@ npm --prefix agent ci --ignore-scripts
 npm --prefix agent run build
 node agent/node_modules/@larksuite/cli/scripts/install.js
 .\.venv\Scripts\python.exe -m hostrun.cli console install
-.\bin\frontier-console.cmd
+.\bin\horizon-console.cmd
 ```
 
 The TypeScript agent uses the Pi SDK and explicit tools to call existing Python business modules.
@@ -150,19 +152,19 @@ Release builds require the compiled agent and both bundled runtimes.
 
 ## Docs and license
 
-- Built-in agent workflow: [skills/frontier-run/SKILL.md](skills/frontier-run/SKILL.md)
+- Built-in agent workflow: [skills/horizon-run/SKILL.md](skills/horizon-run/SKILL.md)
 - Development guide: [AGENTS.md](AGENTS.md) · Glossary: [GLOSSARY.md](GLOSSARY.md)
 - Module contracts: [contracts/](contracts/README.md)
 - License: [MIT](LICENSE)
 
 ## Desktop interface
 
-Double-click the `Frontier.lnk` shortcut for everyday startup. The extension starts with a lowercase L; Windows usually hides it. Run `scripts/install-desktop.ps1` to regenerate it; add `-ShortcutDirectory <folder>` to also create a “启动 Frontier” shortcut in that folder. Source startup requires Python and an installed, built `desktop/`; Tkinter is not required.
+Double-click the `Horizon.lnk` shortcut for everyday startup. The extension starts with a lowercase L; Windows usually hides it. Run `scripts/install-desktop.ps1` to regenerate it; add `-ShortcutDirectory <folder>` to also create a “启动 Horizon” shortcut in that folder. Source startup requires Python and an installed, built `desktop/`; Tkinter is not required.
 
-`Frontier.cmd` remains the CLI entry. Without arguments it also starts the GUI, but may briefly show a console. Chat with the embedded Agent in the center, switch conversations on the left, and enter commands and interactive answers in the Console tab. Enter sends; Shift+Enter inserts a newline. Stop cancels the active Agent. Conversations stay in `.frontier/desktop/`.
+`Horizon.cmd` remains the CLI entry. Without arguments it also starts the GUI, but may briefly show a console. Chat with the embedded Agent in the center, switch conversations on the left, and configure the model using Settings. The desktop Console tab is inactive; use the standalone CLI Console for legacy commands. Enter sends; Shift+Enter inserts a newline. Stop cancels the active Agent. Conversations stay in `%LOCALAPPDATA%/Horizon/data/horizon.sqlite3`. Set `HORIZON_DATA_HOME` to an absolute path to choose another data directory; changing installation directories preserves the same data home. Existing workspaces are not imported.
 
-On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Frontier/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the GUI stops its background workers within 10 seconds.
+On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horizon/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the GUI stops its background workers within 10 seconds.
 
 ### Desktop development
 
-Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.frontier/desktop-error.log`; Electron logs are in `.frontier/desktop-electron.log`.
+Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.horizon/desktop-error.log`; Electron logs are in `<data-home>/desktop-electron.log`.

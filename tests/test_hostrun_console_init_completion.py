@@ -1,4 +1,4 @@
-"""Offline tests for the last ``/frontier-init`` steps and the knowledge gate (#87).
+"""Offline tests for the last ``/horizon-init`` steps and the knowledge gate (#87).
 
 The step machine is driven through its injectable seams only: a fake line reader,
 a fake facility creator/attacher, a fake same-name lookup and an explicit TTY
@@ -25,7 +25,7 @@ from hostrun import console, console_gate, console_init, console_service, facili
 # ------------------------------------------------------------------ fixtures
 def make_home(tmp_path: Path, *, service: str = "paused") -> Path:
     code = tmp_path / "code"
-    home = code / ".frontier"
+    home = code / ".horizon"
     (home / "install").mkdir(parents=True)
     (code / "agent/dist").mkdir(parents=True)
     (code / "agent/dist/main.js").write_text("")
@@ -52,11 +52,11 @@ def make_home(tmp_path: Path, *, service: str = "paused") -> Path:
 
 def record_early_steps(home: Path) -> Path:
     """Record steps 1-4 as done; these tests start at the naming step."""
-    archive = Path(home).parent.parent / "frontier-archive"
+    archive = Path(home).parent.parent / "horizon-archive"
     console_init.record_step(
         home, "archive", {"path": str(archive), "default": True, "outside_code": True}
     )
-    console_init.record_step(home, "agent", {"runtime": "frontier-pi", "provider": "test", "model": "test"})
+    console_init.record_step(home, "agent", {"runtime": "horizon-pi", "provider": "test", "model": "test"})
     console_init.record_step(home, "lark", {"cli": {"path": "lark-cli", "source": "recorded"}})
     console_init.record_step(
         home,
@@ -201,7 +201,7 @@ def test_an_existing_same_name_base_asks_and_creates_a_new_one_by_default(tmp_pa
     home = make_home(tmp_path)
     record_early_steps(home)
     fake = FakeFacilities(
-        same_name=[{"base_token": "bascn_old", "name": "frontier 知识库", "url": "u"}]
+        same_name=[{"base_token": "bascn_old", "name": "horizon 知识库", "url": "u"}]
     )
 
     _result, rendered, fake = completion_run(home, ["", "", "", "", "", ""], fake)
@@ -216,7 +216,7 @@ def test_reusing_an_existing_same_name_base_does_not_create_a_second_one(tmp_pat
     record_early_steps(home)
     fake = FakeFacilities(
         same_name=[
-            {"base_token": "bascn_old", "name": "frontier 知识库", "url": "https://feishu.cn/base/bascn_old"}
+            {"base_token": "bascn_old", "name": "horizon 知识库", "url": "https://feishu.cn/base/bascn_old"}
         ]
     )
 
@@ -297,7 +297,7 @@ def test_choosing_not_to_initialize_knowledge_blocks_pushes_and_starts_the_servi
     assert gate["ready"] is False
     assert gate["reason"] == "knowledge_not_ready"
     assert "待初始化知识库" in result["text"]
-    assert "/frontier-update-kb" in result["text"]
+    assert "/horizon-update-kb" in result["text"]
     assert state(home)["steps"]["knowledge"]["value"]["choice"] == "later"
     assert state(home)["steps"]["knowledge"]["value"]["gate"] == "blocked"
 
@@ -309,13 +309,13 @@ def test_choosing_to_initialize_knowledge_enters_the_update_kb_handoff(tmp_path)
 
     def handoff():
         calls.append(home)
-        return {"ok": True, "action": "update_kb", "text": "已进入 /frontier-update-kb 读取阶段。"}
+        return {"ok": True, "action": "update_kb", "text": "已进入 /horizon-update-kb 读取阶段。"}
 
     result, rendered, _fake = completion_run(home, ["", "", "", "", "y"], update_kb=handoff)
 
     assert calls == [home]
     assert result["reason"] == "update_kb"
-    assert "已进入 /frontier-update-kb" in result["text"]
+    assert "已进入 /horizon-update-kb" in result["text"]
     assert state(home)["steps"]["knowledge"]["value"]["choice"] == "update_kb"
     # The pending initialization keeps the gate closed until the review completes.
     assert console.read_state(home)["knowledge_ready"] is False
@@ -490,18 +490,18 @@ def test_the_console_status_shows_the_blocked_knowledge_gate(tmp_path):
 
     assert snapshot["knowledge_gate"]["ready"] is False
     assert "知识库门禁：待初始化知识库" in text
-    assert "/frontier-update-kb" in text
+    assert "/horizon-update-kb" in text
 
 
-def test_frontier_push_says_why_the_gate_blocks_it(tmp_path):
+def test_horizon_push_says_why_the_gate_blocks_it(tmp_path):
     home = make_home(tmp_path, service="running")
     console.write_state(home, knowledge_ready=False)
 
-    result = console.dispatch(home, "/frontier-push", service=service_for(home, Clock(datetime.now(TZ)), Daily(), Agent()))
+    result = console.dispatch(home, "/horizon-push", service=service_for(home, Clock(datetime.now(TZ)), Daily(), Agent()))
 
     assert result["ok"] is False
     assert "待初始化知识库" in result["text"]
-    assert "/frontier-update-kb" in result["text"]
+    assert "/horizon-update-kb" in result["text"]
 
 
 # ---------------------------------------------------------------- completion

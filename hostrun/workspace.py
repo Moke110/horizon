@@ -4,12 +4,12 @@ The host agent owns installation (ADR 0005).  This module makes the first
 phase checkable instead of conversational:
 
     root/                         installation workspace (host project folder)
-      .frontier/install.json      resolved code / data / interpreter / skill paths
-      frontier/                   code checkout (never the data root)
-      frontier-archive/           data root (never inside the code checkout)
+      .horizon/install.json      resolved code / data / interpreter / skill paths
+      horizon/                   code checkout (never the data root)
+      horizon-archive/           data root (never inside the code checkout)
         bin/uv(.exe)              private uv fallback, outside the code checkout
         .venv/                    private environment created and used by uv
-      <host skills dir>/frontier-run/SKILL.md   small launcher, not a repo copy
+      <host skills dir>/horizon-run/SKILL.md   small launcher, not a repo copy
 
 Rules that the functions below keep:
 
@@ -48,13 +48,13 @@ from hostrun import dist as dist_mod
 from hostrun.base import HostRunError, resolve_executable, update_config
 
 SCHEMA_VERSION = 1
-RECORD_REL = Path(".frontier") / "install.json"
-DEFAULT_CODE_DIRNAME = "frontier"
-DEFAULT_DATA_DIRNAME = "frontier-archive"
-DEFAULT_REPO_URL = "https://github.com/Moke110/frontier.git"
+RECORD_REL = Path(".horizon") / "install.json"
+DEFAULT_CODE_DIRNAME = "horizon"
+DEFAULT_DATA_DIRNAME = "horizon-archive"
+DEFAULT_REPO_URL = "https://github.com/Moke110/horizon.git"
 DEFAULT_PYTHON = "3.13"
 ENV_DIRNAME = ".venv"
-SKILL_NAME = "frontier-run"
+SKILL_NAME = "horizon-run"
 SKILL_ENTRY = Path("skills") / SKILL_NAME / "SKILL.md"
 SKILL_REFERENCES = (
     Path("skills") / SKILL_NAME / "references" / "installation.md",
@@ -254,7 +254,7 @@ def _clone(url: str, repo: Path, *, runner=subprocess.run, timeout: int = 900) -
 
 
 def _clone_marker(root: Path) -> Path:
-    return Path(root) / ".frontier" / "clone-in-progress.json"
+    return Path(root) / ".horizon" / "clone-in-progress.json"
 
 
 def _write_clone_marker(root: Path, repo: Path) -> None:
@@ -430,7 +430,7 @@ def acquire(
 
 
 def record_source_install(result: dict) -> dict:
-    """Write ``<code>/.frontier/dist.lock.json`` for a source installation.
+    """Write ``<code>/.horizon/dist.lock.json`` for a source installation.
 
     ``install workspace`` is where a source installation is established, so
     that CLI branch calls this with the :func:`acquire` result.  The lock records
@@ -881,7 +881,7 @@ _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def entry_digest(repo: str | Path) -> str:
-    """SHA-256 of the checkout's ``skills/frontier-run/SKILL.md`` (#97)."""
+    """SHA-256 of the checkout's ``skills/horizon-run/SKILL.md`` (#97)."""
     return sha256_file(Path(repo) / SKILL_ENTRY)
 
 
@@ -951,7 +951,7 @@ def _parse_pointer(text: str) -> dict:
 def _launcher_text(record: dict, lock: dict | None = None, digest: str = "") -> str:
     values = _pointer_values(record, lock)
     package = values["distribution"] == "package"
-    wrapper = Path(record["repo"]) / "bin" / "frontier.cmd"
+    wrapper = Path(record["repo"]) / "bin" / "horizon.cmd"
     lines = [
         f"- 仓库：{record['repo']}",
         f"- 运行时区：{record['home']}",
@@ -980,7 +980,7 @@ def _launcher_text(record: dict, lock: dict | None = None, digest: str = "") -> 
     bullets = "\n".join(lines)
     if package:
         run_step = (
-            f"3. 使用上面记录的入口点 `{wrapper}` 执行 frontier 子命令"
+            f"3. 使用上面记录的入口点 `{wrapper}` 执行 horizon 子命令"
             f"（例如 `{wrapper} --code \"{record['repo']}\" --archive \"<资料目录>\" "
             "install verify`）；不要自行拼接 `-m hostrun.cli`。"
         )
@@ -988,7 +988,7 @@ def _launcher_text(record: dict, lock: dict | None = None, digest: str = "") -> 
         run_step = "3. 以仓库根为工作目录，用上面记录的解释器执行 `python -m hostrun.cli ...`。"
     return f"""---
 name: {SKILL_NAME}
-description: "Install, run, pause or recover frontier on this host. Read the repository entry and references before acting."
+description: "Install, run, pause or recover horizon on this host. Read the repository entry and references before acting."
 ---
 
 # {SKILL_NAME}
@@ -1027,7 +1027,7 @@ def _package_workspace_record(root: str | Path) -> dict:
     lock = dist_mod.read_lock(root_path)
     if not isinstance(lock, dict) or lock.get("distribution") != "package":
         return {}
-    wrapper = root_path / "bin" / "frontier.cmd"
+    wrapper = root_path / "bin" / "horizon.cmd"
     if not wrapper.is_file():
         return {
             "error": "package_wrapper_missing",
@@ -1045,7 +1045,7 @@ def _package_workspace_record(root: str | Path) -> dict:
     return {
         "root": str(root_path),
         "repo": str(root_path),
-        "home": str(root_path / ".frontier"),
+        "home": str(root_path / ".horizon"),
         "repo_url": source_url,
         "origin": source_url,
         "commit": str(manifest.get("built_from_commit") or ""),
@@ -1322,7 +1322,7 @@ def status(root: str | Path) -> dict:
     venv = Path(record.get("venv") or "")
     problems = []
     if package:
-        wrapper = repo / "bin" / "frontier.cmd"
+        wrapper = repo / "bin" / "horizon.cmd"
         runtime_python = repo / "runtime" / "python.exe"
         if not repo.is_dir():
             problems.append(f"代码目录不可用：{repo}")

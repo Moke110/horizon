@@ -96,7 +96,7 @@ def test_archive_inside_the_code_directory_is_rejected(tmp_path):
     code = tmp_path / "checkout"
 
     with pytest.raises(HostRunError):
-        layout.resolve(code=str(code), archive=str(code / "frontier-archive"))
+        layout.resolve(code=str(code), archive=str(code / "horizon-archive"))
 
 
 def test_code_inside_the_archive_is_rejected(tmp_path):
@@ -189,7 +189,7 @@ def test_entry_joins_only_inside_its_area(tmp_path):
 
 # ----------------------------------------------------------- git hygiene
 def test_the_runtime_area_is_gitignored():
-    probe = ".frontier/logs/run.log"
+    probe = ".horizon/logs/run.log"
     result = subprocess.run(
         ["git", "-C", str(ROOT), "check-ignore", "--quiet", probe],
         capture_output=True,

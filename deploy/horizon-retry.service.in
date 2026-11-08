@@ -1,15 +1,15 @@
 [Unit]
-Description=frontier pending-push retry (lease expiry safety net)
+Description=horizon pending-push retry (lease expiry safety net)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/frontier
-Environment=FRONTIER_RUNTIME=%h/knowledge-loop
+WorkingDirectory=%h/horizon
+Environment=HORIZON_RUNTIME=%h/knowledge-loop
 Environment=TZ=Asia/Shanghai
 Environment=PATH=%h/.opencode/bin:%h/.npm-global/bin:%h/.local/bin:%h/miniconda3/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=%h/.config/frontier/env
+EnvironmentFile=%h/.config/horizon/env
 ExecStart=__PYTHON__ -m trigger.cli run-request --quiet
 StandardOutput=journal
 StandardError=journal

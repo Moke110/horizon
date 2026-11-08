@@ -1,6 +1,6 @@
 """One-shot v1 → v2 migration for the knowledge store.
 
-v1 had three overlapping notions: checkpoints (``frontier.yaml``), knowledge-graph
+v1 had three overlapping notions: checkpoints (``horizon.yaml``), knowledge-graph
 nodes (``archive/kg/nodes``) and propositions keyed by node ids. v2 keeps two:
 
 * knowledge cards — ``id / label / ontology / annotation``, no links;
@@ -63,7 +63,7 @@ def _unique(items: list[str]) -> list[str]:
 
 
 def _migrate_cards(home: Path, store: Archive) -> tuple[dict[str, str], list[dict], list[str]]:
-    vocab = read_yaml(home / "frontier.yaml") or {}
+    vocab = read_yaml(home / "horizon.yaml") or {}
     checkpoints = vocab.get("checkpoints") or []
     nodes = [read_json(p) or {} for p in sorted((store.root / "kg" / "nodes").glob("*.json"))]
     nodes = [n for n in nodes if n.get("node_id")]
@@ -252,24 +252,24 @@ def migrate(home: Path, dry_run: bool = False) -> dict:
     store = Archive(home)
     cards_dir = store.cards
     existing_cards = list(cards_dir.glob("*.json")) if cards_dir.exists() else []
-    frontier = home / "frontier.yaml"
+    horizon = home / "horizon.yaml"
 
-    if existing_cards and not frontier.exists():
+    if existing_cards and not horizon.exists():
         return {
             "ok": True,
             "status": "already-migrated",
             "home": str(home),
             "cards": len(existing_cards),
         }
-    if existing_cards and frontier.exists():
+    if existing_cards and horizon.exists():
         raise ArchiveError(
-            "archive/cards is populated but frontier.yaml still exists; "
+            "archive/cards is populated but horizon.yaml still exists; "
             "refusing to guess (roll back or clean up manually)"
         )
-    if not frontier.exists():
-        raise ArchiveError(f"nothing to migrate: no {frontier}")
+    if not horizon.exists():
+        raise ArchiveError(f"nothing to migrate: no {horizon}")
 
-    vocab = read_yaml(frontier) or {}
+    vocab = read_yaml(horizon) or {}
     cp_map = {}
     for cp in vocab.get("checkpoints") or []:
         cp_map[cp.get("id")] = "card_" + id_slug(cp.get("id", ""))
@@ -349,7 +349,7 @@ def migrate(home: Path, dry_run: bool = False) -> dict:
     ensure_dir(backup)
     backed: list[str] = []
     for path in (
-        frontier,
+        horizon,
         state_path,
         ratings_path,
         store.root / "kg",
@@ -396,9 +396,9 @@ def migrate(home: Path, dry_run: bool = False) -> dict:
 
     write_yaml(state_path, new_state)
 
-    # v1-only layers retire. frontier.yaml moves into the backup; kg/ is removed
+    # v1-only layers retire. horizon.yaml moves into the backup; kg/ is removed
     # (it is already copied under backup/archive/kg).
-    frontier.unlink()
+    horizon.unlink()
     if (store.root / "kg").exists():
         shutil.rmtree(store.root / "kg")
     store.reindex()

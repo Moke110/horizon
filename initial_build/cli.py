@@ -16,7 +16,7 @@ from initial_build.build import apply, summary
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="initial_build", description=__doc__)
     parser.add_argument("--code", help="code directory (default: this checkout)")
-    parser.add_argument("--archive", help="archive directory (default: <code>/../frontier-archive)")
+    parser.add_argument("--archive", help="archive directory (default: <code>/../horizon-archive)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("apply", help="validate then write a draft into archive")
     p.add_argument("--draft", required=True, help="directory with cards/propositions/sources.jsonl")

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from common import now, read_json, read_yaml
 from archive.store import Archive, is_under_review
-from frontier.model import is_temporary_card
+from horizon.model import is_temporary_card
 
 INSTRUCTIONS = """你是检索排序器。根据每张知识卡片的 ontology / annotation 与关联命题，
 从候选论文中挑出最值得今天推送的条目。排序时综合考虑：

@@ -28,14 +28,14 @@ PACKAGE_FILES = {
     "agent/dist/main.js": "// bundled agent fixture\n",
     "common.py": "RUNTIME = True\n",
     "requirements.txt": "PyYAML>=6.0\n",
-    "README.md": "# fixture frontier\n",
+    "README.md": "# fixture horizon\n",
     "LICENSE": "MIT\n",
     "hostrun/__init__.py": "",
     "hostrun/cli.py": "CLI = 1\n",
     "hostrun/base.py": "VALUE = 1\n",
-    "skills/frontier-run/SKILL.md": "---\nname: frontier-run\n---\n",
-    "skills/frontier-run/references/installation.md": "# install\n",
-    "skills/frontier-run/references/workflow.md": "# workflow\n",
+    "skills/horizon-run/SKILL.md": "---\nname: horizon-run\n---\n",
+    "skills/horizon-run/references/installation.md": "# install\n",
+    "skills/horizon-run/references/workflow.md": "# workflow\n",
     "contracts/README.md": "contracts\n",
     "docs/adr/0010-distribution.md": "# decision\n",
 }
@@ -94,7 +94,7 @@ def _smoke_args(built: dict, smoke: Path, **overrides: str) -> list[str]:
         "--zip": str(built["artifact"]["path"]),
         "--code": str(smoke / "code"),
         "--archive": str(smoke / "archive"),
-        "--skills-target": str(smoke / "host-skills" / "frontier-run"),
+        "--skills-target": str(smoke / "host-skills" / "horizon-run"),
         "--bootstrap": str(smoke / "bootstrap"),
     }
     values.update(overrides)
@@ -133,7 +133,7 @@ def test_ci_install_smoke_installs_verifies_and_reports_a_package(tmp_path):
 
     code = smoke / "code"
     lock = json.loads(
-        (code / ".frontier" / "dist.lock.json").read_text(encoding="utf-8")
+        (code / ".horizon" / "dist.lock.json").read_text(encoding="utf-8")
     )
     assert lock["distribution"] == "package"
     assert lock["version"] == "0.1.0"
@@ -143,9 +143,9 @@ def test_ci_install_smoke_installs_verifies_and_reports_a_package(tmp_path):
     assert (smoke / "bootstrap" / "runtime" / "python.exe").is_file()
     # `install skill` writes the host pointer; `console install` writes its script.
     assert (
-        smoke / "host-skills" / "frontier-run" / "SKILL.md"
+        smoke / "host-skills" / "horizon-run" / "SKILL.md"
     ).is_file()
-    assert (code / "bin" / "frontier-console.cmd").is_file()
+    assert (code / "bin" / "horizon-console.cmd").is_file()
 
     commands = {row["name"]: row for row in payload["commands"]}
     assert commands["install"]["status"] == "ok"
@@ -174,7 +174,7 @@ def test_ci_install_smoke_fails_on_a_digest_mismatch_before_installing(tmp_path)
     payload = _payload(result)
     assert payload["ok"] is False
     assert "sha256" in payload["error"].lower()
-    assert not (smoke / "code" / ".frontier" / "dist.lock.json").exists()
+    assert not (smoke / "code" / ".horizon" / "dist.lock.json").exists()
 
 
 def test_ci_install_smoke_refuses_a_non_empty_code_directory(tmp_path):
@@ -191,7 +191,7 @@ def test_ci_install_smoke_refuses_a_non_empty_code_directory(tmp_path):
     assert payload["ok"] is False
     assert "empty" in payload["error"].lower()
     assert (code / "keep.txt").read_text(encoding="utf-8") == "user data\n"
-    assert not (code / ".frontier" / "dist.lock.json").exists()
+    assert not (code / ".horizon" / "dist.lock.json").exists()
 
 
 def _load_smoke_script():
@@ -230,10 +230,10 @@ def test_wrapper_check_refuses_without_a_wrapper_or_bundled_python(tmp_path):
     with pytest.raises(script.SmokeError) as excinfo:
         script.run_wrapper_check(code, tmp_path / "archive")
     assert excinfo.value.step == "wrapper"
-    assert "frontier.cmd" in excinfo.value.message
+    assert "horizon.cmd" in excinfo.value.message
 
     (code / "bin").mkdir(parents=True)
-    (code / "bin" / "frontier.cmd").write_text("@echo off\r\n", encoding="ascii")
+    (code / "bin" / "horizon.cmd").write_text("@echo off\r\n", encoding="ascii")
     with pytest.raises(script.SmokeError) as excinfo:
         script.run_wrapper_check(code, tmp_path / "archive")
     assert excinfo.value.step == "wrapper"
@@ -251,14 +251,14 @@ def test_ci_install_smoke_check_wrapper_fails_clearly_on_a_synthetic_runtime(tmp
     payload = _payload(result)
     assert payload["ok"] is False
     assert payload["step"] == "wrapper"
-    assert "frontier.cmd" in payload["error"]
+    assert "horizon.cmd" in payload["error"]
     # Captured output and the exact command go into the failure JSON so a CI log
     # can explain a broken wrapper without guessing.
     assert "stdout" in payload
     assert "stderr" in payload
     assert "returncode" in payload
-    assert any("frontier.cmd" in part for part in payload["command"])
+    assert any("horizon.cmd" in part for part in payload["command"])
     # The check runs after install/skill, so the package and lock already exist.
     assert (smoke / "code" / "manifest.json").is_file()
-    assert (smoke / "code" / ".frontier" / "dist.lock.json").is_file()
-    assert (smoke / "host-skills" / "frontier-run" / "SKILL.md").is_file()
+    assert (smoke / "code" / ".horizon" / "dist.lock.json").is_file()
+    assert (smoke / "host-skills" / "horizon-run" / "SKILL.md").is_file()

@@ -6,9 +6,9 @@ module is the runtime side of that decision:
 - :func:`install_package` takes a local artifact (path or ``file://`` URL), or
   downloads an ``https://`` artifact URL, and its digest, verifies the artifact
   *before* unpacking it, reads and validates ``manifest.json`` from inside the
-  zip, extracts into ``<code>/.frontier/staging/<id>``, verifies every staged
+  zip, extracts into ``<code>/.horizon/staging/<id>``, verifies every staged
   byte, and only then copies the package into the code directory and writes
-  ``<code>/.frontier/dist.lock.json``.
+  ``<code>/.horizon/dist.lock.json``.
 - :func:`verify_install` checks that the lock, manifest and on-disk files still
   agree without needing the original zip.
 - :func:`apply_staged` is deliberately small so ticket #96 (retention and
@@ -51,20 +51,20 @@ SOURCE_DISTRIBUTION = "source"
 #: A source installation has no distribution manifest, so it declares no
 #: compatibility requirements; the empty object is recorded explicitly (#97).
 SOURCE_REQUIRES: dict = {}
-LOCK_REL = Path(".frontier") / "dist.lock.json"
-STAGING_REL = Path(".frontier") / "staging"
-RELEASES_REL = Path(".frontier") / "releases"
-CURRENT_REL = Path(".frontier") / "current"
-PENDING_REL = Path(".frontier") / "dist.pending.json"
+LOCK_REL = Path(".horizon") / "dist.lock.json"
+STAGING_REL = Path(".horizon") / "staging"
+RELEASES_REL = Path(".horizon") / "releases"
+CURRENT_REL = Path(".horizon") / "current"
+PENDING_REL = Path(".horizon") / "dist.pending.json"
 RELEASE_FILENAME = "release.json"
 RELEASE_SCHEMA_VERSION = 1
 MANIFEST_FILENAME = distribution.MANIFEST_FILENAME
 CHANNELS = distribution.CHANNELS
 #: Files an installation generates after extraction, so they are not in the
 #: shipped manifest.  Only fixed paths are tolerated: ``console install`` writes
-#: ``<code>/bin/frontier-console.cmd`` next to the package's ``bin/frontier.cmd``
+#: ``<code>/bin/horizon-console.cmd`` next to the package's ``bin/horizon.cmd``
 #: (#95).  Any other unlisted file is still reported as an extra file.
-VERIFY_IGNORED_PATHS = frozenset({"bin/frontier-console.cmd"})
+VERIFY_IGNORED_PATHS = frozenset({"bin/horizon-console.cmd"})
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+~-]*$")
@@ -201,7 +201,7 @@ def current_path(code: str | Path) -> Path:
 
 
 def read_current(code: str | Path) -> str | None:
-    """Read the ``.frontier/current`` pointer, or ``None`` when absent."""
+    """Read the ``.horizon/current`` pointer, or ``None`` when absent."""
     try:
         text = current_path(code).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
@@ -216,7 +216,7 @@ def _write_current(code: str | Path, version: str) -> Path:
 
 
 def _usable_version(version: object) -> bool:
-    """Versions name a directory under ``.frontier/releases``; keep them inert."""
+    """Versions name a directory under ``.horizon/releases``; keep them inert."""
     return isinstance(version, str) and bool(_VERSION_RE.fullmatch(version))
 
 
@@ -305,7 +305,7 @@ def _retain_tree(
     source_url: str,
     installed_at: str,
 ) -> Path:
-    """Copy one verified tree into ``.frontier/releases/<version>``.
+    """Copy one verified tree into ``.horizon/releases/<version>``.
 
     The retained tree is a plain copy (no re-extraction): every manifest file
     plus the original ``manifest.json`` and a ``release.json`` metadata record.
@@ -410,7 +410,7 @@ def _remove_empty_parents(path: Path, stop: Path) -> None:
 def _remove_stale_files(code: Path, old_manifest: dict, new_manifest: dict) -> list[str]:
     """Delete files the previous manifest listed but the new one does not.
 
-    Never touches the runtime area: ``.frontier`` is both rejected as a
+    Never touches the runtime area: ``.horizon`` is both rejected as a
     relative path and excluded by the resolved-path containment check.
     """
     new_paths = {row["path"] for row in new_manifest["files"]}
@@ -612,7 +612,7 @@ def _safe_relpath(name: str) -> bool:
 
 
 def _reserved_relpath(name: str) -> bool:
-    return name.split("/", 1)[0] == ".frontier"
+    return name.split("/", 1)[0] == ".horizon"
 
 
 # ------------------------------------------------------------------- manifest
@@ -658,7 +658,7 @@ def _validate_manifest(manifest: object) -> list[str]:
             errors.append(f"{prefix}.path 不安全或为空：{path!r}")
         else:
             if _reserved_relpath(path):
-                errors.append(f"{prefix}.path 不得写入 .frontier：{path}")
+                errors.append(f"{prefix}.path 不得写入 .horizon：{path}")
             if path == MANIFEST_FILENAME:
                 errors.append(f"{prefix}.path 不得是清单自身")
             if path in seen:
@@ -945,7 +945,7 @@ def dsh_compatibility(
             "evidence": {"checked": False},
         }
     code_path = Path(code).expanduser().resolve()
-    config = read_json(code_path / ".frontier" / "install" / "config.json") or {}
+    config = read_json(code_path / ".horizon" / "install" / "config.json") or {}
     dsh = str(((config.get("paths") or {}).get("dsh") or "")).strip()
     if not dsh:
         return {
@@ -1071,7 +1071,7 @@ def _pending_blocked(code: Path, marker: dict) -> dict:
     return _blocked(
         "pending_operation_incomplete",
         (
-            "检测到未完成的破坏性安装操作留下的 .frontier/dist.pending.json；"
+            "检测到未完成的破坏性安装操作留下的 .horizon/dist.pending.json；"
             "为避免把两个版本的文件混在一起，本次安装已停止。"
             "请先检查 pending_marker 与 recovery 字段：能恢复时按记录手工恢复，"
             "确认现有代码树完整后再删除该标记并重试；不要直接覆盖代码目录。"
@@ -1112,7 +1112,7 @@ def _restore_pre_operation(code: Path, marker: dict) -> dict:
     """Restore the tree, lock and current pointer recorded by the marker.
 
     Fresh installs only have package files to remove.  Upgrades and rollbacks
-    keep the pre-operation tree in ``.frontier/releases/<version>`` (or a
+    keep the pre-operation tree in ``.horizon/releases/<version>`` (or a
     same-version recovery snapshot) and restore it file by file; the lock and
     ``current`` bytes are restored from the marker's snapshot.
     """
@@ -1233,7 +1233,7 @@ def _foreign_entries(code: Path) -> list[str]:
     return sorted(
         path.name
         for path in code.iterdir()
-        if path.name != ".frontier"
+        if path.name != ".horizon"
     )
 
 
@@ -1360,7 +1360,7 @@ def _success(
     total_bytes = sum(row["bytes"] for row in manifest_files)
     if extracted:
         note = (
-            f"已从 {artifact.name} 安装 frontier {manifest['version']}"
+            f"已从 {artifact.name} 安装 horizon {manifest['version']}"
             f"（{channel}），安装锁已写入；可用 install verify 复核磁盘内容"
         )
     else:
@@ -1546,7 +1546,7 @@ def install_package(
                 previous_version = lock_version
                 backup = (
                     code_path
-                    / ".frontier"
+                    / ".horizon"
                     / "pending"
                     / actual_sha[:16]
                     / "pre-repair"
@@ -1693,7 +1693,7 @@ def rollback(code: str | Path, *, to_version: str | None = None) -> dict:
         if lock is None:
             return _blocked(
                 "no_install_lock",
-                "代码目录中没有 .frontier/dist.lock.json，无法回滚",
+                "代码目录中没有 .horizon/dist.lock.json，无法回滚",
                 code=str(code_path),
                 lock=str(lock_path(code_path)),
             )
@@ -1735,7 +1735,7 @@ def rollback(code: str | Path, *, to_version: str | None = None) -> dict:
         if not target_dir.is_dir():
             return _blocked(
                 "release_not_found",
-                f"找不到保留版本目录：.frontier/releases/{target_version}",
+                f"找不到保留版本目录：.horizon/releases/{target_version}",
                 code=str(code_path),
                 version=target_version,
             )
@@ -1840,7 +1840,7 @@ def rollback(code: str | Path, *, to_version: str | None = None) -> dict:
             # destructive swap reversible.
             backup = (
                 code_path
-                / ".frontier"
+                / ".horizon"
                 / "pending"
                 / str(target_version)
                 / "pre-rollback"
@@ -1927,7 +1927,7 @@ def rollback(code: str | Path, *, to_version: str | None = None) -> dict:
             "rolled_back_at": rolled_back_at,
             "retained": retained_releases(code_path),
             "note": (
-                f"已回滚到保留版本 frontier {target_version}"
+                f"已回滚到保留版本 horizon {target_version}"
                 f"（{release['channel']}）；运行状态与知识库未改动"
             ),
         }
@@ -2010,7 +2010,7 @@ def verify_install(code: str | Path) -> dict:
     if lock is None:
         return _blocked(
             "no_install_lock",
-            "代码目录中没有 .frontier/dist.lock.json，无法按发行包安装校验",
+            "代码目录中没有 .horizon/dist.lock.json，无法按发行包安装校验",
             code=str(code_path),
             lock=str(lock_path(code_path)),
         )
@@ -2086,7 +2086,7 @@ def verify_install(code: str | Path) -> dict:
                 {
                     "path": rel,
                     "field": "path",
-                    "expected": "outside .frontier",
+                    "expected": "outside .horizon",
                     "actual": rel,
                 }
             )
@@ -2131,7 +2131,7 @@ def verify_install(code: str | Path) -> dict:
         # so it is runtime state too: verifying a live installation must not
         # report its own bytecode caches as tampering.
         dirnames[:] = sorted(
-            name for name in dirnames if name not in (".frontier", "__pycache__")
+            name for name in dirnames if name not in (".horizon", "__pycache__")
         )
         current = Path(dirpath)
         for name in sorted(filenames):
@@ -2174,5 +2174,5 @@ def verify_install(code: str | Path) -> dict:
         "mismatch": [],
         "extra_manifest_files": [],
         "lock_mismatch": [],
-        "note": f"安装锁与磁盘内容一致：frontier {manifest['version']}（{manifest['channel']}）",
+        "note": f"安装锁与磁盘内容一致：horizon {manifest['version']}（{manifest['channel']}）",
     }

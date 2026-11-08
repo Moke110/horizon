@@ -23,11 +23,11 @@ PYTHON_REL = (
 #: pointer described in the exploration notes, with this machine's paths). It
 #: has no distribution, version or digest fields; #97 must keep it tolerated.
 LEGACY_POINTER = """---
-name: frontier-run
-description: "Install, run, pause or recover frontier on this host. Read the repository entry and references before acting."
+name: horizon-run
+description: "Install, run, pause or recover horizon on this host. Read the repository entry and references before acting."
 ---
 
-# frontier-run
+# horizon-run
 
 本文件是安装时生成的**入口指针**，不是仓库副本。运行与安装规则以仓库内文件为准。
 
@@ -70,7 +70,7 @@ def _package_lock(repo: Path, **overrides) -> dict:
         "version": "1.2.3",
         "channel": "stable",
         "artifact_sha256": "a" * 64,
-        "source_url": (repo.parent / "frontier-1.2.3-stable.zip").as_uri(),
+        "source_url": (repo.parent / "horizon-1.2.3-stable.zip").as_uri(),
         "installed_at": "2026-10-31T10:00:00+08:00",
         "requires": {
             "os": "windows",
@@ -116,9 +116,9 @@ def _seed_repo(repo: Path) -> Path:
         "common.py",
         "requirements.txt",
         "contracts/README.md",
-        "skills/frontier-run/SKILL.md",
-        "skills/frontier-run/references/installation.md",
-        "skills/frontier-run/references/workflow.md",
+        "skills/horizon-run/SKILL.md",
+        "skills/horizon-run/references/installation.md",
+        "skills/horizon-run/references/workflow.md",
     ):
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -224,8 +224,8 @@ def _record(root: Path, repo: Path, home: Path) -> dict:
 
 def _workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
     root = tmp_path / "ws"
-    repo = _seed_repo(root / "frontier")
-    home = root / "frontier-archive"
+    repo = _seed_repo(root / "horizon")
+    home = root / "horizon-archive"
     home.mkdir(parents=True)
     _record(root, repo, home)
     return root, repo, home
@@ -246,8 +246,8 @@ def test_fresh_workspace_clones_code_and_creates_separate_data_root(tmp_path):
     assert result["ok"] is True
     assert result["action"] == "clone"
     repo, home = Path(result["repo"]), Path(result["home"])
-    assert repo.name == "frontier"
-    assert home.name == "frontier-archive"
+    assert repo.name == "horizon"
+    assert home.name == "horizon-archive"
     assert (repo / ".git").is_dir()
     assert home.is_dir()
     assert not home.is_relative_to(repo)
@@ -258,7 +258,7 @@ def test_fresh_workspace_clones_code_and_creates_separate_data_root(tmp_path):
 
 def test_acquiring_a_workspace_leaves_the_code_checkout_untouched(tmp_path):
     root = tmp_path / "ws"
-    repo = _seed_repo(root / "frontier")
+    repo = _seed_repo(root / "horizon")
     before = _files_under(repo)
 
     result = workspace.acquire(root, runner=Runner())
@@ -267,13 +267,13 @@ def test_acquiring_a_workspace_leaves_the_code_checkout_untouched(tmp_path):
     assert result["action"] == "reuse"
     assert _files_under(repo) == before
     assert not (repo / ".venv").exists()
-    assert not (repo / ".frontier").exists()
+    assert not (repo / ".horizon").exists()
 
 
 def test_existing_checkout_with_changes_is_not_pulled_or_overwritten(tmp_path):
     root = tmp_path / "ws"
-    (root / "frontier").mkdir(parents=True)
-    _seed_repo(root / "frontier")
+    (root / "horizon").mkdir(parents=True)
+    _seed_repo(root / "horizon")
     runner = Runner(status=" M writer/tasks.py\n")
 
     result = workspace.acquire(root, runner=runner)
@@ -285,8 +285,8 @@ def test_existing_checkout_with_changes_is_not_pulled_or_overwritten(tmp_path):
 
 def test_existing_checkout_with_another_origin_is_blocked(tmp_path):
     root = tmp_path / "ws"
-    (root / "frontier").mkdir(parents=True)
-    _seed_repo(root / "frontier")
+    (root / "horizon").mkdir(parents=True)
+    _seed_repo(root / "horizon")
     runner = Runner(origin="https://example.com/other.git")
 
     result = workspace.acquire(root, runner=runner)
@@ -298,17 +298,17 @@ def test_existing_checkout_with_another_origin_is_blocked(tmp_path):
 
 def test_data_root_inside_the_code_checkout_is_rejected(tmp_path):
     with pytest.raises(HostRunError):
-        workspace.resolve_layout(tmp_path, data_dirname="frontier/frontier-archive")
+        workspace.resolve_layout(tmp_path, data_dirname="horizon/horizon-archive")
     with pytest.raises(HostRunError):
         workspace.resolve_layout(tmp_path, code_dirname="same", data_dirname="same")
 
 
 def test_acquire_rejects_a_data_root_inside_the_code_checkout(tmp_path):
     root = tmp_path / "ws"
-    repo = _seed_repo(root / "frontier")
+    repo = _seed_repo(root / "horizon")
     before = _files_under(repo)
 
-    result = workspace.acquire(root, data_dirname="frontier/archive")
+    result = workspace.acquire(root, data_dirname="horizon/archive")
 
     assert result["ok"] is False
     assert result["action"] == "rejected"
@@ -323,9 +323,9 @@ def test_cli_workspace_rejection_reports_the_reason_and_writes_nothing(tmp_path,
     from hostrun import cli, install
 
     root = tmp_path / "ws"
-    repo = _seed_repo(root / "frontier")
+    repo = _seed_repo(root / "horizon")
     before = _files_under(repo)
-    data_root = tmp_path / "code" / ".frontier"
+    data_root = tmp_path / "code" / ".horizon"
 
     code = cli.main(
         [
@@ -335,7 +335,7 @@ def test_cli_workspace_rejection_reports_the_reason_and_writes_nothing(tmp_path,
             "--root",
             str(root),
             "--data-dir",
-            "frontier/archive",
+            "horizon/archive",
         ]
     )
 
@@ -346,7 +346,7 @@ def test_cli_workspace_rejection_reports_the_reason_and_writes_nothing(tmp_path,
     assert "资料目录不能放在代码目录内" in payload["blocked"]
     assert _files_under(repo) == before
     assert not workspace.record_path(root).exists()
-    assert not (root / "frontier" / "archive").exists()
+    assert not (root / "horizon" / "archive").exists()
     entry = install.load_state(data_root)["steps"]["workspace"]
     assert entry["status"] == "blocked"
     assert "资料目录不能放在代码目录内" in entry["note"]
@@ -354,7 +354,7 @@ def test_cli_workspace_rejection_reports_the_reason_and_writes_nothing(tmp_path,
 
 def test_reusable_checkout_is_not_cloned_again(tmp_path):
     root = tmp_path / "ws"
-    repo = root / "frontier"
+    repo = root / "horizon"
     repo.mkdir(parents=True)
     _seed_repo(repo)
     runner = Runner()
@@ -368,12 +368,12 @@ def test_reusable_checkout_is_not_cloned_again(tmp_path):
 
 def test_interrupted_clone_is_moved_aside_and_retried(tmp_path):
     root = tmp_path / "ws"
-    repo = root / "frontier"
+    repo = root / "horizon"
     repo.mkdir(parents=True)
     (repo / ".git").mkdir()
     (repo / "partial.txt").write_text("leftover", encoding="utf-8")
-    (root / ".frontier").mkdir()
-    (root / ".frontier" / "clone-in-progress.json").write_text(
+    (root / ".horizon").mkdir()
+    (root / ".horizon" / "clone-in-progress.json").write_text(
         json.dumps({"repo": str(repo), "started_at": "2026-10-27T10:00:00+08:00"}),
         encoding="utf-8",
     )
@@ -398,7 +398,7 @@ def test_interrupted_clone_is_moved_aside_and_retried(tmp_path):
     assert result["recovered_partial_clone"]["archived"]
     assert Path(result["recovered_partial_clone"]["archived"]).exists()
     assert (repo / "common.py").exists()
-    assert not (root / ".frontier" / "clone-in-progress.json").exists()
+    assert not (root / ".horizon" / "clone-in-progress.json").exists()
 
 
 # ---------------------------------------------------------------------- uv
@@ -410,7 +410,7 @@ def _zip_with_uv(binary="uv.exe") -> bytes:
 
 
 def test_missing_uv_is_installed_privately_in_the_data_root(tmp_path):
-    home = tmp_path / "frontier-archive"
+    home = tmp_path / "horizon-archive"
     blob = _zip_with_uv()
     result = workspace.install_uv(
         home,
@@ -558,7 +558,7 @@ def test_toolchain_blocks_a_broken_interpreter_with_a_repair_command(
 
 def test_repair_command_changes_directory_before_running(tmp_path):
     root = tmp_path / "ws"
-    home = root / "frontier-archive"
+    home = root / "horizon-archive"
     command = workspace.repair_command(root, home)
 
     if os.name == "nt":
@@ -623,7 +623,7 @@ def test_recorded_interpreter_that_disappeared_blocks_until_cleared(tmp_path):
 # --------------------------------------------------- environment building
 def test_fresh_environment_is_created_by_uv(tmp_path):
     repo = _seed_repo(tmp_path / "repo")
-    home = tmp_path / "frontier-archive"
+    home = tmp_path / "horizon-archive"
     calls = []
 
     def runner(argv, **kwargs):
@@ -662,7 +662,7 @@ def test_fresh_environment_is_created_by_uv(tmp_path):
 
 def test_broken_environment_is_repaired_with_clear(tmp_path):
     repo = _seed_repo(tmp_path / "repo")
-    home = tmp_path / "frontier-archive"
+    home = tmp_path / "horizon-archive"
     venv = workspace.environment_venv(home)
     venv.mkdir(parents=True)
     (venv / "pyvenv.cfg").write_text("home = retired\n", encoding="utf-8")
@@ -694,7 +694,7 @@ def test_broken_environment_is_repaired_with_clear(tmp_path):
 
 def test_failed_uv_venv_reports_blocked(tmp_path):
     repo = _seed_repo(tmp_path / "repo")
-    home = tmp_path / "frontier-archive"
+    home = tmp_path / "horizon-archive"
 
     def runner(argv, **kwargs):
         class Proc:
@@ -714,7 +714,7 @@ def test_failed_uv_venv_reports_blocked(tmp_path):
 
 def test_import_probe_failure_is_blocked(tmp_path):
     repo = _seed_repo(tmp_path / "repo")
-    home = tmp_path / "frontier-archive"
+    home = tmp_path / "horizon-archive"
 
     def runner(argv, **kwargs):
         class Proc:
@@ -741,12 +741,12 @@ def test_import_probe_failure_is_blocked(tmp_path):
 def test_skill_launcher_points_at_repo_and_verifies_references(tmp_path):
     root, repo, home = _workspace(tmp_path)
 
-    result = workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    result = workspace.register_skill(root, root / ".host-skills" / "horizon-run")
 
     assert result["ok"] is True
     launcher = Path(result["skill"])
     text = launcher.read_text(encoding="utf-8")
-    assert "name: frontier-run" in text
+    assert "name: horizon-run" in text
     assert str(repo) in text
     assert str(home) in text
     assert workspace.verify_skill(workspace.load_record(root))["ok"] is True
@@ -754,9 +754,9 @@ def test_skill_launcher_points_at_repo_and_verifies_references(tmp_path):
 
 def test_moved_skill_still_locates_the_repo(tmp_path):
     root, repo, home = _workspace(tmp_path)
-    first = workspace.register_skill(root, root / "skills-a" / "frontier-run")
+    first = workspace.register_skill(root, root / "skills-a" / "horizon-run")
 
-    moved_dir = tmp_path / "another-host" / "frontier-run"
+    moved_dir = tmp_path / "another-host" / "horizon-run"
     moved_dir.mkdir(parents=True)
     Path(first["skill"]).rename(moved_dir / "SKILL.md")
     record = workspace.load_record(root)
@@ -772,7 +772,7 @@ def test_skill_target_cannot_overwrite_the_source_entry(tmp_path):
     root, repo, home = _workspace(tmp_path)
 
     with pytest.raises(HostRunError):
-        workspace.register_skill(root, repo / "skills" / "frontier-run")
+        workspace.register_skill(root, repo / "skills" / "horizon-run")
 
 
 # ------------------------------------------------ #97 pointer identity/digest
@@ -780,7 +780,7 @@ def test_skill_pointer_records_source_identity_and_digest(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _source_lock(repo)
 
-    result = workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    result = workspace.register_skill(root, root / ".host-skills" / "horizon-run")
 
     assert result["ok"] is True
     text = Path(result["skill"]).read_text(encoding="utf-8")
@@ -789,7 +789,7 @@ def test_skill_pointer_records_source_identity_and_digest(tmp_path):
     assert "发行版本：source" in text
     assert "源码提交：abc123" in text
     assert f"技能摘要：{digest}" in text
-    assert f"安装锁：{repo / '.frontier' / 'dist.lock.json'}" in text
+    assert f"安装锁：{repo / '.horizon' / 'dist.lock.json'}" in text
     # The fields the host agent already reads stay exactly as before.
     assert f"- 仓库：{repo}" in text
     assert f"- 运行时区：{home}" in text
@@ -809,7 +809,7 @@ def test_skill_pointer_names_the_package_version_and_artifact(tmp_path):
     root, repo, home = _workspace(tmp_path)
     lock = _package_lock(repo)
 
-    result = workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    result = workspace.register_skill(root, root / ".host-skills" / "horizon-run")
 
     assert result["ok"] is True
     text = Path(result["skill"]).read_text(encoding="utf-8")
@@ -835,7 +835,7 @@ def _package_tree(tmp_path: Path) -> tuple[Path, Path, Path]:
     repo = _seed_repo(root / "code")
     shutil.rmtree(repo / ".git")
     (repo / "bin").mkdir()
-    (repo / "bin" / "frontier.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    (repo / "bin" / "horizon.cmd").write_text("@echo off\r\n", encoding="utf-8")
     (repo / "runtime").mkdir()
     (repo / "runtime" / "python.exe").write_bytes(b"MZ fake")
     (repo / "manifest.json").write_text(
@@ -852,8 +852,8 @@ def _package_tree(tmp_path: Path) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
     _package_lock(repo)
-    home = repo / ".frontier"
-    return repo, home, root / "host-skills" / "frontier-run"
+    home = repo / ".horizon"
+    return repo, home, root / "host-skills" / "horizon-run"
 
 
 def test_package_pointer_advertises_the_wrapper_and_records_the_runtime(tmp_path):
@@ -864,7 +864,7 @@ def test_package_pointer_advertises_the_wrapper_and_records_the_runtime(tmp_path
     assert result["ok"] is True
     record = workspace.load_record(repo)
     runtime_python = repo / "runtime" / "python.exe"
-    wrapper = repo / "bin" / "frontier.cmd"
+    wrapper = repo / "bin" / "horizon.cmd"
     assert record["python"] == str(runtime_python)
     assert record["entry"] == str(wrapper)
     assert record["version"] == "1.2.3"
@@ -877,7 +877,7 @@ def test_package_pointer_advertises_the_wrapper_and_records_the_runtime(tmp_path
 
 def test_package_wrapper_missing_blocks_skill_registration(tmp_path):
     repo, home, target = _package_tree(tmp_path)
-    (repo / "bin" / "frontier.cmd").unlink()
+    (repo / "bin" / "horizon.cmd").unlink()
 
     result = workspace.register_skill(repo, target)
 
@@ -921,9 +921,9 @@ def test_package_status_does_not_require_git_uv_or_a_private_venv(tmp_path):
 
 def test_register_skill_backfills_a_source_lock_for_a_pre_97_install(tmp_path):
     root, repo, home = _workspace(tmp_path)
-    assert not (repo / ".frontier").exists()
+    assert not (repo / ".horizon").exists()
 
-    result = workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    result = workspace.register_skill(root, root / ".host-skills" / "horizon-run")
 
     assert result["ok"] is True
     lock = dist.read_lock(repo)
@@ -941,7 +941,7 @@ def test_register_skill_does_not_fake_a_source_lock_for_a_package_tree(tmp_path)
     # missing; recreating it as "source" would misreport the installation.
     (repo / dist.MANIFEST_FILENAME).write_text("{}", encoding="utf-8")
 
-    result = workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    result = workspace.register_skill(root, root / ".host-skills" / "horizon-run")
 
     assert result["ok"] is True
     assert dist.read_lock(repo) is None
@@ -950,7 +950,7 @@ def test_register_skill_does_not_fake_a_source_lock_for_a_package_tree(tmp_path)
 def test_verify_skill_accepts_the_pre_97_pointer_unchanged(tmp_path):
     root, repo, home = _workspace(tmp_path)
     pointer = _write_legacy_pointer(
-        root / "host-skills" / "frontier-run", repo, home, root
+        root / "host-skills" / "horizon-run", repo, home, root
     )
     workspace.save_record(
         root, {**workspace.load_record(root), "skill": str(pointer)}
@@ -964,13 +964,13 @@ def test_verify_skill_accepts_the_pre_97_pointer_unchanged(tmp_path):
     assert status["distribution"] == "source"
     assert status["version"] == "source"
     assert status["reasons"] == []
-    assert not (repo / ".frontier").exists()
+    assert not (repo / ".horizon").exists()
 
 
 def test_status_does_not_flag_a_legacy_pointer_as_a_problem(tmp_path):
     root, repo, home = _workspace(tmp_path)
     pointer = _write_legacy_pointer(
-        root / "host-skills" / "frontier-run", repo, home, root
+        root / "host-skills" / "horizon-run", repo, home, root
     )
     workspace.save_record(
         root, {**workspace.load_record(root), "skill": str(pointer)}
@@ -984,9 +984,9 @@ def test_status_does_not_flag_a_legacy_pointer_as_a_problem(tmp_path):
 def test_verify_skill_blocks_a_skill_digest_mismatch(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _source_lock(repo)
-    workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    workspace.register_skill(root, root / ".host-skills" / "horizon-run")
     (repo / workspace.SKILL_ENTRY).write_text(
-        "---\nname: frontier-run\n---\nchanged after registration\n",
+        "---\nname: horizon-run\n---\nchanged after registration\n",
         encoding="utf-8",
     )
 
@@ -1000,7 +1000,7 @@ def test_verify_skill_blocks_a_skill_digest_mismatch(tmp_path):
 def test_verify_skill_blocks_a_lock_version_mismatch(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _package_lock(repo)
-    workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    workspace.register_skill(root, root / ".host-skills" / "horizon-run")
     _package_lock(repo, version="2.0.0")
 
     status = workspace.verify_skill(workspace.load_record(root))
@@ -1013,7 +1013,7 @@ def test_verify_skill_blocks_a_lock_version_mismatch(tmp_path):
 def test_verify_skill_blocks_a_lock_commit_mismatch_for_a_source_install(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _source_lock(repo)
-    workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    workspace.register_skill(root, root / ".host-skills" / "horizon-run")
     _source_lock(repo, commit="def456")
 
     status = workspace.verify_skill(workspace.load_record(root))
@@ -1026,7 +1026,7 @@ def test_verify_skill_blocks_a_lock_commit_mismatch_for_a_source_install(tmp_pat
 def test_verify_skill_blocks_a_lock_distribution_mismatch(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _source_lock(repo)
-    workspace.register_skill(root, root / ".host-skills" / "frontier-run")
+    workspace.register_skill(root, root / ".host-skills" / "horizon-run")
     _package_lock(repo)
 
     status = workspace.verify_skill(workspace.load_record(root))
@@ -1038,8 +1038,8 @@ def test_verify_skill_blocks_a_lock_distribution_mismatch(tmp_path):
 def test_verify_skill_tolerates_a_missing_lock_for_a_source_pointer(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _source_lock(repo)
-    workspace.register_skill(root, root / ".host-skills" / "frontier-run")
-    (repo / ".frontier" / "dist.lock.json").unlink()
+    workspace.register_skill(root, root / ".host-skills" / "horizon-run")
+    (repo / ".horizon" / "dist.lock.json").unlink()
 
     status = workspace.verify_skill(workspace.load_record(root))
 
@@ -1053,8 +1053,8 @@ def test_verify_skill_tolerates_a_missing_lock_for_a_source_pointer(tmp_path):
 def test_verify_skill_blocks_a_package_pointer_without_a_lock(tmp_path):
     root, repo, home = _workspace(tmp_path)
     _package_lock(repo)
-    workspace.register_skill(root, root / ".host-skills" / "frontier-run")
-    (repo / ".frontier" / "dist.lock.json").unlink()
+    workspace.register_skill(root, root / ".host-skills" / "horizon-run")
+    (repo / ".horizon" / "dist.lock.json").unlink()
 
     status = workspace.verify_skill(workspace.load_record(root))
 
@@ -1072,7 +1072,7 @@ def test_skill_registration_reports_an_unwritable_host_directory(tmp_path, monke
 
     monkeypatch.setattr(workspace, "ensure_dir", deny)
 
-    result = workspace.register_skill(root, tmp_path / "host-skills" / "frontier-run")
+    result = workspace.register_skill(root, tmp_path / "host-skills" / "horizon-run")
 
     assert result["ok"] is False
     assert result["status"] == "blocked"
@@ -1083,7 +1083,7 @@ def test_skill_registration_reports_an_unwritable_host_directory(tmp_path, monke
 
 def test_status_reports_missing_interpreter(tmp_path):
     root, repo, home = _workspace(tmp_path)
-    workspace.register_skill(root, root / "host-skills" / "frontier-run")
+    workspace.register_skill(root, root / "host-skills" / "horizon-run")
     workspace.save_record(
         root,
         {
