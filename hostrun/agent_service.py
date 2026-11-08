@@ -293,7 +293,7 @@ class AgentService:
                 task = json.loads(row[0])
                 if type(command.get('expected_version')) is not int or command['expected_version'] != task['version']: raise CommandError('version_conflict','Task version changed')
                 active = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(task['task_id'],))]
-                if any(t['status'] in ('running','paused') for t in active): raise CommandError('version_conflict','Task has an unfinished turn')
+                if any(t['status'] not in ('completed','cancelled') for t in active): raise CommandError('unfinished_turn','Continue or abandon the unfinished turn before sending another message')
                 if not task['messages']: task['title'] = text[:24]
                 task['messages'].append({'role':'You','text':text}); task['version'] += 1
                 turn = {'schema_version':1,'turn_id':operation,'operation_id':operation,'entity_id':operation,'task_id':task['task_id'],'session_id':task['session_id'],'input_version':task['version'],'version':1,'status':'running','text':text,'result':'','error':'','attempts':[]}
@@ -306,8 +306,13 @@ class AgentService:
                 if action == 'transition':
                     if type(command.get('expected_version')) is not int or command['expected_version'] != turn['version']: raise CommandError('version_conflict','Turn version changed')
                     operation_action = command.get('action')
-                    allowed = {'pause':('running',), 'resume':('paused','recovery_required','failed'), 'cancel':('running','paused','recovery_required')}
+                    allowed = {'pause':('running',), 'resume':('paused','recovery_required','failed'), 'cancel':('running','paused','recovery_required','failed')}
                     if operation_action not in allowed or turn['status'] not in allowed[operation_action]: raise CommandError('version_conflict','Invalid lifecycle transition')
+                    if operation_action == 'resume':
+                        siblings = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(turn['task_id'],))]
+                        task = json.loads(db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(turn['task_id'],)).fetchone()[0])
+                        if task['version'] != turn['input_version'] or any(t['turn_id'] != turn['turn_id'] and (t['input_version'] > turn['input_version'] or t['status'] not in ('completed','cancelled')) for t in siblings):
+                            raise CommandError('unfinished_turn','This turn cannot resume after a later or concurrent turn; abandon it instead')
                     turn['status'] = {'pause':'paused','resume':'running','cancel':'cancelled'}[operation_action]
                     turn['version'] += 1
                     if operation_action == 'resume':

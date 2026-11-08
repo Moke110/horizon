@@ -126,7 +126,13 @@ def serve(resolved):
                 elif action == 'exit':
                     exiting.set()
                     for turn in service.recoverable_turns(token=token):
-                        service.transition_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'],'expected_version':turn['version'],'action':'pause'},token=token)
+                        while turn['status'] == 'running':
+                            try:
+                                service.transition_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'],'expected_version':turn['version'],'action':'pause'},token=token)
+                                break
+                            except CommandError as exc:
+                                if exc.code != 'version_conflict': raise
+                                turn = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn['turn_id'])
                     app.stop()
                     emit('exit_ready')
                     break
@@ -134,7 +140,7 @@ def serve(resolved):
                     turn_id = cmd.get('turn_id') or getattr(app,'turn',{}).get('turn_id')
                     target = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn_id)
                     service.transition_turn({'schema_version':1,'operation_id':cmd.get('operation_id') or str(uuid.uuid4()),'turn_id':turn_id,'expected_version':target['version'],'action':'resume' if action == 'resume_turn' else 'cancel'},token=token)
-                    if action != 'resume_turn': app.stop()
+                    if action != 'resume_turn' and (getattr(app,'turn',None) or {}).get('turn_id') == turn_id: app.stop()
                 elif action == 'console': app.answers.put(str(cmd['text']))
                 elif not app.busy:
                     if action == 'new':

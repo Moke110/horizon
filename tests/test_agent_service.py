@@ -3,6 +3,35 @@ import pytest
 from hostrun.agent_service import AgentService
 
 
+def test_resume_rejects_turn_whose_task_history_has_advanced(tmp_path):
+    from hostrun.agent_service import CommandError
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'p','title':'p'}, token='s')
+    service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'old'}, token='s')
+    turn = service.commit_turn({'schema_version':1,'operation_id':'fail','turn_id':'t','expected_version':1,'status':'recovery_required'}, token='s')
+    service.append_message({'schema_version':1,'operation_id':'later','task_id':task['task_id'],'expected_version':2,'role':'You','text':'later history'}, token='s')
+    with pytest.raises(CommandError, match='cannot resume'):
+        service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':turn['version'],'action':'resume'}, token='s')
+    assert service.list_turns(token='s')[0]['status'] == 'recovery_required'
+
+
+@pytest.mark.parametrize('status', ['paused', 'recovery_required', 'failed'])
+def test_unfinished_turn_requires_continue_or_abandon_before_new_input(tmp_path, status):
+    from hostrun.agent_service import CommandError
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'p','title':'p'}, token='s')
+    turn = service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'original'}, token='s')
+    if status == 'paused':
+        turn = service.transition_turn({'schema_version':1,'operation_id':'pause','turn_id':'t','expected_version':1,'action':'pause'}, token='s')
+    else:
+        turn = service.commit_turn({'schema_version':1,'operation_id':'fail','turn_id':'t','expected_version':1,'status':status}, token='s')
+    with pytest.raises(CommandError, match='Continue or abandon'):
+        service.begin_turn({'schema_version':1,'operation_id':'new','task_id':task['task_id'],'expected_version':2,'text':'later'}, token='s')
+    resumed = service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':turn['version'],'action':'resume'}, token='s')
+    service.commit_turn({'schema_version':1,'operation_id':'complete','turn_id':'t','expected_version':resumed['version'],'status':'completed','result':'original answer'}, token='s')
+    assert service.list_tasks(token='s')[0]['messages'] == [{'role':'You','text':'original'},{'role':'Horizon','text':'original answer'}]
+
+
 def test_desktop_home_is_stable_and_independent_of_install(monkeypatch, tmp_path):
     from hostrun.agent_service import desktop_home
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))

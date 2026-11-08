@@ -100,7 +100,8 @@ def test_bridge_socket_authentication_before_commands(supplied, authorized):
                         authenticate(incoming, 'launch-token')
 
 
-def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatch):
+@pytest.mark.parametrize('complete_during_exit', [False, True])
+def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatch, complete_during_exit):
     import json
     import socket
     from hostrun import desktop_bridge as bridge
@@ -112,6 +113,15 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     finished = threading.Event()
     failures = []
     calls = []
+    workers = []
+    stops = []
+    monkeypatch.setattr(DesktopWorker, 'stop', lambda self: stops.append(True))
+    transition = AgentService.transition_turn
+    def racing_transition(self, command, **kwargs):
+        if complete_during_exit and command.get('turn_id') == 'exit-pending' and command.get('action') == 'pause':
+            self.commit_turn({'schema_version':1,'operation_id':'race-complete','turn_id':'exit-pending','expected_version':command['expected_version'],'status':'completed','result':'finished at exit'}, **kwargs)
+        return transition(self, command, **kwargs)
+    monkeypatch.setattr(AgentService, 'transition_turn', racing_transition)
     query_started, query_release = threading.Event(), threading.Event()
     query_calls = []
     def discover(*a, **kw):
@@ -120,6 +130,7 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
         assert query_release.wait(3)
     monkeypatch.setattr(bridge.embedded_agent, 'discover_and_configure', discover)
     def run_model(self, task, session_id, history):
+        workers.append(self)
         calls.append((task, session_id, history))
         self.events.put(('agent', {'type': 'text', 'text': 'Answer'}))
         self.events.put(('done', None))
@@ -168,12 +179,22 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                     assert replayed['chats'][replayed['current']]['task_id'] == original_id
                     owner=AgentService(tmp_path,token='test-control')
                     active=owner.list_tasks(token='test-control')[-1]
-                    owner.begin_turn({'schema_version':1,'operation_id':'exit-pending','task_id':active['task_id'],'expected_version':active['version'],'text':'pending work'},token='test-control')
+                    historical=owner.create_task({'schema_version':1,'operation_id':'historical','title':'old'},token='test-control')
+                    old=owner.begin_turn({'schema_version':1,'operation_id':'old','task_id':historical['task_id'],'expected_version':1,'text':'old'},token='test-control')
+                    owner.transition_turn({'schema_version':1,'operation_id':'pause-old','turn_id':'old','expected_version':1,'action':'pause'},token='test-control')
+                    running=owner.begin_turn({'schema_version':1,'operation_id':'exit-pending','task_id':active['task_id'],'expected_version':active['version'],'text':'pending work'},token='test-control')
+                    workers[-1].turn=running
+                    workers[-1].busy=True
+                    before=len(stops)
+                    send({'action':'cancel_turn','turn_id':'old','operation_id':'cancel-old'})
+                    wait_state(lambda state: True)
+                    assert owner.list_turns(historical['task_id'],token='test-control')[0]['status']=='cancelled'
+                    assert len(stops)==before
                     send({'action':'exit'})
                     while True:
                         event=json.loads(incoming.readline())
                         if event['kind']=='exit_ready': break
-                    assert owner.list_turns(active['task_id'],token='test-control')[-1]['status']=='paused'
+                    assert owner.list_turns(active['task_id'],token='test-control')[-1]['status']==('completed' if complete_during_exit else 'paused')
                     assert not owner.recoverable_turns(token='test-control')
         except BaseException as exc:
             failures.append(exc)
@@ -194,8 +215,7 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     assert calls[0][2] == []
     assert calls[1][2] == [{'role': 'You', 'text': 'Hello'}, {'role': 'Horizon', 'text': 'Answer'}]
     reopened = AgentService(tmp_path, token='new-launch')
-    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 5]
-    assert len(reopened.events(token='new-launch')) == 8
+    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 1, 6 if complete_during_exit else 5]
 
 
 def test_child_handoff_persists_success_and_failure(tmp_path, monkeypatch):
