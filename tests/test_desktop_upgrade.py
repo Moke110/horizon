@@ -143,3 +143,22 @@ def test_schema_failure_restores_real_sqlite_without_open_backup_handles(tmp_pat
     result = upgrade(code, home, from_source=package['artifact']['path'], sha256=package['artifact']['sha256'])
     assert result['recovery'] == 'restored'
     assert original(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
+
+
+def test_long_nested_session_survives_failed_upgrade(tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+    from test_dist_install import _build
+    from hostrun import agent_service
+    package = _build(tmp_path)
+    home = tmp_path / 'home'
+    physical = Path('\\\\?\\' + str(home)) if os.name == 'nt' else home
+    session = physical / 'agent' / ('s' * 70) / ('t' * 70) / 'context.jsonl'
+    session.parent.mkdir(parents=True)
+    session.write_bytes(b'long session bytes')
+    def fail(*args, **kwargs):
+        raise RuntimeError('schema failure')
+    monkeypatch.setattr(agent_service, 'AgentService', fail)
+    result = upgrade(tmp_path / 'code', home, from_source=package['artifact']['path'], sha256=package['artifact']['sha256'])
+    assert result['recovery'] == 'restored'
+    assert session.read_bytes() == b'long session bytes'

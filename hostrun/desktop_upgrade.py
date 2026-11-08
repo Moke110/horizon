@@ -12,6 +12,14 @@ from common import file_lock
 from hostrun import dist
 
 
+def _filesystem_path(path):
+    path = Path(path).resolve()
+    if os.name != 'nt' or str(path).startswith('\\\\?\\'):
+        return path
+    value = str(path)
+    return Path('\\\\?\\UNC\\' + value[2:] if value.startswith('\\\\') else '\\\\?\\' + value)
+
+
 def _restore(code, home, backup, code_backup, had_code):
     if not backup.is_dir() or (had_code and not code_backup.is_dir()):
         raise ValueError('Upgrade recovery backup is missing; original data has not been touched')
@@ -39,13 +47,13 @@ def _restore(code, home, backup, code_backup, had_code):
 
 
 def upgrade(code, home, *, from_source, sha256):
-    code, home = Path(code).resolve(), Path(home).resolve()
+    code, home = _filesystem_path(code), _filesystem_path(home)
     if home.is_relative_to(code) or code.is_relative_to(home):
         return {'status': 'blocked', 'reason': 'overlapping_data_and_code'}
     with file_lock(home / 'desktop.lock', blocking=False) as acquired:
         if not acquired:
             return {'status': 'blocked', 'reason': 'desktop_running'}
-        if Path(sys.executable).resolve().is_relative_to(code):
+        if _filesystem_path(sys.executable).is_relative_to(code):
             return {'status': 'blocked', 'reason': 'upgrader_inside_target'}
         pending = home / 'upgrade.pending.json'
         if pending.exists():
@@ -53,7 +61,7 @@ def upgrade(code, home, *, from_source, sha256):
             if not isinstance(record, dict) or type(record.get('schema_version')) is not int or record['schema_version'] != 1:
                 return {'status': 'blocked', 'reason': 'unsupported_recovery_schema'}
             identity = str(uuid.UUID(record['identity']))
-            if record['code'] != str(code):
+            if _filesystem_path(record['code']) != code:
                 return {'status': 'blocked', 'reason': 'different_pending_target'}
             _restore(code, home, home / 'upgrade-backups' / identity,
                      code.parent / (code.name + '.pre-upgrade-' + identity), record['had_code'])
