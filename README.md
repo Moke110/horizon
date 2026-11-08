@@ -168,3 +168,7 @@ On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horiz
 ### Desktop development
 
 Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.horizon/desktop-error.log`; Electron logs are in `<data-home>/desktop-electron.log`.
+
+Desktop conversations retain their model context when you continue a completed task or reopen Horizon. Start a new conversation for separate context. Configure your model in Horizon settings; credentials remain in the backend data home.
+
+Model setup: choose a provider and enter its API key. Horizon queries the provider for models visible to that credential; choose a model in the lower-right conversation menu. Refresh reloads the list without re-entering the key. An advertised model may still require account permissions or quota. Custom OpenAI-compatible services additionally require their API base URL.

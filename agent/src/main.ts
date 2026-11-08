@@ -1,4 +1,4 @@
-import { readFile, mkdir, writeFile, realpath, stat } from "node:fs/promises";
+import { readFile, mkdir, writeFile, realpath, stat, readdir } from "node:fs/promises";
 import { resolve, relative, dirname, join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -16,7 +16,7 @@ const emit = (event: object) => {
 };
 const { values } = parseArgs({ options: {
   home: { type: "string" }, kind: { type: "string", default: "agent" },
-  task: { type: "string" }, check: { type: "boolean" },
+  task: { type: "string" }, "session-id": { type: "string" }, "history-file": { type: "string" }, check: { type: "boolean" },
 } });
 
 async function main() {
@@ -124,14 +124,57 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         });
       } }),
   ];
+  let sessionManager = SessionManager.inMemory();
+  const sessionId = values["session-id"];
+  if (sessionId) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) throw new Error("Invalid session identity");
+    const sessionDir = join(agentDir, "sessions", sessionId);
+    await mkdir(sessionDir, { recursive: true });
+    const files = (await readdir(sessionDir)).filter(name => name.endsWith(".jsonl"));
+    if (files.length > 1) throw new Error("Ambiguous persisted session");
+    sessionManager = files.length ? SessionManager.open(join(sessionDir, files[0]), sessionDir, code)
+      : SessionManager.create(code, sessionDir, { id: sessionId });
+    if (sessionManager.getSessionId() !== sessionId) throw new Error("Persisted session identity mismatch");
+  }
+  // Sanitize at the public persistence boundary, before any message is flushed.
+  const appendMessage = sessionManager.appendMessage.bind(sessionManager);
+  sessionManager.appendMessage = message => appendMessage(JSON.parse(JSON.stringify(message).split(JSON.stringify(secret).slice(1, -1)).join("[redacted]")));
+  if (values["history-file"] && sessionManager.getEntries().length === 0) {
+    const history: unknown = JSON.parse(await readFile(values["history-file"], "utf8"));
+    if (!Array.isArray(history)) throw new Error("Invalid conversation history");
+    for (const message of history) {
+      if (!message || !["You", "Horizon"].includes(message.role) || typeof message.text !== "string") throw new Error("Invalid conversation history");
+      if (message.role === "You") sessionManager.appendMessage({ role: "user", content: message.text, timestamp: Date.now() });
+      else sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: message.text }],
+        api: "openai-completions", provider: model.provider, model: model.id,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
+    }
+  }
   const { session } = await createAgentSession({ cwd: code, agentDir, modelRuntime: models, model,
-    settingsManager: settings, resourceLoader: loader, sessionManager: SessionManager.inMemory(),
+    settingsManager: settings, resourceLoader: loader, sessionManager,
     tools: judgement ? [] : reading ? ["read_file"] : tools.map(t => t.name),
     customTools: judgement ? [] : reading ? tools.filter(t => t.name === "read_file") : tools });
   emit({ type: "session", sessionId: session.sessionId });
   let failure = "";
+  let pendingText = "";
+  function streamText(delta: string, flush = false) {
+    pendingText += delta;
+    // Replace complete matches before releasing text; retain any possible prefix
+    // so a credential split across provider chunks never reaches the renderer.
+    pendingText = pendingText.split(secret).join("[redacted]");
+    let keep = 0;
+    if (!flush) {
+      for (let length = 1; length < secret.length && length <= pendingText.length; length++) {
+        if (pendingText.endsWith(secret.slice(0, length))) keep = length;
+      }
+    }
+    const ready = pendingText.slice(0, pendingText.length - keep);
+    pendingText = pendingText.slice(pendingText.length - keep);
+    if (ready) emit({ type: "text", text: ready });
+  }
   session.subscribe(event => {
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") emit({ type: "text", text: event.assistantMessageEvent.delta });
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") streamText(event.assistantMessageEvent.delta);
+    if (event.type === "message_end" && event.message.role === "assistant") streamText("", true);
     if (event.type === "tool_execution_start") emit({ type: "tool_call", name: event.toolName });
     if (event.type === "tool_execution_end") emit({ type: "tool_result", name: event.toolName, isError: event.isError });
     if (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason)) failure = event.message.errorMessage || event.message.stopReason;
@@ -141,6 +184,6 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     if (failure) throw new Error(failure);
     emit({ type: "final", text: session.getLastAssistantText() || "" });
     emit({ type: "status", phase: "turn_end", reason: "completed" });
-  } finally { session.dispose(); }
+  } finally { streamText("", true); session.dispose(); }
 }
 main().catch(error => { emit({ type: "error", message: String(error.message || error) }); process.exitCode = 1; });

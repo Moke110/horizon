@@ -102,3 +102,25 @@ def test_malformed_commands_return_stable_errors_without_writes(tmp_path, method
     assert error.value.code == code
     assert service.list_tasks(token='secret') == []
     assert service.events(token='secret') == []
+
+def test_task_has_stable_distinct_session_identity(tmp_path):
+    service = AgentService(tmp_path, token='secret')
+    first = service.create_task({'schema_version': 1, 'operation_id': 'a', 'title': 'A'}, token='secret')
+    second = service.create_task({'schema_version': 1, 'operation_id': 'b', 'title': 'B'}, token='secret')
+    assert first['session_id'] != second['session_id']
+    reopened = AgentService(tmp_path, token='next')
+    assert {t['task_id']: t['session_id'] for t in reopened.list_tasks(token='next')} == {
+        first['task_id']: first['session_id'], second['task_id']: second['session_id']}
+
+def test_existing_tasks_gain_session_identity_without_losing_messages(tmp_path):
+    import json
+    import sqlite3
+    service = AgentService(tmp_path, token='secret')
+    task = service.create_task({'schema_version': 1, 'operation_id': 'old', 'title': 'Old'}, token='secret')
+    task.pop('session_id')
+    with sqlite3.connect(tmp_path / 'horizon.sqlite3') as db:
+        db.execute('UPDATE agent_tasks SET result=?', (json.dumps(task),))
+    first = AgentService(tmp_path, token='new').list_tasks(token='new')[0]
+    second = AgentService(tmp_path, token='again').list_tasks(token='again')[0]
+    assert first['session_id'] == second['session_id']
+    assert first['messages'] == task['messages']

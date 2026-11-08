@@ -112,8 +112,15 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     finished = threading.Event()
     failures = []
     calls = []
-    def run_model(self, task):
-        calls.append(task)
+    query_started, query_release = threading.Event(), threading.Event()
+    query_calls = []
+    def discover(*a, **kw):
+        query_calls.append(kw)
+        query_started.set()
+        assert query_release.wait(3)
+    monkeypatch.setattr(bridge.embedded_agent, 'discover_and_configure', discover)
+    def run_model(self, task, session_id, history):
+        calls.append((task, session_id, history))
         self.events.put(('agent', {'type': 'text', 'text': 'Answer'}))
         self.events.put(('done', None))
     monkeypatch.setattr(DesktopWorker, 'run_agent', run_model)
@@ -128,8 +135,15 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                             event = json.loads(incoming.readline())
                             if event['kind'] == 'state' and predicate(event['data']): return event['data']
                     wait_state(lambda state: True)
+                    send({'action': 'configure', 'provider': 'test', 'key': 'secret'})
+                    assert query_started.wait(2)
+                    send({'action': 'configure', 'provider': 'test', 'key': 'second'})
                     send({'action': 'new', 'operation_id': 'create'})
-                    wait_state(lambda state: bool(state['chats']))
+                    during = wait_state(lambda state: bool(state['chats']))
+                    assert during['configuring']
+                    assert len(query_calls) == 1
+                    query_release.set()
+                    wait_state(lambda state: not state['configuring'])
                     for invalid in ({'action': 'send', 'text': 'Rejected'}, {'action': 'send', 'operation_id': 'stale', 'expected_version': 0, 'text': 'Rejected'}):
                         send(invalid)
                         refreshed = wait_state(lambda state: True)
@@ -142,6 +156,8 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                     wait_state(lambda state: not state['busy'] and len(state['chats'][0]['messages']) == 2)
                     send(command)
                     wait_state(lambda state: not state['busy'])
+                    send({'action': 'send', 'operation_id': 'followup', 'expected_version': 3, 'text': 'Continue'})
+                    wait_state(lambda state: not state['busy'] and len(state['chats'][0]['messages']) == 4)
                     original_id = refreshed['chats'][0]['task_id']
                     send({'action': 'new', 'operation_id': 'create-second'})
                     second = wait_state(lambda state: len(state['chats']) == 2)
@@ -162,7 +178,12 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     monkeypatch.setattr(bridge.desktop_processes, 'GuiProcess', Gui)
     bridge.serve({'code': str(tmp_path), 'runtime': str(tmp_path)})
     assert not failures
-    assert len(calls) == 1
+    assert len(calls) == 2
+    assert calls[0][0] == 'Hello'
+    assert calls[0][1] == calls[1][1]
+    assert calls[1][0] == 'Continue'
+    assert calls[0][2] == []
+    assert calls[1][2] == [{'role': 'You', 'text': 'Hello'}, {'role': 'Horizon', 'text': 'Answer'}]
     reopened = AgentService(tmp_path, token='new-launch')
-    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 2]
-    assert len(reopened.events(token='new-launch')) == 4
+    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 4]
+    assert len(reopened.events(token='new-launch')) == 6

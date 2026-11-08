@@ -11,11 +11,10 @@ Initialization creates an empty store and does not import historical workspaces.
 
 Commands use `schema_version: 1` and a nonempty `operation_id`.
 `create_task` takes a nonempty `title` and returns a generated `task_id` (also
-`entity_id`), `version: 1`, title and messages. Creation has no existing entity
+`entity_id`), a stable `session_id`, `version: 1`, title and messages. Creation has no existing entity
 version to compare. `append_message` takes `task_id`, integer `expected_version`,
 role (`You` or `Horizon`) and text; it increments the task version exactly once.
-Session and snapshot identifiers are reserved for slices that introduce those
-entities; this slice does not invent session or snapshot identities.
+Each task has one independent Pi session identity, preserved across turns and application restarts. Existing tasks receive a session identity without changing their messages or version. Snapshots remain reserved for later slices.
 
 Every public operation requires the current launch token. Queries `list_tasks`
 and `events` expose committed state only. Task responses carry schema version,
@@ -44,3 +43,11 @@ home paths and archive paths are read-only through that tool, including future
 business snapshots. Authenticated external send commands must supply their own
 operation ID and expected version. Rejected commands refresh state and preserve
 the submitted text for correction and retry.
+
+Pi conversation JSONL is stored privately below the data home agent directory. The bridge sends only the new user message and the task session identity. JSONL restores model context; it never establishes a committed business operation. Model configuration belongs to the same stable data home and is not imported from legacy workspaces.
+
+For an existing task without a Pi transcript, the desktop supplies committed prior messages once to initialize model context. Subsequent turns restore the Pi transcript without replaying that bootstrap. The temporary bootstrap file stays under the private agent directory and is removed when the worker exits.
+
+### Model discovery
+
+The authenticated desktop bridge queries provider model catalogs in the backend. Renderer state contains provider choices, model identifiers and the selected model, never credentials. Configuration is replaced only after successful discovery. Selection must belong to the saved catalog. Refresh uses the saved credential without returning it. Catalog visibility is not proof of inference permission or available quota.
