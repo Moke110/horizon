@@ -1,8 +1,16 @@
 # 内置运行时与启动包装器
 
+完整桌面发行构建要求预备运行时含 `components.json`：构建准备命令
+`python -m hostrun.runtime_inventory --runtime <runtime> --node-license scripts/licenses/node-24.16.0.txt`
+实际执行包内 Python/Node 的版本查询，校验固定版本并记录二进制摘要和许可文件。
+构建器再次核对摘要、Python/Node/Pi/Electron 固定版本及 Electron 二进制版本文件，
+将随包 npm/Python 依赖的版本、声明许可及许可文件路径汇总到 `runtime-components.json`。
+该清单与许可文件受普通发行 manifest 摘要覆盖；缺少声明时明确记为未声明，
+不推断许可或作法律保证。部分无桌面测试包不声称包含完整运行时清单。
+
 实现契约：描述发行包里的 `runtime/` 目录、`bin/horizon.cmd` 启动包装器，以及清单如何覆盖它们（spec #92，ticket #95）。开发计划与验收以 GitHub Issues 为准；发行包清单与安装锁的机器可读契约见 `contracts/distribution-manifest.schema.json` 与 `contracts/install-lock.schema.json`。
 
-所有 JSON 顶层带 `schema_version: 1`，时间统一 ISO-8601（见 `contracts/README.md`）。本契约不新增 JSON 文件：运行时与包装器只是普通包文件，由既有清单逐文件摘要覆盖。
+所有 JSON 顶层带 `schema_version: 1`，时间统一 ISO-8601（见 `contracts/README.md`）。运行时、包装器和运行时组件清单都是普通包文件，由发行清单逐文件摘要覆盖；升级恢复日志与版本标记保存在数据 home。
 
 ## 1. 目标
 
@@ -39,7 +47,7 @@
 
 升级/回滚由已安装的包装器驱动，因此执行升级的那个内置解释器正持有 `python.exe`、`python3XX.dll` 与已加载的 `*.pyd`，Windows 会锁住这些文件。安装/回滚在写每个文件前先比较字节：**内容相同的文件直接跳过写入**。固定版本的运行时在版本之间字节一致，所以就地升级不会重写正在运行的解释器；只有 `manifest.json`、代码文件等不同内容才写入。
 
-限制：若未来的发行包更换了内置运行时版本（运行时字节不同），就地升级会因锁定文件而失败并在响应里说明；此时需要先关闭控制台/用包外的解释器执行升级。该限制写入验收记录。
+桌面安装程序使用新包在临时目录中的内置解释器执行 `hostrun.desktop_upgrade`，不使用目标目录中的解释器替换自身。升级持有稳定数据 home 的 `desktop.lock`；用户必须先退出桌面。数据 home 与代码目录不得相互嵌套。升级先备份原安装树和数据 home（SQLite 使用 backup API），安装校验成功后执行公开 AgentService 初始化，最后以 fsync 和 replace 提交 `version.json`。schema 初始化或版本提交失败时恢复原数据与原代码树，新安装失败则隔离失败代码目录。备份保留在 home/upgrade-backups 和安装目录相邻的 pre-upgrade 目录，不清空每阶段数据。
 
 ## 3. 启动包装器 `<package>/bin/horizon.cmd`
 

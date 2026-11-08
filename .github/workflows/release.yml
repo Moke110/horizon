@@ -148,6 +148,8 @@ jobs:
           npm --prefix agent prune --omit=dev --ignore-scripts
           if ($LASTEXITCODE -ne 0) { throw "Pi production dependency preparation failed" }
           Copy-Item -LiteralPath (Get-Command node).Source -Destination (Join-Path $env:RUNTIME_DIR "node.exe")
+          python -m hostrun.runtime_inventory --runtime $env:RUNTIME_DIR --node-license scripts/licenses/node-24.16.0.txt
+          if ($LASTEXITCODE -ne 0) { throw "Bundled runtime version/license inventory failed" }
 
       - name: Build twice and prove the artifact digest is reproducible
         shell: pwsh

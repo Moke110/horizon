@@ -61,6 +61,8 @@ def serve(resolved):
     service = AgentService(desktop_home(), token=token)
     app.home = service.home
     app.service, app.service_token = service, token
+    from hostrun.context_versions import query_versions
+    app.version_provider = query_versions
     chats = service.list_tasks(token=token)
     current, response = 0, ''
     lock = threading.Lock()
@@ -88,7 +90,16 @@ def serve(resolved):
     def state():
         facts = embedded_agent.runtime(app.home, code=code)
         emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
-                       'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
+                       'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
+    def start_turn(turn):
+        nonlocal current, response
+        chats[:] = service.list_tasks(token=token)
+        current = next(i for i,t in enumerate(chats) if t['task_id'] == turn['task_id'])
+        chat = chats[current]
+        response = ''; app.busy = True; app.cancelled.clear()
+        app.task_id, app.input_version, app.turn = turn['task_id'], turn['input_version'], turn
+        threading.Thread(target=app.run_agent, args=(turn['text'],turn['session_id'],chat['messages'][:-1]),daemon=True).start()
+
     def discover_models(command):
         try:
             if command['action'] == 'configure':
@@ -131,14 +142,9 @@ def serve(resolved):
                         text = str(cmd['text']).strip()
                         if not text: continue
                         if not chats: create()
-                        if not message('You', text, cmd.get('operation_id'), cmd.get('expected_version')):
-                            state()
-                            continue
-                        chat = chats[current]
-                        response = ''; app.busy = True; app.cancelled.clear()
-                        app.task_id, app.input_version = chat['task_id'], chat['version']
-                        task = text
-                        threading.Thread(target=app.run_agent, args=(task, chat['session_id'], chat['messages'][:-1]), daemon=True).start()
+                        turn = service.begin_turn({'schema_version':1,'operation_id':cmd['operation_id'],'task_id':chats[current]['task_id'],'expected_version':cmd['expected_version'],'text':text},token=token)
+                        latest = next(t for t in service.list_turns(turn['task_id'],token=token) if t['turn_id'] == turn['turn_id'])
+                        if latest['status'] == 'running': start_turn(latest)
                 state()
             except CommandError as exc:
                 chats[:] = service.list_tasks(token=token)
@@ -154,6 +160,9 @@ def serve(resolved):
     exit_code = 0
     try:
         while child.poll() is None:
+            if not app.busy and ui_ready.is_set():
+                pending_turns = service.recoverable_turns(token=token)
+                if pending_turns: start_turn(pending_turns[0]); state()
             if activation.exists():
                 activation.unlink(missing_ok=True); emit('activate')
             try: kind, data = app.events.get(timeout=.1)
@@ -164,7 +173,12 @@ def serve(resolved):
                 if data['type'] == 'text': response += data['text']
                 elif data['type'] == 'error': response += '\n错误：' + data['message']
             elif kind == 'done':
-                message('Horizon', response)
+                if not data or not data.get('durable'):
+                    if getattr(app, 'turn', None):
+                        turn = app.turn
+                        service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(turn['task_id']),turn['turn_id']+':complete')),'turn_id':turn['turn_id'],'expected_version':turn['version'],'status':'completed','result':response,'error':''},token=token)
+                    else: message('Horizon', response)
+                chats[:] = service.list_tasks(token=token)
                 app.busy = False; state()
             emit(kind, data)
         exit_code = child.returncode

@@ -22,6 +22,8 @@ def main():
         if not acquired:
             (home / 'desktop.activate').touch()
             return
+        if (home / 'upgrade.pending.json').exists():
+            raise RuntimeError('An interrupted upgrade needs recovery. Run the Horizon installer again before opening the desktop.')
         serve(resolved)
 
 if __name__ == '__main__':

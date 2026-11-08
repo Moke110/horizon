@@ -203,3 +203,57 @@ def test_child_role_exposes_only_bounded_tools(tmp_path):
         assert len(list((tmp_path/'agent/pi/sessions').rglob('*.jsonl'))) == 2
     finally:
         server.shutdown();server.server_close();worker.join()
+
+
+@pytest.mark.skipif(not shutil.which('node') or not (ROOT/'agent/dist/main.js').exists(), reason='build Pi first')
+def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_context(tmp_path):
+    import os,sys,uuid
+    requests=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+            if len(requests)%3 == 1:
+                calls=[{'index':i,'id':f'call_{i}','type':'function','function':{'name':'delegate','arguments':json.dumps({'role':'development_reader','input':'same bounded input'})}} for i in range(2)]
+                chunks=[({'role':'assistant','tool_calls':calls},None),({},'tool_calls')]
+            elif len(requests)%3 == 2:
+                chunks=[({'role':'assistant','tool_calls':[{'index':0,'id':'call_0','type':'function','function':{'name':'delegate','arguments':json.dumps({'role':'development_reader','input':'different next response input'})}}]},None),({},'tool_calls')]
+            else: chunks=[({'role':'assistant','content':'Both child artifacts received'},None),({},'stop')]
+            for delta,finish in chunks:
+                event={'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':delta,'finish_reason':finish}]}
+                self.wfile.write(('data: '+json.dumps(event)+'\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='recovery-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        session_id=str(uuid.uuid4()); identities=[]
+        args=embedded_agent.argv(tmp_path,'Recovery unique question',kind='agent',code=ROOT,session_id=session_id)+['--turn-id','stable-turn']
+        for attempt in range(3):
+            proc=subprocess.Popen(args,cwd=ROOT,env={**os.environ,'HORIZON_PYTHON':sys.executable},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+            timer=threading.Timer(35,proc.kill);timer.start();ids=[]
+            try:
+                for line in proc.stdout:
+                    event=json.loads(line)
+                    if event['type']=='delegate_request':
+                        ids.append(event['requestId'])
+                        if attempt == 0:
+                            proc.kill(); break  # owner committed, reply not yet persisted by Pi
+                        proc.stdin.write(json.dumps({'requestId':event['requestId'],'result':{'status':'succeeded','artifact_ref':'agent-child:'+str(len(ids)),'result':'read result'}})+'\n');proc.stdin.flush()
+                code=proc.wait(timeout=5)
+                if attempt: assert code==0,proc.stderr.read()
+            finally:
+                timer.cancel()
+                if proc.poll() is None:proc.kill();proc.wait()
+            identities.append(ids)
+        assert len(identities[0]) == 1
+        assert len(identities[1]) == 3 and len(set(identities[1])) == 3
+        assert identities[1][0] == identities[0][0]
+        assert identities[2] == []  # completed assistant result is handed to owner without planning
+        assert len(requests) == 3
+        assert json.dumps(requests[0]['messages']).count('Recovery unique question') == 1
+        assert 'same bounded input' in json.dumps(requests[1]['messages'])
+        assert any(m.get('role') == 'tool' for m in requests[1]['messages'])
+    finally:
+        server.shutdown();server.server_close();thread.join()

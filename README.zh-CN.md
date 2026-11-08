@@ -132,6 +132,8 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 
 ### 桌面界面开发
 
+运行新版安装程序前请先退出 Horizon。安装程序使用自身内置运行时，备份现有数据目录，并在原位置保留会话；桌面仍在运行时会拒绝替换。
+
 在 `desktop/` 运行 `npm ci`、`npm run typecheck` 和 `npm run build`，然后打开快捷方式，或运行 `python -m hostrun.desktop --code <code> --archive <archive>`。Python 管理带随机令牌认证的本机回环通信和 Windows 进程作业。启动错误记录于 `.horizon/desktop-error.log`，Electron 日志位于 `<数据目录>/desktop-electron.log`。
 
 桌面对话在任务完成后继续提问或重新打开 Horizon 时保留模型上下文。新建会话使用独立上下文。请在 Horizon 设置中配置模型，凭据保存在后端数据目录。
@@ -139,3 +141,5 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 模型配置：选择提供商并输入 API Key，Horizon 会查询该凭据可见的模型，在对话框右下角选择使用的模型。刷新列表无需重新输入密钥。列表中的模型仍可能受账户权限或额度限制；自定义 OpenAI 兼容服务还需填写 API 地址。
 
 内置 Agent 可以将有明确范围的开发工具任务交给独立子会话。轨迹页展示角色、父子会话、输入版本、稳定产物引用及成功或失败结果。这些初期只读开发角色不是 Voyager、Editor 或 Keeper。
+
+桌面对话在进程意外退出后恢复未完成轮次，并复用已提交的子任务结果。当前开发阶段的可恢复轮次只开放只读和受限子任务工具，不自动重放旧版有写入作用的工作流。轨迹页分别显示执行、资料等待、知识提议和投递状态。
