@@ -163,11 +163,11 @@ Double-click the `Horizon.lnk` shortcut for everyday startup. The extension star
 
 `Horizon.cmd` remains the CLI entry. Without arguments it also starts the GUI, but may briefly show a console. Chat with the embedded Agent in the center, switch conversations on the left, and configure the model using Settings. The desktop Console tab is inactive; use the standalone CLI Console for legacy commands. Enter sends; Shift+Enter inserts a newline. Stop cancels the active Agent. Conversations stay in `%LOCALAPPDATA%/Horizon/data/horizon.sqlite3`. Set `HORIZON_DATA_HOME` to an absolute path to choose another data directory; changing installation directories preserves the same data home. Existing workspaces are not imported.
 
-On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horizon/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the GUI stops its background workers within 10 seconds.
+On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horizon/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the window keeps the application running in the tray. Use Exit and pause to stop its workers.
 
 ### Desktop development
 
-Close Horizon before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
+Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
 
 Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.horizon/desktop-error.log`; Electron logs are in `<data-home>/desktop-electron.log`.
 
@@ -178,3 +178,9 @@ Model setup: choose a provider and enter its API key. Horizon queries the provid
 The built-in Agent can delegate bounded development-tool tasks to independent child sessions. The Trace tab shows their role, parent/child session identities, input version, stable result reference and success or failure. These initial read-only development roles are not Voyager, Editor or Keeper.
 
 Desktop conversations recover unfinished turns after an unexpected process exit. Committed child results are reused. This development stage exposes read-only and restricted child tools for recoverable turns; legacy mutating workflows are not automatically replayed. The Trace tab separates execution from material waiting, knowledge proposals and delivery.
+
+Closing the window keeps Horizon running in the tray. Choose Exit and pause to stop; paused tasks require Continue in Trace after reopening. Abandon cancels unfinished work while preserving completed results.
+
+Temporary model failures use bounded retries. Trace shows authentication, configuration, quota or other error categories and retains completed results. After correcting the problem, Continue retries unfinished work in the same task.
+
+Use **Export diagnostics** in the desktop header to create a local report folder. It contains bounded lifecycle/task/error metadata, versions and task-state summaries. It excludes API keys, configuration files, conversation and document text, databases and Pi transcripts; nothing is uploaded automatically. Reports are stored under the data home’s `diagnostics/reports/` directory. If the GUI cannot start, the installed runtime can export with `runtime/python.exe -m hostrun.diagnostics --code <installation> --output <report-directory>`.

@@ -3,6 +3,35 @@ import pytest
 from hostrun.agent_service import AgentService
 
 
+def test_resume_rejects_turn_whose_task_history_has_advanced(tmp_path):
+    from hostrun.agent_service import CommandError
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'p','title':'p'}, token='s')
+    service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'old'}, token='s')
+    turn = service.commit_turn({'schema_version':1,'operation_id':'fail','turn_id':'t','expected_version':1,'status':'recovery_required'}, token='s')
+    service.append_message({'schema_version':1,'operation_id':'later','task_id':task['task_id'],'expected_version':2,'role':'You','text':'later history'}, token='s')
+    with pytest.raises(CommandError, match='cannot resume'):
+        service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':turn['version'],'action':'resume'}, token='s')
+    assert service.list_turns(token='s')[0]['status'] == 'recovery_required'
+
+
+@pytest.mark.parametrize('status', ['paused', 'recovery_required', 'failed'])
+def test_unfinished_turn_requires_continue_or_abandon_before_new_input(tmp_path, status):
+    from hostrun.agent_service import CommandError
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'p','title':'p'}, token='s')
+    turn = service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'original'}, token='s')
+    if status == 'paused':
+        turn = service.transition_turn({'schema_version':1,'operation_id':'pause','turn_id':'t','expected_version':1,'action':'pause'}, token='s')
+    else:
+        turn = service.commit_turn({'schema_version':1,'operation_id':'fail','turn_id':'t','expected_version':1,'status':status}, token='s')
+    with pytest.raises(CommandError, match='Continue or abandon'):
+        service.begin_turn({'schema_version':1,'operation_id':'new','task_id':task['task_id'],'expected_version':2,'text':'later'}, token='s')
+    resumed = service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':turn['version'],'action':'resume'}, token='s')
+    service.commit_turn({'schema_version':1,'operation_id':'complete','turn_id':'t','expected_version':resumed['version'],'status':'completed','result':'original answer'}, token='s')
+    assert service.list_tasks(token='s')[0]['messages'] == [{'role':'You','text':'original'},{'role':'Horizon','text':'original answer'}]
+
+
 def test_desktop_home_is_stable_and_independent_of_install(monkeypatch, tmp_path):
     from hostrun.agent_service import desktop_home
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
@@ -233,3 +262,38 @@ def test_turn_dto_and_unfinished_child_snapshot_refresh(tmp_path):
     result=service.commit_turn(commit,token='s')
     assert result['entity_id']=='turn' and result['operation_id']=='commit'
     assert service.commit_turn(commit,token='s')==result
+
+
+def test_pause_resume_cancel_persist_and_reject_late_results(tmp_path):
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    turn=service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'work'},token='s')
+    child=service.start_child({'schema_version':1,'operation_id':'c','task_id':task['task_id'],'input_version':2,'role':'development_reader','input_text':'read'},token='s')
+    paused=service.transition_turn({'schema_version':1,'operation_id':'pause','turn_id':'t','expected_version':1,'action':'pause'},token='s')
+    assert not AgentService(tmp_path,token='new').recoverable_turns(token='new')
+    with pytest.raises(ValueError): service.finish_child({'schema_version':1,'operation_id':'late','child_id':child['child_id'],'expected_version':1,'status':'succeeded','result':'late'},token='s')
+    resumed=service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':paused['version'],'action':'resume'},token='s')
+    assert service.recoverable_turns(token='s')[0]['status']=='running'
+    cancelled=service.transition_turn({'schema_version':1,'operation_id':'cancel','turn_id':'t','expected_version':resumed['version'],'action':'cancel'},token='s')
+    assert cancelled['status']=='cancelled'
+    assert service.list_children(task['task_id'],token='s')[0]['status']=='cancelled'
+    with pytest.raises(ValueError): service.commit_turn({'schema_version':1,'operation_id':'late-turn','turn_id':'t','expected_version':resumed['version'],'status':'completed','result':'late'},token='s')
+    assert len(service.list_tasks(token='s')[0]['messages'])==1
+
+
+def test_manual_resume_keeps_completed_child_and_retries_failed_child(tmp_path):
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    turn=service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'work'},token='s')
+    children=[]
+    for index,status in enumerate(('succeeded','failed')):
+        c=service.start_child({'schema_version':1,'operation_id':f'c{index}','task_id':task['task_id'],'input_version':2,'role':'development_reader','input_text':str(index)},token='s')
+        children.append(service.finish_child({'schema_version':1,'operation_id':f'f{index}','child_id':c['child_id'],'expected_version':1,'status':status,'result':'retained' if index==0 else ''},token='s'))
+    failed=service.commit_turn({'schema_version':1,'operation_id':'fail','turn_id':'t','expected_version':1,'status':'recovery_required','error':'quota','failure':{'category':'quota','retryable':False,'attempts':1,'message':'quota'}},token='s')
+    assert failed['failure']['category']=='quota'
+    resumed=service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':failed['version'],'action':'resume'},token='s')
+    latest=service.list_children(task['task_id'],token='s')
+    assert latest[0]==children[0]
+    assert latest[1]['child_id']==children[1]['child_id'] and latest[1]['status']=='running'
+    assert latest[1]['version']>children[1]['version']
+    assert resumed['turn_id']==turn['turn_id'] and len(service.list_tasks(token='s')[0]['messages'])==1

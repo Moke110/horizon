@@ -100,7 +100,8 @@ def test_bridge_socket_authentication_before_commands(supplied, authorized):
                         authenticate(incoming, 'launch-token')
 
 
-def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatch):
+@pytest.mark.parametrize('complete_during_exit', [False, True])
+def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatch, complete_during_exit):
     import json
     import socket
     from hostrun import desktop_bridge as bridge
@@ -108,10 +109,24 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     monkeypatch.setenv('HORIZON_DATA_HOME', str(tmp_path))
     monkeypatch.setattr(bridge.desktop_runtime, 'executable', lambda code: Path('electron'))
     monkeypatch.setattr(bridge.embedded_agent, 'runtime', lambda *a, **k: {'model': 'test', 'provider': 'test', 'configured': True})
-    monkeypatch.setattr(bridge.os, '_exit', lambda code: None)
+    def hard_exit(code):
+        events = [json.loads(line) for line in (tmp_path / 'diagnostics/events.jsonl').read_text(encoding='utf-8').splitlines()]
+        assert events[-1]['event'] == 'desktop_exit'
+        assert events[-1]['status'] == 'explicit_exit'
+        assert events[-1]['exit_code'] == code
+    monkeypatch.setattr(bridge.os, '_exit', hard_exit)
     finished = threading.Event()
     failures = []
     calls = []
+    workers = []
+    stops = []
+    monkeypatch.setattr(DesktopWorker, 'stop', lambda self: stops.append(True))
+    transition = AgentService.transition_turn
+    def racing_transition(self, command, **kwargs):
+        if complete_during_exit and command.get('turn_id') == 'exit-pending' and command.get('action') == 'pause':
+            self.commit_turn({'schema_version':1,'operation_id':'race-complete','turn_id':'exit-pending','expected_version':command['expected_version'],'status':'completed','result':'finished at exit'}, **kwargs)
+        return transition(self, command, **kwargs)
+    monkeypatch.setattr(AgentService, 'transition_turn', racing_transition)
     query_started, query_release = threading.Event(), threading.Event()
     query_calls = []
     def discover(*a, **kw):
@@ -120,6 +135,7 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
         assert query_release.wait(3)
     monkeypatch.setattr(bridge.embedded_agent, 'discover_and_configure', discover)
     def run_model(self, task, session_id, history):
+        workers.append(self)
         calls.append((task, session_id, history))
         self.events.put(('agent', {'type': 'text', 'text': 'Answer'}))
         self.events.put(('done', None))
@@ -135,6 +151,13 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                             event = json.loads(incoming.readline())
                             if event['kind'] == 'state' and predicate(event['data']): return event['data']
                     wait_state(lambda state: True)
+                    send({'action':'export_diagnostics'})
+                    while True:
+                        diagnostic_event=json.loads(incoming.readline())
+                        if diagnostic_event['kind']=='notice':
+                            assert '诊断报告已导出' in diagnostic_event['data']
+                            assert list((tmp_path/'diagnostics'/'reports').glob('*/summary.md'))
+                            break
                     send({'action': 'configure', 'provider': 'test', 'key': 'secret'})
                     assert query_started.wait(2)
                     send({'action': 'configure', 'provider': 'test', 'key': 'second'})
@@ -166,6 +189,25 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                     replayed = wait_state(lambda state: True)
                     assert len(replayed['chats']) == 2
                     assert replayed['chats'][replayed['current']]['task_id'] == original_id
+                    owner=AgentService(tmp_path,token='test-control')
+                    active=owner.list_tasks(token='test-control')[-1]
+                    historical=owner.create_task({'schema_version':1,'operation_id':'historical','title':'old'},token='test-control')
+                    old=owner.begin_turn({'schema_version':1,'operation_id':'old','task_id':historical['task_id'],'expected_version':1,'text':'old'},token='test-control')
+                    owner.transition_turn({'schema_version':1,'operation_id':'pause-old','turn_id':'old','expected_version':1,'action':'pause'},token='test-control')
+                    running=owner.begin_turn({'schema_version':1,'operation_id':'exit-pending','task_id':active['task_id'],'expected_version':active['version'],'text':'pending work'},token='test-control')
+                    workers[-1].turn=running
+                    workers[-1].busy=True
+                    before=len(stops)
+                    send({'action':'cancel_turn','turn_id':'old','operation_id':'cancel-old'})
+                    wait_state(lambda state: True)
+                    assert owner.list_turns(historical['task_id'],token='test-control')[0]['status']=='cancelled'
+                    assert len(stops)==before
+                    send({'action':'exit'})
+                    while True:
+                        event=json.loads(incoming.readline())
+                        if event['kind']=='exit_ready': break
+                    assert owner.list_turns(active['task_id'],token='test-control')[-1]['status']==('completed' if complete_during_exit else 'paused')
+                    assert not owner.recoverable_turns(token='test-control')
         except BaseException as exc:
             failures.append(exc)
         finally:
@@ -185,8 +227,7 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
     assert calls[0][2] == []
     assert calls[1][2] == [{'role': 'You', 'text': 'Hello'}, {'role': 'Horizon', 'text': 'Answer'}]
     reopened = AgentService(tmp_path, token='new-launch')
-    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 4]
-    assert len(reopened.events(token='new-launch')) == 6
+    assert sorted(len(task['messages']) for task in reopened.list_tasks(token='new-launch')) == [0, 1, 6 if complete_during_exit else 5]
 
 
 def test_child_handoff_persists_success_and_failure(tmp_path, monkeypatch):
@@ -284,3 +325,69 @@ def test_worker_always_reaps_process_when_turn_commit_fails(tmp_path, monkeypatc
     app.run_agent('task')
     assert process.stopped and process.waited and app.process is None
     assert any(kind=='done' for kind,data in list(app.events.queue))
+
+
+def test_model_failure_details_survive_restart_and_manual_continue(tmp_path, monkeypatch):
+    import uuid,json
+    from hostrun import desktop_worker as module
+    from hostrun.agent_service import AgentService
+    app=worker(tmp_path);app.service=AgentService(tmp_path,token='s');app.service_token='s'
+    task=app.service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    app.turn=app.service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'work'},token='s')
+    app.task_id=task['task_id'];app.input_version=2;app.version_provider=lambda:{}
+    monkeypatch.setattr(module.embedded_agent,'argv',lambda *a,**kw:['node'])
+    class Process:
+        def __init__(self,event,code): self.stdout=io.StringIO(json.dumps(event)+'\n');self.stderr=io.StringIO('');self.code=code
+        def wait(self,timeout=None):return self.code
+        def poll(self):return self.code
+    monkeypatch.setattr(module.subprocess,'Popen',lambda *a,**kw:Process({'type':'error','category':'authentication','retryable':False,'attempts':1,'message':'Check API key'},1))
+    app.run_agent('work',app.turn['session_id'])
+    reopened=AgentService(tmp_path,token='new')
+    failed=reopened.list_turns(token='new')[0]
+    assert failed['status']=='recovery_required' and failed['failure']['category']=='authentication'
+    assert len(reopened.list_tasks(token='new')[0]['messages'])==1
+    app.turn=app.service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':failed['version'],'action':'resume'},token='s')
+    monkeypatch.setattr(module.subprocess,'Popen',lambda *a,**kw:Process({'type':'final','text':'Recovered'},0))
+    app.run_agent('work',app.turn['session_id'])
+    assert reopened.list_turns(token='new')[0]['status']=='completed'
+    assert len(reopened.list_tasks(token='new')[0]['messages'])==2
+
+
+def test_manual_continue_replays_successful_child_and_retries_failed_child(tmp_path, monkeypatch):
+    import json
+    from hostrun import desktop_worker as module
+    from hostrun.agent_service import AgentService
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='s'); app.service_token = 's'
+    task = app.service.create_task({'schema_version':1,'operation_id':'parent','title':'work'}, token='s')
+    app.task_id = task['task_id']
+    app.turn = app.service.begin_turn({'schema_version':1,'operation_id':'turn','task_id':app.task_id,'expected_version':1,'text':'two tasks'}, token='s')
+    app.input_version = 2
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *a, **kw: ['node'])
+    spawned = []
+    class Process:
+        def __init__(self, event, code):
+            self.stdout = io.StringIO(json.dumps(event)+'\n'); self.stderr = io.StringIO(''); self.code = code
+        def wait(self, timeout=None): return self.code
+        def poll(self): return self.code
+    responses = iter([({'type':'final','text':'first committed'},0),
+                      ({'type':'error','category':'quota','message':'Quota exhausted','attempts':1,'retryable':False},1),
+                      ({'type':'final','text':'second recovered'},0)])
+    def spawn(*a, **kw):
+        spawned.append(a)
+        return Process(*next(responses))
+    monkeypatch.setattr(module.subprocess, 'Popen', spawn)
+    first_call = {'requestId':'entry-1:call-0','role':'development_reader','input':'first'}
+    second_call = {'requestId':'entry-2:call-0','role':'development_reader','input':'second'}
+    first = app.delegate(first_call)
+    failed = app.delegate(second_call)
+    assert failed['status'] == 'failed' and failed['failure']['category'] == 'quota'
+    turn = app.service.commit_turn({'schema_version':1,'operation_id':'interrupted','turn_id':'turn','expected_version':app.turn['version'],'status':'recovery_required','result':'','error':'Quota exhausted'}, token='s')
+    app.service = AgentService(tmp_path, token='s')
+    app.turn = app.service.transition_turn({'schema_version':1,'operation_id':'continue','turn_id':'turn','expected_version':turn['version'],'action':'resume'}, token='s')
+    assert app.delegate(first_call) == first
+    recovered = app.delegate(second_call)
+    assert recovered['child_id'] == failed['child_id'] and recovered['status'] == 'succeeded'
+    assert len(spawned) == 3
+    assert len(app.service.list_children(app.task_id, token='s')) == 2
+    assert len(app.service.list_tasks(token='s')[0]['messages']) == 1

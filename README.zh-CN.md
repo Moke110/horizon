@@ -128,11 +128,11 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 
 `Horizon.cmd` 保留为 CLI 入口；不传参数也会启动 GUI，但可能短暂显示命令行窗口。中央区域与内置 Agent 对话，左栏切换会话，通过模型设置配置模型。桌面 Console 页签不运行旧命令；旧命令请使用独立 CLI Console。Enter 发送、Shift+Enter 换行；停止按钮取消当前 Agent。会话保存在 `%LOCALAPPDATA%/Horizon/data/horizon.sqlite3`。可将 `HORIZON_DATA_HOME` 设置为绝对路径以指定数据目录；更换安装目录仍使用同一数据目录，不导入历史工作区。
 
-首次启动会把随附 Electron 运行时复制到 `%LOCALAPPDATA%/Horizon/desktop-runtime/`，避免工作区磁盘上的 Windows 沙箱启动失败。代码、配置和资料库仍在原位置，渲染器沙箱保持开启。关闭 GUI 后，其后台工作进程会在 10 秒内结束。
+首次启动会把随附 Electron 运行时复制到 `%LOCALAPPDATA%/Horizon/desktop-runtime/`，避免工作区磁盘上的 Windows 沙箱启动失败。代码、配置和资料库仍在原位置，渲染器沙箱保持开启。关闭窗口后应用留在托盘运行；选择“退出并暂停”才会停止其工作进程。
 
 ### 桌面界面开发
 
-运行新版安装程序前请先退出 Horizon。安装程序使用自身内置运行时，备份现有数据目录，并在原位置保留会话；桌面仍在运行时会拒绝替换。
+运行新版安装程序前请先选择“退出并暂停”。安装程序使用自身内置运行时，备份现有数据目录，并在原位置保留会话；桌面仍在运行时会拒绝替换。
 
 在 `desktop/` 运行 `npm ci`、`npm run typecheck` 和 `npm run build`，然后打开快捷方式，或运行 `python -m hostrun.desktop --code <code> --archive <archive>`。Python 管理带随机令牌认证的本机回环通信和 Windows 进程作业。启动错误记录于 `.horizon/desktop-error.log`，Electron 日志位于 `<数据目录>/desktop-electron.log`。
 
@@ -143,3 +143,9 @@ Python 保留现有校验、存储和 PDF 处理。用 `node agent/dist/main.js 
 内置 Agent 可以将有明确范围的开发工具任务交给独立子会话。轨迹页展示角色、父子会话、输入版本、稳定产物引用及成功或失败结果。这些初期只读开发角色不是 Voyager、Editor 或 Keeper。
 
 桌面对话在进程意外退出后恢复未完成轮次，并复用已提交的子任务结果。当前开发阶段的可恢复轮次只开放只读和受限子任务工具，不自动重放旧版有写入作用的工作流。轨迹页分别显示执行、资料等待、知识提议和投递状态。
+
+关闭窗口后 Horizon 留在托盘继续运行。选择“退出并暂停”停止；重新打开后在轨迹页点击“继续任务”。“放弃任务”取消未完成工作并保留已完成结果。
+
+模型临时故障只有限重试。轨迹页显示认证、配置、额度等错误类别并保留成功结果。处理问题后点击“继续任务”，在原任务中重试未完成工作。
+
+点击桌面页眉的“导出诊断”可生成本地报告文件夹，包含有限大小的生命周期、任务和错误元数据、版本及任务状态摘要。默认不导出 API Key、配置文件、对话与文献正文、数据库或 Pi 会话文件，不会自动上传。报告位于数据目录下的 `diagnostics/reports/`。若 GUI 无法启动，可用安装目录内的运行时执行 `runtime/python.exe -m hostrun.diagnostics --code <安装目录> --output <报告目录>`。

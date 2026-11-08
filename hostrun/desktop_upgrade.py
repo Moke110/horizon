@@ -10,6 +10,7 @@ import sqlite3
 
 from common import file_lock
 from hostrun import dist
+from hostrun.diagnostics import record_event
 
 
 def _filesystem_path(path):
@@ -23,8 +24,9 @@ def _filesystem_path(path):
 def _restore(code, home, backup, code_backup, had_code):
     if not backup.is_dir() or (had_code and not code_backup.is_dir()):
         raise ValueError('Upgrade recovery backup is missing; original data has not been touched')
+    record_event(home, 'recovery_started')
     for entry in home.iterdir():
-        if entry.name in ('upgrade-backups', 'desktop.lock', 'desktop.activate', 'upgrade.pending.json'):
+        if entry.name in ('upgrade-backups', 'diagnostics', 'desktop.lock', 'desktop.activate', 'upgrade.pending.json'):
             continue
         if entry.is_symlink() or not entry.resolve().is_relative_to(home):
             raise ValueError('Unsafe restore path')
@@ -33,6 +35,8 @@ def _restore(code, home, backup, code_backup, had_code):
         else:
             entry.unlink()
     for entry in backup.iterdir():
+        if entry.name == 'diagnostics':
+            continue  # Recovery history is not transactional business state.
         destination = home / entry.name
         if entry.is_dir():
             shutil.copytree(entry, destination)
@@ -44,9 +48,10 @@ def _restore(code, home, backup, code_backup, had_code):
     if had_code:
         shutil.copytree(code_backup, code)
     (home / 'upgrade.pending.json').unlink(missing_ok=True)
+    record_event(home, 'recovery_completed', status='restored')
 
 
-def upgrade(code, home, *, from_source, sha256):
+def _upgrade(code, home, *, from_source, sha256):
     code, home = _filesystem_path(code), _filesystem_path(home)
     if home.is_relative_to(code) or code.is_relative_to(home):
         return {'status': 'blocked', 'reason': 'overlapping_data_and_code'}
@@ -72,7 +77,7 @@ def upgrade(code, home, *, from_source, sha256):
         if had_code:
             shutil.copytree(code, code_backup)
         for entry in home.iterdir():
-            if entry.name in ('upgrade-backups', 'desktop.lock', 'desktop.activate', 'upgrade.pending.json'):
+            if entry.name in ('upgrade-backups', 'diagnostics', 'desktop.lock', 'desktop.activate', 'upgrade.pending.json'):
                 continue
             if entry.name in ('horizon.sqlite3-wal', 'horizon.sqlite3-shm'):
                 continue
@@ -84,6 +89,7 @@ def upgrade(code, home, *, from_source, sha256):
                 shutil.copytree(entry, backup / entry.name)
             else:
                 shutil.copy2(entry, backup / entry.name)
+        record_event(home, 'backup_created', status='complete')
         pending_temp = home / 'upgrade.pending.json.tmp'
         with pending_temp.open('w', encoding='utf-8') as handle:
             json.dump({'schema_version': 1, 'identity': backup.name, 'code': str(code), 'had_code': had_code}, handle)
@@ -94,7 +100,9 @@ def upgrade(code, home, *, from_source, sha256):
         if result['status'] == 'ok':
             from hostrun.agent_service import AgentService
             try:
+                record_event(home, 'schema_migration', status='started')
                 AgentService(home, token=str(uuid.uuid4()))
+                record_event(home, 'schema_migration', status='complete')
                 manifest = json.loads((code / 'manifest.json').read_text(encoding='utf-8'))
                 owned = code / '.horizon/installer/owned-files.txt'
                 owned.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +122,23 @@ def upgrade(code, home, *, from_source, sha256):
             _restore(code, home, backup, code_backup, had_code)
         pending.unlink(missing_ok=True)
         return result
+
+
+def upgrade(code, home, *, from_source, sha256):
+    code, home = _filesystem_path(code), _filesystem_path(home)
+    # Invalid overlapping locations must not acquire diagnostic files either.
+    if home.is_relative_to(code) or code.is_relative_to(home):
+        return {'status': 'blocked', 'reason': 'overlapping_data_and_code'}
+    record_event(home, 'upgrade_started', pid=os.getpid())
+    try:
+        result = _upgrade(code, home, from_source=from_source, sha256=sha256)
+    except Exception as exc:
+        record_event(home, 'result', status='error', code=type(exc).__name__,
+                     exit_code=getattr(exc, 'winerror', None) or getattr(exc, 'errno', None))
+        raise
+    record_event(home, 'result', status=result['status'], code=result.get('reason', 'installed'),
+                 version=result.get('version'))
+    return result
 
 
 def main():

@@ -9,6 +9,7 @@ import threading
 import socket
 import secrets
 import uuid
+from hostrun.diagnostics import record_event, export_report
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -67,6 +68,7 @@ def serve(resolved):
     current, response = 0, ''
     lock = threading.Lock()
     ui_ready = threading.Event()
+    exiting = threading.Event()
     configuring = threading.Event()
     def emit(kind, data=None):
         with lock:
@@ -122,7 +124,28 @@ def serve(resolved):
                 if configuring.is_set() and action in ('configure', 'refresh_models', 'select_model', 'send'):
                     raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
                 if action == 'ready': ui_ready.set()
-                elif action == 'stop': app.stop()
+                elif action == 'export_diagnostics':
+                    report = export_report(service.home, service.home / 'diagnostics' / 'reports', code=code, tasks=service.list_turns(token=token))
+                    emit('notice', '诊断报告已导出：' + str(report))
+                elif action == 'exit':
+                    exiting.set()
+                    for turn in service.recoverable_turns(token=token):
+                        while turn['status'] == 'running':
+                            try:
+                                service.transition_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'],'expected_version':turn['version'],'action':'pause'},token=token)
+                                break
+                            except CommandError as exc:
+                                if exc.code != 'version_conflict': raise
+                                turn = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn['turn_id'])
+                    app.stop()
+                    emit('exit_ready')
+                    break
+                elif action in ('stop','resume_turn','cancel_turn'):
+                    turn_id = cmd.get('turn_id') or getattr(app,'turn',{}).get('turn_id')
+                    target = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn_id)
+                    service.transition_turn({'schema_version':1,'operation_id':cmd.get('operation_id') or str(uuid.uuid4()),'turn_id':turn_id,'expected_version':target['version'],'action':'resume' if action == 'resume_turn' else 'cancel'},token=token)
+                    record_event(service.home, 'task_transition', turn_id=turn_id, status='running' if action == 'resume_turn' else 'cancelled')
+                    if action != 'resume_turn' and (getattr(app,'turn',None) or {}).get('turn_id') == turn_id: app.stop()
                 elif action == 'console': app.answers.put(str(cmd['text']))
                 elif not app.busy:
                     if action == 'new':
@@ -160,7 +183,7 @@ def serve(resolved):
     exit_code = 0
     try:
         while child.poll() is None:
-            if not app.busy and ui_ready.is_set():
+            if not exiting.is_set() and not app.busy and ui_ready.is_set():
                 pending_turns = service.recoverable_turns(token=token)
                 if pending_turns: start_turn(pending_turns[0]); state()
             if activation.exists():
@@ -189,4 +212,7 @@ def serve(resolved):
         app.closed = True; app.stop(); app.answers.put(None)
         if exit_code:
             raise RuntimeError(f'Electron exited before completing desktop session (exit {exit_code:#x})')
-        if os.name == 'nt': os._exit(0)
+        if os.name == 'nt':
+            record_event(service.home, 'desktop_exit', pid=os.getpid(), exit_code=0,
+                         status='explicit_exit' if exiting.is_set() else 'renderer_closed')
+            os._exit(0)

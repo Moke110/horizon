@@ -1,3 +1,4 @@
+import { boundedFetch, retryDecision } from "./retry.js";
 import { readFile, mkdir, writeFile, realpath, stat, readdir } from "node:fs/promises";
 import { resolve, relative, dirname, join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
@@ -11,6 +12,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 let secret = "";
+let retryAttempts = 1;
+let delegateFailure = "";
+let failedDelegateCall = "";
+let delegateFailureDetails: Record<string, unknown> | undefined;
 const emit = (event: object) => {
   let line = JSON.stringify(event);
   if (secret) line = line.split(JSON.stringify(secret).slice(1, -1)).join("[redacted]");
@@ -132,7 +137,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         });
       } }),
   ];
-  const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void; callId: string }>();
   let inputReader: ReturnType<typeof createInterface> | undefined;
 
   const delegate = defineTool({ name: "delegate", label: "Delegate development task", description: "Run an independent restricted development_reader or development_summarizer session. These are development test roles, not Voyager or Editor. Return includes stable artifact reference, child session identity and success/failure. Give bounded input only, never credentials or the entire conversation.",
@@ -141,7 +146,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       if (!values["session-id"]) throw new Error("Delegation requires a persistent parent session");
       if (!inputReader) {
         inputReader = createInterface({ input: process.stdin });
-        inputReader.on("line", line => { try { const reply = JSON.parse(line); const waiter = pending.get(reply.requestId); if (waiter) { pending.delete(reply.requestId); waiter.resolve(result(JSON.stringify(reply.result))); } } catch { /* malformed owner frames cannot resolve requests */ } });
+        inputReader.on("line", line => { try { const reply = JSON.parse(line); const waiter = pending.get(reply.requestId); if (waiter) { pending.delete(reply.requestId); if (reply.result?.status === "failed") { failedDelegateCall ||= waiter.callId; delegateFailureDetails ??= reply.result.failure; delegateFailure = reply.result.failure?.message || reply.result.error || "Child failed"; waiter.reject(new Error(delegateFailure)); } else waiter.resolve(result(JSON.stringify(reply.result))); } } catch { /* malformed owner frames cannot resolve requests */ } });
         inputReader.on("close", () => { for (const waiter of pending.values()) waiter.reject(new Error("Delegation owner disconnected")); pending.clear(); });
       }
       let requestId = _id;
@@ -154,7 +159,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         const abort = () => { pending.delete(requestId); reject(new Error("Delegation cancelled")); };
         if (signal?.aborted) return abort();
         signal?.addEventListener("abort", abort, { once: true });
-        pending.set(requestId, { resolve: value => { signal?.removeEventListener("abort", abort); resolveReply(value); }, reject });
+        pending.set(requestId, { callId: _id, resolve: value => { signal?.removeEventListener("abort", abort); resolveReply(value); }, reject });
         emit({ type: "delegate_request", requestId, role: p.role, input: p.input });
       });
     } });
@@ -202,6 +207,9 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     settingsManager: settings, resourceLoader: loader, sessionManager,
     tools: judgement ? [] : reading ? ["read_file"] : allowedTools.map(t => t.name),
     customTools: judgement ? [] : reading ? tools.filter(t => t.name === "read_file") : allowedTools });
+  const originalStream = session.agent.streamFunction;
+  const requestFetch = boundedFetch(globalThis.fetch, event => { retryAttempts = (event as { attempt: number }).attempt; emit(event); });
+  session.agent.streamFunction = (model, context, options) => originalStream(model, context, { ...options, maxRetries: 0, fetch: requestFetch });
   emit({ type: "session", sessionId: session.sessionId });
   let failure = "";
   let pendingText = "";
@@ -246,9 +254,17 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         await session.agent.continue();
       }
     } else await session.prompt(values.task);
+    if (delegateFailure) {
+      // Preserve the tool-call identity. Owner receipts return successful siblings
+      // without executing them again when this pending call is resumed.
+      const entries = sessionManager.getBranch();
+      const call = entries.findLast((entry: any) => entry.type === "message" && entry.message.role === "assistant" && entry.message.content?.some((part: any) => part.type === "toolCall" && part.name === "delegate" && part.id === failedDelegateCall));
+      if (call) { sessionManager.branch(call.id); sessionManager.appendCustomEntry("horizon.retry_pending", { callId: failedDelegateCall }); }
+      throw new Error(delegateFailure);
+    }
     if (failure) throw new Error(failure);
     emit({ type: "final", text: session.getLastAssistantText() || "" });
     emit({ type: "status", phase: "turn_end", reason: "completed" });
   } finally { streamText("", true); session.dispose(); inputReader?.close(); }
 }
-main().catch(error => { emit({ type: "error", message: String(error.message || error) }); process.exitCode = 1; });
+main().catch(error => { emit({ type: "error", ...retryDecision(String(error.message || error), 3), attempts: retryAttempts, ...delegateFailureDetails, message: String(error.message || error) }); process.exitCode = 1; });

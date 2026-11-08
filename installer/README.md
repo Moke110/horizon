@@ -22,3 +22,12 @@ Zig and the previous Hello World executable are no longer used.
 
 The installer does not authenticate or send a message during installation.
 Clean Windows installation and live model/Feishu acceptance require separate verification.
+
+
+For a manually transferred installation test kit, run
+`python scripts/prepare_windows_acceptance.py --baseline <baseline-setup.exe> --upgrade <new-setup.exe> --output <new-directory>`.
+The kit contains numbered install/upgrade wrappers that enable Inno's `/LOG`, a collector and instructions.
+All collected files are under its `report/` directory. The collector uses the installed bundled Python when available;
+if installation failed before that runtime exists, it still records OS/build information and retains the installer logs.
+It does not change PowerShell execution policy, collect configuration/database/transcript files or upload reports.
+Use the default per-user installation location for these wrappers. Preserve the report folder between steps.

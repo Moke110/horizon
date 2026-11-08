@@ -8,6 +8,7 @@ from common import file_lock
 from hostrun import console, desktop_processes, layout
 from hostrun.desktop_bridge import serve
 from hostrun.agent_service import desktop_home
+from hostrun.diagnostics import record_event
 
 def main():
     parser = argparse.ArgumentParser()
@@ -24,12 +25,20 @@ def main():
             return
         if (home / 'upgrade.pending.json').exists():
             raise RuntimeError('An interrupted upgrade needs recovery. Run the Horizon installer again before opening the desktop.')
-        serve(resolved)
+        record_event(home,'desktop_started',pid=os.getpid())
+        try:
+            serve(resolved)
+        except Exception as exc:
+            record_event(home,'error',code=type(exc).__name__,pid=os.getpid())
+            raise
+        finally:
+            record_event(home,'desktop_exit',pid=os.getpid())
 
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
+    except Exception as exc:
+        record_event(desktop_home(),'error',code=type(exc).__name__,pid=os.getpid())
         import traceback
         path = Path(__file__).resolve().parents[1] / '.horizon/desktop-error.log'
         path.parent.mkdir(parents=True, exist_ok=True)
