@@ -180,3 +180,5 @@ The built-in Agent can delegate bounded development-tool tasks to independent ch
 Desktop conversations recover unfinished turns after an unexpected process exit. Committed child results are reused. This development stage exposes read-only and restricted child tools for recoverable turns; legacy mutating workflows are not automatically replayed. The Trace tab separates execution from material waiting, knowledge proposals and delivery.
 
 Closing the window keeps Horizon running in the tray. Choose Exit and pause to stop; paused tasks require Continue in Trace after reopening. Abandon cancels unfinished work while preserving completed results.
+
+Temporary model failures use bounded retries. Trace shows authentication, configuration, quota or other error categories and retains completed results. After correcting the problem, Continue retries unfinished work in the same task.

@@ -223,7 +223,7 @@ class AgentService:
                     result['operation_id'] = operation
                     event_type = 'agent.child_attempted'
                 else:
-                    result.update(status=command['status'], result=command.get('result',''), error=command.get('error',''),version=result['version']+1,operation_id=operation)
+                    result.update(status=command['status'], result=command.get('result',''), error=command.get('error',''),failure=command.get('failure'),version=result['version']+1,operation_id=operation)
                     event_type = 'agent.child_finished'
             else:
                 row = db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(identity,)).fetchone()
@@ -306,10 +306,16 @@ class AgentService:
                 if action == 'transition':
                     if type(command.get('expected_version')) is not int or command['expected_version'] != turn['version']: raise CommandError('version_conflict','Turn version changed')
                     operation_action = command.get('action')
-                    allowed = {'pause':('running',), 'resume':('paused',), 'cancel':('running','paused','recovery_required')}
+                    allowed = {'pause':('running',), 'resume':('paused','recovery_required','failed'), 'cancel':('running','paused','recovery_required')}
                     if operation_action not in allowed or turn['status'] not in allowed[operation_action]: raise CommandError('version_conflict','Invalid lifecycle transition')
                     turn['status'] = {'pause':'paused','resume':'running','cancel':'cancelled'}[operation_action]
                     turn['version'] += 1
+                    if operation_action == 'resume':
+                        for child_id, encoded_child in db.execute('SELECT child_id,result FROM agent_children WHERE task_id=?',(turn['task_id'],)).fetchall():
+                            child = json.loads(encoded_child)
+                            if child['input_version'] == turn['input_version'] and child['status'] == 'failed':
+                                child.update(status='running',version=child['version']+1)
+                                db.execute('UPDATE agent_children SET result=? WHERE child_id=?',(json.dumps(child),child_id))
                     if operation_action == 'cancel':
                         for child_id, encoded_child in db.execute('SELECT child_id,result FROM agent_children WHERE task_id=?',(turn['task_id'],)).fetchall():
                             child = json.loads(encoded_child)
@@ -326,7 +332,10 @@ class AgentService:
                     if status not in ('completed','failed','recovery_required','cancelled'): raise CommandError('invalid_command','Invalid turn status')
                     result,error = command.get('result',''),command.get('error','')
                     if not isinstance(result,str) or not isinstance(error,str): raise CommandError('invalid_command','Invalid turn result')
-                    turn.update(status=status,result=result,error=error,version=turn['version']+1)
+                    failure = command.get('failure')
+                    if failure is not None and (not isinstance(failure,dict) or failure.get('category') not in ('authentication','configuration','quota','transient','permanent','cancelled')):
+                        raise CommandError('invalid_command','Invalid failure category')
+                    turn.update(status=status,result=result,error=error,failure=failure,version=turn['version']+1)
                     if status == 'completed':
                         task = json.loads(db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(turn['task_id'],)).fetchone()[0])
                         task['messages'].append({'role':'Horizon','text':result}); task['version'] += 1

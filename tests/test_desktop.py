@@ -293,3 +293,29 @@ def test_worker_always_reaps_process_when_turn_commit_fails(tmp_path, monkeypatc
     app.run_agent('task')
     assert process.stopped and process.waited and app.process is None
     assert any(kind=='done' for kind,data in list(app.events.queue))
+
+
+def test_model_failure_details_survive_restart_and_manual_continue(tmp_path, monkeypatch):
+    import uuid,json
+    from hostrun import desktop_worker as module
+    from hostrun.agent_service import AgentService
+    app=worker(tmp_path);app.service=AgentService(tmp_path,token='s');app.service_token='s'
+    task=app.service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    app.turn=app.service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'work'},token='s')
+    app.task_id=task['task_id'];app.input_version=2;app.version_provider=lambda:{}
+    monkeypatch.setattr(module.embedded_agent,'argv',lambda *a,**kw:['node'])
+    class Process:
+        def __init__(self,event,code): self.stdout=io.StringIO(json.dumps(event)+'\n');self.stderr=io.StringIO('');self.code=code
+        def wait(self,timeout=None):return self.code
+        def poll(self):return self.code
+    monkeypatch.setattr(module.subprocess,'Popen',lambda *a,**kw:Process({'type':'error','category':'authentication','retryable':False,'attempts':1,'message':'Check API key'},1))
+    app.run_agent('work',app.turn['session_id'])
+    reopened=AgentService(tmp_path,token='new')
+    failed=reopened.list_turns(token='new')[0]
+    assert failed['status']=='recovery_required' and failed['failure']['category']=='authentication'
+    assert len(reopened.list_tasks(token='new')[0]['messages'])==1
+    app.turn=app.service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':failed['version'],'action':'resume'},token='s')
+    monkeypatch.setattr(module.subprocess,'Popen',lambda *a,**kw:Process({'type':'final','text':'Recovered'},0))
+    app.run_agent('work',app.turn['session_id'])
+    assert reopened.list_turns(token='new')[0]['status']=='completed'
+    assert len(reopened.list_tasks(token='new')[0]['messages'])==2

@@ -12,6 +12,7 @@ class DesktopWorker:
     def run_agent(self, task, session_id=None, history=None):
         history_path = None
         completed_text = None
+        failure = None
         turn = getattr(self, 'turn', None)
         committed = False
         try:
@@ -45,6 +46,10 @@ class DesktopWorker:
                     self.process.stdin.write(json.dumps({'requestId': event['requestId'], 'result': result}) + '\n')
                     self.process.stdin.flush()
                     continue
+                if event.get('type') == 'error':
+                    failure = {key:event.get(key) for key in ('category','retryable','attempts','message')}
+                    if failure.get('category') not in ('authentication','configuration','quota','transient','permanent','cancelled'):
+                        failure['category'] = 'permanent'
                 if event.get('type') == 'final':
                     completed_text = event.get('text', '')
                 self.events.put(('agent', event))
@@ -59,7 +64,7 @@ class DesktopWorker:
         finally:
             try:
                 if turn and not committed:
-                    self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id),turn['turn_id']+':incomplete')),'turn_id':turn['turn_id'],'expected_version':turn['version'],'status':'cancelled' if self.cancelled.is_set() else 'recovery_required','result':'','error':'Execution interrupted; review before retrying'},token=self.service_token)
+                    self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id),turn['turn_id']+':incomplete:'+str(turn['version']))),'turn_id':turn['turn_id'],'expected_version':turn['version'],'status':'cancelled' if self.cancelled.is_set() else 'recovery_required','result':'','error':(failure or {}).get('message') or 'Execution interrupted; review before retrying','failure':failure},token=self.service_token)
             except Exception:
                 self.events.put(('agent', {'type':'error','message':'Could not persist execution state; recovery will consult the committed ledger'}))
             finally:
@@ -101,6 +106,7 @@ class DesktopWorker:
         self.events.put(('children', None))
         output = ''
         status, error = 'failed', ''
+        child_failure = None
         try:
             if self.cancelled.is_set():
                 raise RuntimeError('Task cancelled')
@@ -117,6 +123,8 @@ class DesktopWorker:
             for line in self.child_process.stdout:
                 try: item = json.loads(line)
                 except ValueError: continue
+                if item.get('type') == 'error':
+                    child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
                 if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
                 if item.get('type') == 'tool_result':
                     self.events.put(('agent', {'type': 'tool_result', 'name': child['role'] + ': ' + str(item.get('name')), 'isError': item.get('isError', False)}))
@@ -133,8 +141,8 @@ class DesktopWorker:
                 child_process.wait(timeout=10)
             self.child_process = None
         completed = self.service.finish_child({'schema_version': 1,
-            'operation_id': str(uuid.uuid5(uuid.UUID(operation), 'finish')),
-            'child_id': child['child_id'], 'expected_version': child['version'], 'status': status, 'result': output, 'error': error}, token=self.service_token)
+            'operation_id': str(uuid.uuid5(uuid.UUID(operation), 'finish:'+str(child['version']))),
+            'child_id': child['child_id'], 'expected_version': child['version'], 'status': status, 'result': output, 'error': error, 'failure': child_failure}, token=self.service_token)
         self.events.put(('children', None))
         return completed
 

@@ -250,3 +250,21 @@ def test_pause_resume_cancel_persist_and_reject_late_results(tmp_path):
     assert service.list_children(task['task_id'],token='s')[0]['status']=='cancelled'
     with pytest.raises(ValueError): service.commit_turn({'schema_version':1,'operation_id':'late-turn','turn_id':'t','expected_version':resumed['version'],'status':'completed','result':'late'},token='s')
     assert len(service.list_tasks(token='s')[0]['messages'])==1
+
+
+def test_manual_resume_keeps_completed_child_and_retries_failed_child(tmp_path):
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'p','title':'p'},token='s')
+    turn=service.begin_turn({'schema_version':1,'operation_id':'t','task_id':task['task_id'],'expected_version':1,'text':'work'},token='s')
+    children=[]
+    for index,status in enumerate(('succeeded','failed')):
+        c=service.start_child({'schema_version':1,'operation_id':f'c{index}','task_id':task['task_id'],'input_version':2,'role':'development_reader','input_text':str(index)},token='s')
+        children.append(service.finish_child({'schema_version':1,'operation_id':f'f{index}','child_id':c['child_id'],'expected_version':1,'status':status,'result':'retained' if index==0 else ''},token='s'))
+    failed=service.commit_turn({'schema_version':1,'operation_id':'fail','turn_id':'t','expected_version':1,'status':'recovery_required','error':'quota','failure':{'category':'quota','retryable':False,'attempts':1,'message':'quota'}},token='s')
+    assert failed['failure']['category']=='quota'
+    resumed=service.transition_turn({'schema_version':1,'operation_id':'resume','turn_id':'t','expected_version':failed['version'],'action':'resume'},token='s')
+    latest=service.list_children(task['task_id'],token='s')
+    assert latest[0]==children[0]
+    assert latest[1]['child_id']==children[1]['child_id'] and latest[1]['status']=='running'
+    assert latest[1]['version']>children[1]['version']
+    assert resumed['turn_id']==turn['turn_id'] and len(service.list_tasks(token='s')[0]['messages'])==1

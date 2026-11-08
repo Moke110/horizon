@@ -71,3 +71,5 @@ Desktop recoverable turns expose read_file and development-role delegate only. L
 ### Desktop lifecycle
 
 `transition_turn` authenticates schema_version, operation_id, turn_id, expected_version and action pause/resume/cancel. Pause changes running to paused; resume restores paused to running; cancel freezes active child records and the turn. Completed child results remain intact. Owner completion and new-child commands reject non-running parent turns. Explicit exit pauses all running turns before stopping processes; window close only hides to tray.
+
+Recoverable error records retain category, retry metadata and the diagnostic message on the turn. Manual resume reuses the same turn identity, retains completed child artifacts, and reopens only failed child work. Each child finish and incomplete-turn receipt is scoped to the current lifecycle version, preventing a later retry from conflicting with its earlier failure receipt. Automatic retry eligibility is separate from the user's ability to continue after fixing credentials or quota.
