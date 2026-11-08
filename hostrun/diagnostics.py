@@ -7,6 +7,7 @@ import platform
 import sqlite3
 import hashlib
 from collections import Counter
+from contextlib import closing
 import threading
 import uuid
 
@@ -49,12 +50,13 @@ def export_report(home,output,*,code=None,tasks=()):
         except OSError: pass
     (folder/'events.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in events),encoding='utf-8')
     (folder/'system.json').write_text(json.dumps({'schema_version':1,'os':platform.system(),'release':platform.release(),'version':platform.version(),'arch':platform.machine(),'python':platform.python_version()},indent=2),encoding='utf-8')
-    snapshot={'schema_version':1,'tasks':[],'turns':[_safe(task) for task in tasks]}
+    snapshot={'schema_version':1,'available':False,'error':'missing_database','children':[],'tasks':[],'turns':[_safe(task) for task in tasks]}
     database=Path(home)/'horizon.sqlite3'
     if database.is_file():
         try:
-            with sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True) as db:
-                for table, destination in [('agent_tasks','tasks'),('agent_turns','turns')]:
+            with closing(sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                snapshot.update(available=True,error=None)
+                for table, destination in [('agent_tasks','tasks'),('agent_turns','turns'),('agent_children','children')]:
                     try:
                         rows=db.execute('SELECT result FROM '+table+' ORDER BY rowid DESC LIMIT 100').fetchall()
                         snapshot[destination]=[]
@@ -63,8 +65,9 @@ def export_report(home,output,*,code=None,tasks=()):
                             if isinstance(source.get('failure'),dict): safe['failure']=_safe(source['failure'])
                             if isinstance(source.get('messages'),list): safe['message_count']=len(source['messages'])
                             snapshot[destination].append(safe)
-                    except (sqlite3.Error,ValueError): pass
-        except sqlite3.Error: pass
+                    except (sqlite3.Error,ValueError,TypeError,AttributeError) as exc:
+                        snapshot.update(available=False,error=type(exc).__name__)
+        except sqlite3.Error as exc: snapshot.update(available=False,error=type(exc).__name__)
     (folder/'tasks.json').write_text(json.dumps(snapshot,indent=2),encoding='utf-8')
     build={'schema_version':1,'components':{}}
     if code:
@@ -87,6 +90,7 @@ def export_report(home,output,*,code=None,tasks=()):
     (folder/'build.json').write_text(json.dumps(build,indent=2),encoding='utf-8')
     (folder/'summary.md').write_text('# Horizon local diagnostic report\n\nCopy this entire folder for review. No automatic upload.\n\nContains bounded event metadata, OS/component versions and task states. Configuration, credentials, conversation text, database and Pi transcripts are excluded. Missing events may mean logging was unavailable.\n',encoding='utf-8')
     with (folder/'summary.md').open('a',encoding='utf-8') as summary:
+        summary.write('\nDatabase snapshot: '+('available' if snapshot['available'] else 'unavailable ('+str(snapshot['error'])+')')+'\n')
         summary.write('\nEvents: '+str(len(events))+'\n\nTime range: '+(events[0]['time']+' — '+events[-1]['time'] if events else 'unavailable')+'\n\nTask states: '+json.dumps(dict(Counter(t.get('status','unknown') for t in snapshot['turns'])))+'\n\nError categories: '+json.dumps(dict(Counter(e.get('category','unknown') for e in events if e['event']=='error')))+'\n')
     return folder
 

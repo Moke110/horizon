@@ -41,3 +41,21 @@ def test_offline_export_reads_states_without_private_text(tmp_path):
     assert snapshot['tasks'][0]['task_id']==task['task_id']
     assert snapshot['turns'][0]['status']=='running'
     assert 'private' not in (report/'tasks.json').read_text()
+
+def test_missing_and_corrupt_database_are_not_reported_as_empty(tmp_path):
+    report=export_report(tmp_path,tmp_path/'out')
+    snapshot=json.loads((report/'tasks.json').read_text())
+    assert snapshot['available'] is False and snapshot['error']=='missing_database'
+    (tmp_path/'horizon.sqlite3').write_bytes(b'broken')
+    report=export_report(tmp_path,tmp_path/'out')
+    snapshot=json.loads((report/'tasks.json').read_text())
+    assert snapshot['available'] is False and snapshot['error']=='DatabaseError'
+    assert 'unavailable' in (report/'summary.md').read_text()
+
+def test_export_releases_database_handle(tmp_path):
+    from hostrun.agent_service import AgentService
+    service=AgentService(tmp_path/'home',token='secret')
+    export_report(service.home,tmp_path/'out')
+    database=service.home/'horizon.sqlite3'
+    database.rename(service.home/'renamed.sqlite3')
+    assert not database.exists()

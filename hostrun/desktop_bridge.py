@@ -62,7 +62,6 @@ def serve(resolved):
     service = AgentService(desktop_home(), token=token)
     app.home = service.home
     app.service, app.service_token = service, token
-    record_event(service.home, "desktop_started")
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
     chats = service.list_tasks(token=token)
@@ -129,7 +128,6 @@ def serve(resolved):
                     report = export_report(service.home, service.home / 'diagnostics' / 'reports', code=code, tasks=service.list_turns(token=token))
                     emit('notice', '诊断报告已导出：' + str(report))
                 elif action == 'exit':
-                    record_event(service.home, 'desktop_exit')
                     exiting.set()
                     for turn in service.recoverable_turns(token=token):
                         while turn['status'] == 'running':
