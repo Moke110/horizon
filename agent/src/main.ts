@@ -1,6 +1,7 @@
 import { readFile, mkdir, writeFile, realpath, stat, readdir } from "node:fs/promises";
 import { resolve, relative, dirname, join, isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
@@ -18,7 +19,7 @@ const emit = (event: object) => {
 const { values } = parseArgs({ options: {
   home: { type: "string" }, kind: { type: "string", default: "agent" },
   "child-role": { type: "string" },
-  task: { type: "string" }, "session-id": { type: "string" }, "history-file": { type: "string" }, check: { type: "boolean" },
+  task: { type: "string" }, "session-id": { type: "string" }, "history-file": { type: "string" }, "turn-id": { type: "string" }, check: { type: "boolean" },
 } });
 
 async function main() {
@@ -57,6 +58,7 @@ async function main() {
       : `You are Horizon's built-in research agent. Complete the current bounded task using Horizon business tools.
 Read the workflow references before performing a workflow. Existing Python commands in references map to horizon_cli(module, args).
 Use the installed interpreter implicitly through horizon_cli; no shell or external agent is needed.
+Desktop recoverable turns expose only read_file and delegate: legacy mutating CLI and file writes are unavailable because their commits cannot be safely replayed. Never claim those operations completed.
 Never modify application code or credentials. Never bypass validators or user review. Never repeat an ambiguous delivery.
 Use read_file and write_file for task JSON and artifacts. Do not claim delivery without tool evidence.\n${skill}` });
   await loader.reload();
@@ -132,6 +134,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   ];
   const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   let inputReader: ReturnType<typeof createInterface> | undefined;
+  const occurrences = new Map<string, number>();
   const delegate = defineTool({ name: "delegate", label: "Delegate development task", description: "Run an independent restricted development_reader or development_summarizer session. These are development test roles, not Voyager or Editor. Return includes stable artifact reference, child session identity and success/failure. Give bounded input only, never credentials or the entire conversation.",
     parameters: Type.Object({ role: Type.Union([Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
     execute: async (_id, p, signal) => {
@@ -141,7 +144,13 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         inputReader.on("line", line => { try { const reply = JSON.parse(line); const waiter = pending.get(reply.requestId); if (waiter) { pending.delete(reply.requestId); waiter.resolve(result(JSON.stringify(reply.result))); } } catch { /* malformed owner frames cannot resolve requests */ } });
         inputReader.on("close", () => { for (const waiter of pending.values()) waiter.reject(new Error("Delegation owner disconnected")); pending.clear(); });
       }
-      const requestId = _id;
+      let requestId = _id;
+      if (values["turn-id"]) {
+        const semantic = createHash("sha256").update(JSON.stringify([p.role, p.input])).digest("hex");
+        const occurrence = (occurrences.get(semantic) || 0) + 1;
+        occurrences.set(semantic, occurrence);
+        requestId = `${semantic}:${occurrence}`;
+      }
       return await new Promise<any>((resolveReply, reject) => {
         const abort = () => { pending.delete(requestId); reject(new Error("Delegation cancelled")); };
         if (signal?.aborted) return abort();
@@ -152,7 +161,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     } });
   if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
   else tools.push(delegate);
-  const allowedTools = childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+  const allowedTools = values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -178,6 +187,11 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         api: "openai-completions", provider: model.provider, model: model.id,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
     }
+  }
+  if (values["turn-id"]) {
+    const marker = sessionManager.getEntries().find((entry: any) => entry.type === "custom" && entry.customType === "horizon.turn" && entry.data?.turnId === values["turn-id"]) as any;
+    if (marker) sessionManager.branch(marker.id);
+    else sessionManager.appendCustomEntry("horizon.turn", { turnId: values["turn-id"] });
   }
   const { session } = await createAgentSession({ cwd: code, agentDir, modelRuntime: models, model,
     settingsManager: settings, resourceLoader: loader, sessionManager,

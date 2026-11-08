@@ -164,3 +164,46 @@ def test_child_commit_fault_replay_preserves_single_result(tmp_path,phase,commit
     assert len(reopened.events(token='s'))==2
     with pytest.raises(ValueError): reopened.start_child({**command,'input_text':'changed'},token='s')
 
+
+
+def test_turn_recovery_commits_messages_once(tmp_path):
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'create','title':'test'},token='s')
+    command = {'schema_version':1,'operation_id':'send','task_id':task['task_id'],'expected_version':1,'text':'hello'}
+    turn = service.begin_turn(command,token='s')
+    assert service.begin_turn(command,token='s') == turn
+    service = AgentService(tmp_path,token='s')
+    assert service.recoverable_turns(token='s') == [turn]
+    finish = {'schema_version':1,'operation_id':'finish','turn_id':turn['turn_id'],'expected_version':1,'status':'completed','result':'answer','error':''}
+    done = service.commit_turn(finish,token='s')
+    assert service.commit_turn(finish,token='s') == done
+    assert not service.recoverable_turns(token='s')
+    assert [m['text'] for m in service.list_tasks(token='s')[0]['messages']] == ['hello','answer']
+
+
+@pytest.mark.parametrize('phase,committed',[('before_commit',False),('after_commit',True)])
+def test_turn_commit_survives_process_exit(tmp_path,phase,committed):
+    import subprocess,sys,json
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'create','title':'test'},token='s')
+    turn=service.begin_turn({'schema_version':1,'operation_id':'send','task_id':task['task_id'],'expected_version':1,'text':'hello'},token='s')
+    command={'schema_version':1,'operation_id':'finish','turn_id':turn['turn_id'],'expected_version':1,'status':'completed','result':'answer'}
+    script="import os,json,sys; from hostrun.agent_service import AgentService; s=AgentService(sys.argv[1],token='s',transaction_observer=lambda p: os._exit(71) if p==sys.argv[2] else None); s.commit_turn(json.loads(sys.argv[3]),token='s')"
+    run=subprocess.run([sys.executable,'-X','utf8','-c',script,str(tmp_path),phase,json.dumps(command)],timeout=20)
+    assert run.returncode==71
+    restored=AgentService(tmp_path,token='s')
+    assert (len(restored.list_tasks(token='s')[0]['messages'])==2) == committed
+    restored.commit_turn(command,token='s')
+    assert [m['text'] for m in restored.list_tasks(token='s')[0]['messages']]==['hello','answer']
+    assert not restored.recoverable_turns(token='s')
+
+
+def test_turn_attempt_snapshots_preserve_previous_versions(tmp_path):
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'create','title':'test'},token='s')
+    turn=service.begin_turn({'schema_version':1,'operation_id':'send','task_id':task['task_id'],'expected_version':1,'text':'hello'},token='s')
+    for version in (1,2):
+        service.attempt_turn({'schema_version':1,'operation_id':f'attempt-{version}','turn_id':turn['turn_id'],'snapshots':{'knowledge':{'provider':'development_empty','version':version}}},token='s')
+    state=service.recoverable_turns(token='s')[0]
+    assert [a['snapshots']['knowledge']['version'] for a in state['attempts']]==[1,2]
+    assert state['input_version']==turn['input_version']

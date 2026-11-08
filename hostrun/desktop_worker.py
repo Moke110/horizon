@@ -11,8 +11,16 @@ from hostrun import console, console_events, embedded_agent
 class DesktopWorker:
     def run_agent(self, task, session_id=None, history=None):
         history_path = None
+        completed_text = None
+        turn = getattr(self, 'turn', None)
+        committed = False
         try:
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
+            turn = getattr(self, 'turn', None)
+            if turn:
+                argv.extend(['--turn-id', turn['turn_id']])
+                self.current_snapshots = self.version_provider()
+                self.service.attempt_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'], 'snapshots': self.current_snapshots}, token=self.service_token)
             if session_id is not None and history:
                 history_path = self.home / 'agent' / 'history' / (session_id + '.json')
                 history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,31 +45,56 @@ class DesktopWorker:
                     self.process.stdin.write(json.dumps({'requestId': event['requestId'], 'result': result}) + '\n')
                     self.process.stdin.flush()
                     continue
+                if event.get('type') == 'final':
+                    completed_text = event.get('text', '')
                 self.events.put(('agent', event))
             code = self.process.wait()
+            if not code and completed_text is not None and turn:
+                self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')), 'turn_id':turn['turn_id'], 'expected_version':turn['version'], 'status':'completed','result':completed_text,'error':''},token=self.service_token)
+                committed = True
             if code:
                 self.events.put(('agent', {'type': 'error', 'message': f'Agent 退出 ({code})'}))
         except Exception as exc:
             self.events.put(('agent', {'type': 'error', 'message': str(exc)}))
         finally:
-            for process in (getattr(self, 'child_process', None), self.process):
-                if process and hasattr(process, 'poll') and process.poll() is None:
-                    process.terminate()
-                    process.wait(timeout=10)
-            if history_path is not None:
-                history_path.unlink(missing_ok=True)
-            self.process = None
-            self.events.put(('done', None))
+            try:
+                if turn and not committed:
+                    self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id),turn['turn_id']+':incomplete')),'turn_id':turn['turn_id'],'expected_version':turn['version'],'status':'cancelled' if self.cancelled.is_set() else 'recovery_required','result':'','error':'Execution interrupted; review before retrying'},token=self.service_token)
+            except Exception:
+                self.events.put(('agent', {'type':'error','message':'Could not persist execution state; recovery will consult the committed ledger'}))
+            finally:
+                try:
+                    for process in (getattr(self, 'child_process', None), self.process):
+                        if process and hasattr(process, 'poll') and process.poll() is None:
+                            try:
+                                process.terminate()
+                                process.wait(timeout=10)
+                            except Exception:
+                                process.kill()
+                                process.wait(timeout=10)
+                finally:
+                    try:
+                        if history_path is not None:
+                            history_path.unlink(missing_ok=True)
+                    finally:
+                        self.process = None
+                        self.events.put(('done', {'durable': True} if turn else None))
 
     def delegate(self, event):
         request_id = str(event.get('requestId', ''))
         if not request_id or len(request_id) > 256:
             raise ValueError('Invalid delegation request')
         operation = str(uuid.uuid5(uuid.UUID(self.task_id), json.dumps([self.input_version, request_id])))
-        child = self.service.start_child({'schema_version': 1, 'operation_id': operation,
-            'task_id': self.task_id, 'role': event.get('role'), 'input_text': event.get('input'),
-            'input_version': self.input_version}, token=self.service_token)
-        child = next(item for item in self.service.list_children(self.task_id, token=self.service_token) if item['child_id'] == child['child_id'])
+        existing = next((item for item in self.service.list_children(self.task_id, token=self.service_token) if item.get('start_operation_id') == operation), None)
+        if existing:
+            if existing['role'] != event.get('role') or existing['input_text'] != event.get('input'):
+                raise ValueError('Delegation identity conflicts with committed input')
+            child = existing
+        else:
+            child = self.service.start_child({'schema_version': 1, 'operation_id': operation,
+                'task_id': self.task_id, 'role': event.get('role'), 'input_text': event.get('input'),
+                'input_version': self.input_version, 'snapshots': getattr(self, 'current_snapshots', {})}, token=self.service_token)
+            child = next(item for item in self.service.list_children(self.task_id, token=self.service_token) if item['child_id'] == child['child_id'])
         if child['status'] != 'running':
             return child
         self.events.put(('children', None))

@@ -259,3 +259,28 @@ def test_child_tool_ids_are_scoped_to_parent_turn(tmp_path, monkeypatch):
     assert second['child_id'] != first['child_id']
     assert app.delegate(event) == second
     assert len(app.service.list_children(app.task_id, token='launch')) == 2
+
+
+def test_worker_always_reaps_process_when_turn_commit_fails(tmp_path, monkeypatch):
+    import uuid
+    from hostrun import desktop_worker as module
+    app = worker(tmp_path)
+    app.task_id = str(uuid.uuid4()); app.turn = {'turn_id':'t','version':1}
+    app.service_token = 's'; app.version_provider = lambda: {}
+    class Service:
+        def attempt_turn(self,*a,**kw): pass
+        def commit_turn(self,*a,**kw): raise OSError('database unavailable')
+    app.service = Service()
+    class BrokenStream:
+        def __iter__(self): raise OSError('pipe failed')
+    class Process:
+        stdout = BrokenStream(); stderr = io.StringIO(''); stopped = False; waited = False
+        def poll(self): return 0 if self.stopped else None
+        def terminate(self): self.stopped = True
+        def wait(self,timeout=None): self.waited = True; return 0
+    process=Process()
+    monkeypatch.setattr(module.embedded_agent,'argv',lambda *a,**kw:['node'])
+    monkeypatch.setattr(module.subprocess,'Popen',lambda *a,**kw:process)
+    app.run_agent('task')
+    assert process.stopped and process.waited and app.process is None
+    assert any(kind=='done' for kind,data in list(app.events.queue))

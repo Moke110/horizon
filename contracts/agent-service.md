@@ -59,3 +59,11 @@ The authenticated desktop bridge queries provider model catalogs in the backend.
 The primary Pi delegate tool sends a structured request to its trusted Python owner; the owner invokes these public commands and starts an independent Pi session. Children cannot delegate or access generic business CLI, write tools, credentials, databases or sibling transcripts. Initial roles expose development-only read tools; production module role contracts are introduced by their later tickets. Child JSONL is model context, not business completion evidence. Full cancellation/lifecycle acceptance remains in #133.
 
 Delegation operation identities are scoped by parent task, committed input version and provider tool-call identity. Repeating a call in one turn returns its existing child result; reusing a provider call identifier in a later turn creates a separate child.
+
+### Recoverable desktop turns
+
+`begin_turn` commits the user message and running turn together. `commit_turn` checks expected_version and commits the completed response with the assistant message; failed, cancelled and recovery_required states do not append a success response. Operation receipts precede version checks on replay. `recoverable_turns` returns running work after process loss. Pi branches to the persistent turn marker on replay, but only SQLite commits establish completion.
+
+Desktop recoverable turns expose read_file and development-role delegate only. Legacy mutating horizon_cli/write_file tools remain available to legacy host workflows, not this replay path. Child operations use parent input version plus semantic input and occurrence identity: repeated identical calls within one turn remain distinct; matching recovered occurrences reuse committed owner results. Unknown legacy effects are never automatically replayed.
+
+`attempt_turn` records fresh context version query results. The Stage-B provider is explicitly development_empty, available=false, schema/version 1 for knowledge and preferences; it is not production knowledge or preferences. Each new child records its snapshots; previously committed child artifacts retain theirs on recovery. Execution, material waiting, proposals and delivery are distinct GUI categories; later module tickets supply the currently absent waiting items.
