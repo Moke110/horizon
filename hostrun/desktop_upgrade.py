@@ -1,5 +1,6 @@
 """Controlled package upgrade after the desktop releases its data-home lock."""
 from pathlib import Path
+from contextlib import closing
 import sys
 import json
 import os
@@ -68,7 +69,7 @@ def upgrade(code, home, *, from_source, sha256):
             if entry.name in ('horizon.sqlite3-wal', 'horizon.sqlite3-shm'):
                 continue
             if entry.name == 'horizon.sqlite3':
-                with sqlite3.connect(entry) as source, sqlite3.connect(backup / entry.name) as target:
+                with closing(sqlite3.connect(entry)) as source, closing(sqlite3.connect(backup / entry.name)) as target:
                     source.backup(target)
                 continue
             if entry.is_dir():

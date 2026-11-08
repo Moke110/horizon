@@ -127,3 +127,19 @@ def test_unknown_recovery_schema_preserves_existing_data(tmp_path):
     assert result['reason'] == 'unsupported_recovery_schema'
     assert marker.read_text(encoding='utf-8') == '{"schema_version":99}'
     assert not (tmp_path / 'code').exists()
+
+
+def test_schema_failure_restores_real_sqlite_without_open_backup_handles(tmp_path, monkeypatch):
+    from test_dist_install import _build
+    from hostrun import agent_service
+    package = _build(tmp_path)
+    home, code = tmp_path / 'home', tmp_path / 'code'
+    service = agent_service.AgentService(home, token='test')
+    task = service.create_task({'schema_version':1, 'operation_id':'seed', 'title':'preserved'}, token='test')
+    original = agent_service.AgentService
+    def fail(*args, **kwargs):
+        raise RuntimeError('schema failure')
+    monkeypatch.setattr(agent_service, 'AgentService', fail)
+    result = upgrade(code, home, from_source=package['artifact']['path'], sha256=package['artifact']['sha256'])
+    assert result['recovery'] == 'restored'
+    assert original(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
