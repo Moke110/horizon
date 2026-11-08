@@ -49,6 +49,8 @@ def upgrade(code, home, *, from_source, sha256):
         pending = home / 'upgrade.pending.json'
         if pending.exists():
             record = json.loads(pending.read_text(encoding='utf-8'))
+            if not isinstance(record, dict) or type(record.get('schema_version')) is not int or record['schema_version'] != 1:
+                return {'status': 'blocked', 'reason': 'unsupported_recovery_schema'}
             identity = str(uuid.UUID(record['identity']))
             if record['code'] != str(code):
                 return {'status': 'blocked', 'reason': 'different_pending_target'}
@@ -75,7 +77,7 @@ def upgrade(code, home, *, from_source, sha256):
                 shutil.copy2(entry, backup / entry.name)
         pending_temp = home / 'upgrade.pending.json.tmp'
         with pending_temp.open('w', encoding='utf-8') as handle:
-            json.dump({'identity': backup.name, 'code': str(code), 'had_code': had_code}, handle)
+            json.dump({'schema_version': 1, 'identity': backup.name, 'code': str(code), 'had_code': had_code}, handle)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(pending_temp, pending)

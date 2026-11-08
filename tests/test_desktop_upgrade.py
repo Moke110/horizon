@@ -116,3 +116,14 @@ def test_journal_commit_failure_never_exposes_partial_pending(tmp_path, monkeypa
         upgrade(tmp_path / 'code', tmp_path / 'home', from_source='absent.zip', sha256='0'*64)
     assert not (tmp_path / 'home/upgrade.pending.json').exists()
     assert not (tmp_path / 'code').exists()
+
+
+def test_unknown_recovery_schema_preserves_existing_data(tmp_path):
+    home = tmp_path / 'home'
+    home.mkdir()
+    marker = home / 'upgrade.pending.json'
+    marker.write_text('{"schema_version":99}', encoding='utf-8')
+    result = upgrade(tmp_path / 'code', home, from_source='absent.zip', sha256='0'*64)
+    assert result['reason'] == 'unsupported_recovery_schema'
+    assert marker.read_text(encoding='utf-8') == '{"schema_version":99}'
+    assert not (tmp_path / 'code').exists()
