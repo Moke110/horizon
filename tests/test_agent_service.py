@@ -124,3 +124,40 @@ def test_existing_tasks_gain_session_identity_without_losing_messages(tmp_path):
     second = AgentService(tmp_path, token='again').list_tasks(token='again')[0]
     assert first['session_id'] == second['session_id']
     assert first['messages'] == task['messages']
+
+def test_child_results_are_isolated_replayable_and_persistent(tmp_path):
+    service = AgentService(tmp_path, token='s')
+    task = service.create_task({'schema_version':1,'operation_id':'p','title':'parent'},token='s')
+    cmd = {'schema_version':1,'operation_id':'c1','task_id':task['task_id'],'role':'development_reader','input_text':'read contract','input_version':1}
+    child = service.start_child(cmd,token='s')
+    assert child['parent_session_id'] == task['session_id']
+    assert child['session_id'] != task['session_id']
+    assert service.start_child(cmd,token='s') == child
+    done = service.finish_child({'schema_version':1,'operation_id':'f1','child_id':child['child_id'],'status':'succeeded','result':'read complete'},token='s')
+    other = service.start_child({**cmd,'operation_id':'c2','role':'development_summarizer'},token='s')
+    service.finish_child({'schema_version':1,'operation_id':'f2','child_id':other['child_id'],'status':'failed','error':'provider failed'},token='s')
+    reopened = AgentService(tmp_path,token='new')
+    children = reopened.list_children(task['task_id'],token='new')
+    assert children[0] == done
+    assert children[1]['status'] == 'failed'
+    assert children[0]['artifact_ref'] == child['artifact_ref']
+    assert len(reopened.events(token='new')) == 5
+    with pytest.raises(ValueError): service.start_child({**cmd,'operation_id':'bad','role':'keeper'},token='s')
+    with pytest.raises(ValueError): service.start_child({**cmd,'operation_id':'stale','input_version':2},token='s')
+    with pytest.raises(PermissionError): service.list_children(task['task_id'],token='wrong')
+
+@pytest.mark.parametrize('phase,committed', [('before_commit',False),('after_commit',True)])
+def test_child_commit_fault_replay_preserves_single_result(tmp_path,phase,committed):
+    service=AgentService(tmp_path,token='s')
+    task=service.create_task({'schema_version':1,'operation_id':'p','title':'parent'},token='s')
+    def interrupt(point):
+        if point==phase: raise RuntimeError('interrupted')
+    faulty=AgentService(tmp_path,token='s',transaction_observer=interrupt)
+    command={'schema_version':1,'operation_id':'c','task_id':task['task_id'],'role':'development_reader','input_text':'read','input_version':1}
+    with pytest.raises(RuntimeError): faulty.start_child(command,token='s')
+    reopened=AgentService(tmp_path,token='s')
+    assert len(reopened.list_children(task['task_id'],token='s'))==int(committed)
+    child=reopened.start_child(command,token='s')
+    assert reopened.list_children(task['task_id'],token='s')==[child]
+    assert len(reopened.events(token='s'))==2
+    with pytest.raises(ValueError): reopened.start_child({**command,'input_text':'changed'},token='s')
