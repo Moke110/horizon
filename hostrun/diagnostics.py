@@ -14,7 +14,7 @@ import uuid
 _LOCK=threading.Lock()
 LIMIT=256*1024
 _FIELDS={'task_id','turn_id','status','category','attempt','attempts','delayMs','code','pid','parent_pid','exit_code','version','component','child_id','session_id'}
-_EVENTS={'desktop_started','desktop_exit','task_started','task_finished','retry','error','upgrade_started','backup_created','schema_migration','result','diagnostics_exported','recovery_started','recovery_completed','child_started','child_finished','task_transition'}
+_EVENTS={'desktop_started','desktop_exit','task_started','task_finished','retry','error','upgrade_started','backup_created','schema_migration','result','diagnostics_exported','recovery_started','recovery_completed','child_started','child_finished','child_reused','task_transition'}
 
 def _safe(values):
     return {key:value for key,value in values.items() if key in _FIELDS and isinstance(value,(int,bool,str)) and (not isinstance(value,str) or (len(value)<=100 and all(c.isalnum() or c in '-_.' for c in value)))}

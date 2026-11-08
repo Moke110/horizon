@@ -10,8 +10,12 @@ from hostrun import console, console_events, embedded_agent
 from hostrun.diagnostics import record_event
 
 class DesktopWorker:
+    def record_diagnostic(self, event, **metadata):
+        metadata.update(task_id=getattr(self, 'task_id', ''),
+                        turn_id=(getattr(self, 'turn', None) or {}).get('turn_id', ''))
+        record_event(self.home, event, **metadata)
+
     def run_agent(self, task, session_id=None, history=None):
-        record_event(self.home, "task_started", task_id=getattr(self,"task_id", ""))
         history_path = None
         completed_text = None
         failure = None
@@ -31,6 +35,7 @@ class DesktopWorker:
                 argv.extend(['--history-file', str(history_path)])
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
             self.process = subprocess.Popen(argv, cwd=self.resolved['code'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            self.record_diagnostic('task_started', pid=getattr(self.process, 'pid', None), parent_pid=os.getpid())
             # Drain stderr without exposing provider credentials in UI logs.
             threading.Thread(target=lambda p=self.process: p.stderr.read(), daemon=True).start()
             if self.cancelled.is_set():
@@ -49,7 +54,7 @@ class DesktopWorker:
                     self.process.stdin.flush()
                     continue
                 if event.get('type') in ('retry','error'):
-                    record_event(self.home, event['type'], **{k:v for k,v in event.items() if k != 'type'})
+                    self.record_diagnostic(event['type'], **{k:v for k,v in event.items() if k != 'type'})
                 if event.get('type') == 'error':
                     failure = {key:event.get(key) for key in ('category','retryable','attempts','message')}
                     if failure.get('category') not in ('authentication','configuration','quota','transient','permanent','cancelled'):
@@ -64,9 +69,10 @@ class DesktopWorker:
             if code:
                 self.events.put(('agent', {'type': 'error', 'message': f'Agent 退出 ({code})'}))
         except Exception as exc:
+            self.record_diagnostic('error', code=type(exc).__name__)
             self.events.put(('agent', {'type': 'error', 'message': str(exc)}))
         finally:
-            record_event(self.home, "task_finished", task_id=getattr(self,"task_id", ""), status="completed" if committed else "interrupted")
+            self.record_diagnostic('task_finished', status='completed' if committed else 'interrupted')
             try:
                 if turn and not committed:
                     self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id),turn['turn_id']+':incomplete:'+str(turn['version']))),'turn_id':turn['turn_id'],'expected_version':turn['version'],'status':'cancelled' if self.cancelled.is_set() else 'recovery_required','result':'','error':(failure or {}).get('message') or 'Execution interrupted; review before retrying','failure':failure},token=self.service_token)
@@ -105,8 +111,8 @@ class DesktopWorker:
                 'task_id': self.task_id, 'role': event.get('role'), 'input_text': event.get('input'),
                 'input_version': self.input_version, 'snapshots': getattr(self, 'current_snapshots', {})}, token=self.service_token)
             child = next(item for item in self.service.list_children(self.task_id, token=self.service_token) if item['child_id'] == child['child_id'])
-        record_event(self.home, 'child_started', child_id=child['child_id'], session_id=child['session_id'], status=child['status'])
         if child['status'] != 'running':
+            self.record_diagnostic('child_reused', child_id=child['child_id'], status=child['status'])
             return child
         child = self.service.attempt_child({'schema_version':1,'operation_id':str(uuid.uuid4()),'child_id':child['child_id'],'expected_version':child['version'],'snapshots':getattr(self,'current_snapshots',{})},token=self.service_token)
         self.events.put(('children', None))
@@ -123,12 +129,17 @@ class DesktopWorker:
                 env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            self.record_diagnostic('child_started', child_id=child['child_id'], session_id=child['session_id'],
+                                   pid=getattr(self.child_process, 'pid', None), parent_pid=os.getpid())
             threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
             if self.cancelled.is_set():
                 self.child_process.terminate()
             for line in self.child_process.stdout:
                 try: item = json.loads(line)
                 except ValueError: continue
+                if item.get('type') in ('retry', 'error'):
+                    self.record_diagnostic(item['type'], child_id=child['child_id'],
+                                           **{k:v for k,v in item.items() if k != 'type'})
                 if item.get('type') == 'error':
                     child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
                 if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
@@ -149,7 +160,7 @@ class DesktopWorker:
         completed = self.service.finish_child({'schema_version': 1,
             'operation_id': str(uuid.uuid5(uuid.UUID(operation), 'finish:'+str(child['version']))),
             'child_id': child['child_id'], 'expected_version': child['version'], 'status': status, 'result': output, 'error': error, 'failure': child_failure}, token=self.service_token)
-        record_event(self.home, 'child_finished', child_id=child['child_id'], status=status)
+        self.record_diagnostic('child_finished', child_id=child['child_id'], status=status)
         self.events.put(('children', None))
         return completed
 

@@ -162,3 +162,28 @@ def test_long_nested_session_survives_failed_upgrade(tmp_path, monkeypatch):
     result = upgrade(tmp_path / 'code', home, from_source=package['artifact']['path'], sha256=package['artifact']['sha256'])
     assert result['recovery'] == 'restored'
     assert session.read_bytes() == b'long session bytes'
+
+
+def test_failed_upgrade_retains_diagnostic_timeline_without_exception_secrets(tmp_path, monkeypatch):
+    import json
+    from test_dist_install import _build
+    from hostrun import agent_service
+    package = _build(tmp_path)
+    home = tmp_path / 'home'
+    original = agent_service.AgentService(home, token='local')
+    original.create_task({'schema_version': 1, 'operation_id': 'seed', 'title': 'private conversation'}, token='local')
+
+    def fail_schema(*args, **kwargs):
+        raise RuntimeError('sk-test-secret-must-never-be-exported')
+
+    monkeypatch.setattr(agent_service, 'AgentService', fail_schema)
+    result = upgrade(tmp_path / 'code', home, from_source=package['artifact']['path'], sha256=package['artifact']['sha256'])
+    assert result['recovery'] == 'restored'
+    text = (home / 'diagnostics/events.jsonl').read_text(encoding='utf-8')
+    events = [json.loads(line) for line in text.splitlines()]
+    assert [event['event'] for event in events] == [
+        'upgrade_started', 'backup_created', 'schema_migration',
+        'recovery_started', 'recovery_completed', 'result',
+    ]
+    assert events[-1]['code'] == 'schema_upgrade_failed'
+    assert 'sk-test-secret' not in text and 'private conversation' not in text
