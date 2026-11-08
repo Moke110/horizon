@@ -146,6 +146,13 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                             event = json.loads(incoming.readline())
                             if event['kind'] == 'state' and predicate(event['data']): return event['data']
                     wait_state(lambda state: True)
+                    send({'action':'export_diagnostics'})
+                    while True:
+                        diagnostic_event=json.loads(incoming.readline())
+                        if diagnostic_event['kind']=='notice':
+                            assert '诊断报告已导出' in diagnostic_event['data']
+                            assert list((tmp_path/'diagnostics'/'reports').glob('*/summary.md'))
+                            break
                     send({'action': 'configure', 'provider': 'test', 'key': 'secret'})
                     assert query_started.wait(2)
                     send({'action': 'configure', 'provider': 'test', 'key': 'second'})

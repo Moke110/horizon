@@ -9,6 +9,7 @@ import threading
 import socket
 import secrets
 import uuid
+from hostrun.diagnostics import record_event, export_report
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -61,6 +62,7 @@ def serve(resolved):
     service = AgentService(desktop_home(), token=token)
     app.home = service.home
     app.service, app.service_token = service, token
+    record_event(service.home, "desktop_started")
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
     chats = service.list_tasks(token=token)
@@ -123,7 +125,11 @@ def serve(resolved):
                 if configuring.is_set() and action in ('configure', 'refresh_models', 'select_model', 'send'):
                     raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
                 if action == 'ready': ui_ready.set()
+                elif action == 'export_diagnostics':
+                    report = export_report(service.home, service.home / 'diagnostics' / 'reports', code=code, tasks=service.list_turns(token=token))
+                    emit('notice', '诊断报告已导出：' + str(report))
                 elif action == 'exit':
+                    record_event(service.home, 'desktop_exit')
                     exiting.set()
                     for turn in service.recoverable_turns(token=token):
                         while turn['status'] == 'running':
@@ -140,6 +146,7 @@ def serve(resolved):
                     turn_id = cmd.get('turn_id') or getattr(app,'turn',{}).get('turn_id')
                     target = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn_id)
                     service.transition_turn({'schema_version':1,'operation_id':cmd.get('operation_id') or str(uuid.uuid4()),'turn_id':turn_id,'expected_version':target['version'],'action':'resume' if action == 'resume_turn' else 'cancel'},token=token)
+                    record_event(service.home, 'task_transition', turn_id=turn_id, status='running' if action == 'resume_turn' else 'cancelled')
                     if action != 'resume_turn' and (getattr(app,'turn',None) or {}).get('turn_id') == turn_id: app.stop()
                 elif action == 'console': app.answers.put(str(cmd['text']))
                 elif not app.busy:
