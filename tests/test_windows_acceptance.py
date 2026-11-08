@@ -17,7 +17,8 @@ def test_collector_without_runtime_does_not_copy_raw_sensitive_events(tmp_path):
         '{"schema_version":1,"event":"error","message":"private-body-should-not-copy","api_key":"secret-should-not-copy"}\n',
         encoding='utf-8',
     )
-    env = dict(os.environ, HORIZON_DATA_HOME=str(diagnostics.parent), LOCALAPPDATA=str(tmp_path / 'no-runtime'))
+    env = dict(os.environ, HORIZON_DATA_HOME=str(diagnostics.parent), LOCALAPPDATA=str(tmp_path / 'no-runtime'),
+               PATH=os.environ['SystemRoot'] + r'\System32;' + os.environ['SystemRoot'])
     result = subprocess.run(['cmd.exe', '/d', '/c', '3-collect.cmd', '--quiet'],
                             cwd=tmp_path, env=env, capture_output=True, timeout=30)
     assert result.returncode == 0, result.stderr
