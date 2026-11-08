@@ -174,3 +174,5 @@ Desktop conversations retain their model context when you continue a completed t
 Model setup: choose a provider and enter its API key. Horizon queries the provider for models visible to that credential; choose a model in the lower-right conversation menu. Refresh reloads the list without re-entering the key. An advertised model may still require account permissions or quota. Custom OpenAI-compatible services additionally require their API base URL.
 
 The built-in Agent can delegate bounded development-tool tasks to independent child sessions. The Trace tab shows their role, parent/child session identities, input version, stable result reference and success or failure. These initial read-only development roles are not Voyager, Editor or Keeper.
+
+Desktop conversations recover unfinished turns after an unexpected process exit. Committed child results are reused. This development stage exposes read-only and restricted child tools for recoverable turns; legacy mutating workflows are not automatically replayed. The Trace tab separates execution from material waiting, knowledge proposals and delivery.
