@@ -57,7 +57,7 @@ class DesktopWorker:
         request_id = str(event.get('requestId', ''))
         if not request_id or len(request_id) > 256:
             raise ValueError('Invalid delegation request')
-        operation = str(uuid.uuid5(uuid.UUID(self.task_id), request_id))
+        operation = str(uuid.uuid5(uuid.UUID(self.task_id), json.dumps([self.input_version, request_id])))
         child = self.service.start_child({'schema_version': 1, 'operation_id': operation,
             'task_id': self.task_id, 'role': event.get('role'), 'input_text': event.get('input'),
             'input_version': self.input_version}, token=self.service_token)
