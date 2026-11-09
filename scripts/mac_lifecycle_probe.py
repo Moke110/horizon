@@ -1,4 +1,5 @@
 """Native experimental kqueue supervisor; not production containment."""
+from contextlib import closing
 import json
 import os
 import platform
@@ -10,7 +11,7 @@ from pathlib import Path
 
 
 def helper(owner, worker):
-    with select.kqueue() as queue:
+    with closing(select.kqueue()) as queue:
         event = select.kevent(owner, filter=select.KQ_FILTER_PROC,
                              flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                              fflags=select.KQ_NOTE_EXIT)
@@ -31,7 +32,7 @@ def run_case(kill_helper):
         watcher = subprocess.Popen([sys.executable, __file__, 'helper', str(owner.pid),
                                     str(worker.pid)], stdout=subprocess.PIPE, text=True)
         processes.append(watcher)
-        with select.kqueue() as ready_queue:
+        with closing(select.kqueue()) as ready_queue:
             ready_queue.control([select.kevent(watcher.stdout.fileno(),
                 filter=select.KQ_FILTER_READ, flags=select.KQ_EV_ADD)], 0, 0)
             if not ready_queue.control(None, 1, 10):
