@@ -1,0 +1,25 @@
+name: Mac lifecycle candidate probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record native environment
+        run: |
+          uname -a
+          sw_vers
+          xcodebuild -version
+          test "$(uname -m)" = arm64
+      - name: Probe process group containment
+        run: python3 scripts/mac_lifecycle_probe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-lifecycle-evidence
+          path: mac-lifecycle-report.json
+          if-no-files-found: error
