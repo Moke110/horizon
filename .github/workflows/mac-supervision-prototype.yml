@@ -1,0 +1,26 @@
+name: Mac controlled supervision prototype
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prototype:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native development host
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          xcrun --show-sdk-version
+          python3 --version
+      - name: Run controlled registration experiment
+        run: python3 scripts/mac_supervision_prototype/run.py --output prototype-report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-supervision-prototype-evidence
+          path: prototype-report/
+          if-no-files-found: error
