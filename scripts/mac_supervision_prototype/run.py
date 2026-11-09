@@ -1,5 +1,6 @@
 """Cooperative registration experiment; not kernel-enforced containment."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,43 +18,47 @@ def case(name):
     ready_r, ready_w = os.pipe()
     go_r, go_w = os.pipe()
     children = []
+    reaped = set()
     result = {'case': name, 'harness_cleanup_counted': False}
     try:
         for role in ('owner', 'broker', 'worker'):
             pid = os.fork()
             if pid == 0:
-                keep = {cleanup_r}
-                if role == 'owner':
-                    keep.add(owner_w)
-                elif role == 'broker':
-                    keep.add(broker_w)
-                else:
-                    keep.update((owner_r, broker_r, ready_w, go_r))
-                for fd in (owner_r, owner_w, broker_r, broker_w, cleanup_r, cleanup_w, ready_r, ready_w, go_r, go_w):
-                    if fd not in keep:
-                        os.close(fd)
-                if role != 'worker':
-                    os.read(cleanup_r, 1)
-                    os._exit(0)
-                os.setsid()
-                os.write(ready_w, b'R')  # registration before business work
-                watched = [cleanup_r, owner_r, broker_r, go_r]
-                started = False
-                while True:
-                    readable, _, _ = select.select(watched, [], [])
-                    if cleanup_r in readable:
+                try:
+                    keep = {cleanup_r}
+                    if role == 'owner':
+                        keep.add(owner_w)
+                    elif role == 'broker':
+                        keep.add(broker_w)
+                    else:
+                        keep.update((owner_r, broker_r, ready_w, go_r))
+                    for fd in (owner_r, owner_w, broker_r, broker_w, cleanup_r, cleanup_w, ready_r, ready_w, go_r, go_w):
+                        if fd not in keep:
+                            os.close(fd)
+                    if role != 'worker':
+                        os.read(cleanup_r, 1)
                         os._exit(0)
-                    # Death wins over GO when both are observable.
-                    if owner_r in readable or broker_r in readable:
-                        if name != 'unregistered_negative':
+                    os.setsid()
+                    os.write(ready_w, b'R')  # registration before business work
+                    watched = [cleanup_r, owner_r, broker_r, go_r]
+                    started = False
+                    while True:
+                        readable, _, _ = select.select(watched, [], [])
+                        if cleanup_r in readable:
                             os._exit(0)
-                        watched = [cleanup_r, go_r] if not started else [cleanup_r]
-                    if go_r in readable and not started:
-                        if os.read(go_r, 1) != b'G':
-                            os._exit(0)
-                        started = True
-                        os.write(ready_w, b'W')
-                        watched.remove(go_r)
+                        # Death wins over GO when both are observable.
+                        if owner_r in readable or broker_r in readable:
+                            if name != 'lease_ignoring_negative':
+                                os._exit(0)
+                            watched = [cleanup_r, go_r] if not started else [cleanup_r]
+                        if go_r in readable and not started:
+                            if os.read(go_r, 1) != b'G':
+                                os._exit(0)
+                            started = True
+                            os.write(ready_w, b'W')
+                            watched.remove(go_r)
+                finally:
+                    os._exit(2)
             children.append(pid)
         for fd in (owner_r, owner_w, broker_r, broker_w, cleanup_r, ready_w, go_r):
             os.close(fd)
@@ -70,14 +75,24 @@ def case(name):
         # EOF means worker closed its evidence descriptor, not kernel exit proof.
         readable = select.select([ready_r], [], [], 5)[0]
         closed = bool(readable) and os.read(ready_r, 1) == b''
-        result.update(status='observed_exit' if closed else 'survived',
+        exited = False
+        while closed and time.monotonic() - started < 5:
+            if os.waitpid(children[2], os.WNOHANG)[0]:
+                reaped.add(children[2])
+                exited = True
+                break
+            time.sleep(0.001)
+        result.update(status='observed_exit' if exited else 'survived',
+                      worker_reaped_before_cleanup=exited,
                       elapsed_seconds=time.monotonic() - started,
                       worker_evidence_closed=closed)
+    except Exception as error:
+        result.update(status='blocked', error=type(error).__name__)
     finally:
         os.close(cleanup_w)
         # Only own unreaped direct children: no reused PID or global-name targeting.
         deadline = time.monotonic() + 5
-        pending = set(children)
+        pending = set(children) - reaped
         while pending and time.monotonic() < deadline:
             for pid in list(pending):
                 if os.waitpid(pid, os.WNOHANG)[0]:
@@ -87,7 +102,14 @@ def case(name):
         result['harness_reaped_all'] = not pending
         for pid in pending:
             os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
+        kill_deadline = time.monotonic() + 5
+        while pending and time.monotonic() < kill_deadline:
+            for pid in list(pending):
+                if os.waitpid(pid, os.WNOHANG)[0]:
+                    pending.remove(pid)
+            if pending:
+                time.sleep(0.01)
+        result['fallback_remaining_children'] = len(pending)
         for fd in (owner_r, owner_w, broker_r, broker_w, cleanup_r, ready_r, ready_w, go_r, go_w):
             try:
                 os.close(fd)
@@ -103,8 +125,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     report = {'status': 'blocked', 'results': [], 'architecture': platform.machine(),
               'os': platform.system(), 'release': platform.release(),
+              'macos': platform.mac_ver()[0], 'python': platform.python_version(),
+              'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               'scope': 'cooperative direct-child fixtures only; not production containment',
-              'limitations': ['No enforced spawn broker; unregistered worker can ignore leases.',
+              'limitations': ['No enforced spawn broker; registered worker can ignore leases.',
                               'No fork/exec inheritance guarantee or real GUI.',
                               'Evidence EOF is not precise kernel exit timing.',
                               'Owner and broker survivors are harness-cleaned, not candidate-cleaned.',
@@ -112,9 +136,12 @@ def main():
     try:
         if platform.system() != 'Darwin' or platform.machine() != 'arm64':
             raise RuntimeError('native_apple_silicon_required')
-        for name in ('owner_killed', 'broker_killed', 'owner_before_go', 'unregistered_negative'):
+        for name in ('owner_killed', 'broker_killed', 'owner_before_go', 'lease_ignoring_negative'):
             report['results'].append(case(name))
-        report['status'] = 'incomplete'
+        expected = ['observed_exit', 'observed_exit', 'observed_exit', 'survived']
+        report['status'] = 'incomplete' if all(
+            r['status'] == e and r['harness_reaped_all']
+            for r, e in zip(report['results'], expected)) else 'blocked'
     except Exception as error:
         report['error'] = type(error).__name__
     (args.output / 'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
