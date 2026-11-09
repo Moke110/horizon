@@ -69,7 +69,8 @@ def case(name):
             os.write(go_w, b'G')
             if not select.select([ready_r], [], [], 5)[0] or os.read(ready_r, 1) != b'W':
                 raise RuntimeError('work_start_timeout')
-        result['work_started'] = name != 'owner_before_go'
+        result['go_sent'] = name != 'owner_before_go'
+        result['work_start_acknowledged'] = name != 'owner_before_go'
         started = time.monotonic()
         os.kill(children[1 if name == 'broker_killed' else 0], signal.SIGKILL)
         # EOF means worker closed its evidence descriptor, not kernel exit proof.
@@ -77,12 +78,14 @@ def case(name):
         closed = bool(readable) and os.read(ready_r, 1) == b''
         exited = False
         while closed and time.monotonic() - started < 5:
-            if os.waitpid(children[2], os.WNOHANG)[0]:
+            waited, wait_status = os.waitpid(children[2], os.WNOHANG)
+            if waited:
                 reaped.add(children[2])
+                result['worker_exit_code'] = os.waitstatus_to_exitcode(wait_status)
                 exited = True
                 break
             time.sleep(0.001)
-        result.update(status='observed_exit' if exited else 'survived',
+        result.update(status=('observed_exit' if result['worker_exit_code'] == 0 else 'abnormal_exit') if exited else 'survived',
                       worker_reaped_before_cleanup=exited,
                       elapsed_seconds=time.monotonic() - started,
                       worker_evidence_closed=closed)
