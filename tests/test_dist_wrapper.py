@@ -109,7 +109,7 @@ def test_wrapper_text_is_a_fully_quoted_no_path_launcher():
     assert text.splitlines() == [
         "@echo off",
         'cd /d "%~dp0.."',
-        '"%~dp0..\\runtime\\python.exe" -m hostrun.cli %*',
+        '"%~dp0..\\runtime\\python.exe" -B -m hostrun.cli %*',
     ]
     # The runtime is addressed relative to the wrapper, never through PATH.
     assert "%~dp0..\\runtime\\python.exe" in text
@@ -142,7 +142,7 @@ def test_console_script_source_mode_matches_the_pinned_launcher():
     assert text == (
         "title horizon-console\n"
         'cd /d "C:\\horizon"\n'
-        '"C:/horizon/runtime/python.exe" -m hostrun.cli --code "C:\\horizon" '
+        '"C:/horizon/runtime/python.exe" -B -m hostrun.cli --code "C:\\horizon" '
         '--archive "C:\\papers" console %*\n'
     )
     assert console.script_text(code, archive, python) == text
@@ -344,7 +344,7 @@ def test_console_source_mode_bytes_are_unchanged(tmp_path):
     assert text == (
         "title horizon-console\n"
         f'cd /d "{code}"\n'
-        f'"{python}" -m hostrun.cli --code "{code}" --archive "{archive}" console %*\n'
+        f'"{python}" -B -m hostrun.cli --code "{code}" --archive "{archive}" console %*\n'
     )
 
 

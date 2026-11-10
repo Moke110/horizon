@@ -35,7 +35,7 @@ LOCK_REL = Path(".horizon") / "dist.lock.json"
 _WRAPPER_LINES = (
     "@echo off",
     'cd /d "%~dp0.."',
-    '"%~dp0..\\runtime\\python.exe" -m hostrun.cli %*',
+    '"%~dp0..\\runtime\\python.exe" -B -m hostrun.cli %*',
 )
 
 
@@ -97,6 +97,6 @@ def console_script_text(
     return (
         f"title {CONSOLE_TITLE}\n"
         f'cd /d "{Path(code)}"\n'
-        f'"{python}" -m hostrun.cli --code "{Path(code)}" '
+        f'"{python}" -B -m hostrun.cli --code "{Path(code)}" '
         f'--archive "{Path(archive)}" console %*\n'
     )

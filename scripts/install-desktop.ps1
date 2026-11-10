@@ -13,7 +13,7 @@ if ($ShortcutDirectory) {
 foreach ($destination in $destinations) {
     $link = $shell.CreateShortcut($destination)
     $link.TargetPath = $python
-    $link.Arguments = '-X utf8 -m hostrun.desktop --code "' + $code + '" --archive "' + $archive + '"'
+    $link.Arguments = '-B -X utf8 -m hostrun.desktop --code "' + $code + '" --archive "' + $archive + '"'
     $link.WorkingDirectory = $code
     $link.Description = 'Horizon Research Agent'
     $link.Save()

@@ -47,7 +47,7 @@ def main():
     shutil.copyfile(ROOT / 'common.py', args.output / 'common.py')
     shutil.copyfile(ROOT / 'installer/cleanup-runtime-inputs.json', args.output / 'runtime-inputs.json')
     (args.output / 'cleanup-tool.cmd').write_bytes(
-        b'@echo off\r\n"%~dp0runtime\\python.exe" -X utf8 -m hostrun.cleanup_cli %*\r\nexit /b %errorlevel%\r\n')
+        b'@echo off\r\n"%~dp0runtime\\python.exe" -B -X utf8 -m hostrun.cleanup_cli %*\r\nexit /b %errorlevel%\r\n')
     files = {path.relative_to(args.output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(args.output.rglob('*')) if path.is_file()}
     (args.output / 'tool-manifest.json').write_text(json.dumps({

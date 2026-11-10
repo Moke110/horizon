@@ -38,7 +38,7 @@ async function main() {
   const python = process.env.HORIZON_PYTHON || install.paths?.python;
   if (!python) throw new Error("Horizon Python runtime is missing");
   const configuration = await new Promise<Record<string, any>>((resolveConfig, reject) => {
-    const reader = spawn(python, ["-X", "utf8", "-m", "hostrun.model_config", home],
+    const reader = spawn(python, ["-B", "-X", "utf8", "-m", "hostrun.model_config", home],
       { cwd: code, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "", error = "";
     reader.stdout.setEncoding("utf8");
@@ -153,7 +153,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         if (p.module === "archive.cli" && ["card-put", "prop-put", "apply-proposal", "apply-group", "apply-decisions", "migrate-v2", "migrate-v3"].includes(args[0])) throw new Error("Knowledge mutations require the console's user-review workflow");
         if (p.module === "library.cli" && ["setup", "evict", "decisions"].includes(args[0])) throw new Error("This operation requires user interaction in the console");
         return await new Promise((resolveResult, reject) => {
-          const child = spawn(python, ["-X", "utf8", "-m", p.module, ...args], { cwd: code, windowsHide: true,
+          const child = spawn(python, ["-B", "-X", "utf8", "-m", p.module, ...args], { cwd: code, windowsHide: true,
             shell: false, signal, env: { ...process.env, PYTHONUTF8: "1" } });
           let output = "";
           child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
@@ -236,7 +236,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     if (managed) {
       const header = SessionManager.inMemory(code, { id: sessionId }).getHeader();
       const sessionFile = await new Promise<string>((ready, reject) => {
-        const guardian = spawn(python, ["-X", "utf8", "-m", "hostrun.pi_session", home, sessionId],
+        const guardian = spawn(python, ["-B", "-X", "utf8", "-m", "hostrun.pi_session", home, sessionId],
           { cwd: code, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
         let closing = false, acknowledged = false, output = "";
         const timeout = setTimeout(() => { guardian.kill(); reject(new Error("Managed Pi session unavailable")); }, 10000);
