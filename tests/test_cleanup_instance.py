@@ -887,7 +887,8 @@ def test_layout_pins_root_before_enumeration(tmp_path, monkeypatch):
     original = Path.iterdir
     attempts = []
     def swap_root(path):
-        if path == instance['root'] and not attempts:
+        from hostrun.windows_cleanup import io_path
+        if path == io_path(instance['root']) and not attempts:
             try:
                 path.rename(tmp_path / 'moved-original')
             except OSError:
@@ -1063,7 +1064,8 @@ def test_package_install_refuses_current_junction_inserted_after_absence_check(t
     inserted = []
     def race(path):
         present = original(path)
-        if path == code and not present and not inserted:
+        from hostrun.windows_cleanup import io_path
+        if path == io_path(code) and not present and not inserted:
             _winapi.CreateJunction(str(external), str(code))
             inserted.append(True)
         return present
@@ -2263,6 +2265,7 @@ def test_internal_upgrade_recovers_version_publication_receipt_failure(tmp_path,
     if failure_phase == 'before_publish':
         import ctypes
         from ctypes import wintypes as w
+        from hostrun.windows_cleanup import io_path
         native = ctypes.WinDLL
         kernel = native('kernel32', use_last_error=True)
         class RenameInfo(ctypes.Structure):
@@ -2274,7 +2277,7 @@ def test_internal_upgrade_recovers_version_publication_receipt_failure(tmp_path,
             if kind == 3:
                 info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
                 destination = ctypes.wstring_at(ctypes.addressof(info) + RenameInfo.FileName.offset, info.FileNameLength // 2)
-                if not failed and Path(destination) == version:
+                if not failed and Path(destination) == io_path(version):
                     failed = True
                     ctypes.set_last_error(5)
                     return 0
@@ -2326,6 +2329,7 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     before_id = (code / 'README.md').stat().st_ino
     conflict_observed = []
     if failure == 'sharing_conflict':
+        from hostrun.windows_cleanup import io_path
         held = PinnedEntry(code / 'README.md')
         native = ctypes.WinDLL
         kernel = native('kernel32', use_last_error=True)
@@ -2333,7 +2337,7 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
             kernel.CreateFileW.argtypes = create_file.argtypes
             kernel.CreateFileW.restype = create_file.restype
             result = kernel.CreateFileW(path, access, *args)
-            if Path(path) == code / 'README.md' and access & 0x10000 and held.handle is not None:
+            if Path(path) == io_path(code / 'README.md') and access & 0x10000 and held.handle is not None:
                 error = ctypes.get_last_error()
                 conflict_observed.append(result == ctypes.c_void_p(-1).value and error == 32)
                 held.close()
@@ -2388,6 +2392,7 @@ import ctypes, os, sys
 from ctypes import wintypes as w
 from pathlib import Path
 from hostrun.managed_upgrade_operation import run_upgrade
+from hostrun.windows_cleanup import io_path
 native = ctypes.WinDLL
 kernel = native('kernel32', use_last_error=True)
 phase = sys.argv[5]
@@ -2400,7 +2405,7 @@ def set_info(handle, kind, buffer, size):
     if kind == 3:
         info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
         destination = ctypes.wstring_at(ctypes.addressof(info) + RenameInfo.FileName.offset, info.FileNameLength // 2)
-        is_version = Path(destination) == Path(sys.argv[2]) / 'version.json'
+        is_version = Path(destination) == io_path(Path(sys.argv[2]) / 'version.json')
         if is_version and phase == 'version_before': os._exit(77)
     result = kernel.SetFileInformationByHandle(handle, kind, buffer, size)
     if kind == 3 and result and (phase == 'code_move' or (is_version and phase == 'version_after')): os._exit(77)

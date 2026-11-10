@@ -7,6 +7,19 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 
+def io_path(path):
+    """Extended Windows path for IO only; keep enrollment/comparisons canonical."""
+    path = Path(path)
+    if os.name != 'nt':
+        return path
+    value = os.path.abspath(path)
+    if value.startswith('\\\\?\\'):
+        return Path(value)
+    if value.startswith('\\\\'):
+        return Path('\\\\?\\UNC\\' + value[2:])
+    return Path('\\\\?\\' + value)
+
+
 class PinnedEntry:
     def __init__(self, path, *, delete=False, create_parent=None, create_share=1, create_delete=True, writable=False, create_file=False):
         self.path = Path(path)
@@ -22,7 +35,7 @@ class PinnedEntry:
             self.handle = _create_entry(create_parent.handle, self.path.name, create_share, create_delete,
                                             directory=not create_file, writable=writable)
         else:
-            self.handle = self.api.CreateFileW(str(self.path), 0x81 | (2 if writable else 0) | (0x10000 if delete else 0),
+            self.handle = self.api.CreateFileW(str(io_path(self.path)), 0x81 | (2 if writable else 0) | (0x10000 if delete else 0),
                                               3, None, 3, 0x02200000, None)
         if self.handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -63,7 +76,7 @@ class PinnedEntry:
             raise ctypes.WinError(ctypes.get_last_error())
 
     def rename(self, destination):
-        value = str(destination)
+        value = str(io_path(destination))
         class RenameInfo(ctypes.Structure):
             _fields_ = [('ReplaceIfExists', w.BOOL), ('RootDirectory', w.HANDLE),
                         ('FileNameLength', w.DWORD), ('FileName', w.WCHAR * (len(value) + 1))]
@@ -147,7 +160,7 @@ def remove_owned_files(root, relative_paths, validate, *, removed=None, identiti
                 if entry.directory:
                     raise ValueError('Only inventoried files may be deleted')
                 if identities and relative in identities:
-                    stat = target.stat()
+                    stat = io_path(target).stat()
                     if identities[relative] != [stat.st_dev, stat.st_ino]:
                         raise ValueError('Inventoried file identity changed')
                 validate()
@@ -164,13 +177,13 @@ def remove_empty_children(root, names, validate, removed):
             if name not in ('app', 'data', 'archive'):
                 raise ValueError('Unknown owned directory')
             path = root / name
-            if not path.exists():
+            if not io_path(path).exists():
                 continue
             with ExitStack() as held:
                 pin = PinnedEntry(path, delete=True)
                 held.callback(pin.close)
                 validate()
-                if pin.directory and not any(path.iterdir()):
+                if pin.directory and not any(io_path(path).iterdir()):
                     pin.delete()
                     removed.append(name + '/')
 
@@ -181,15 +194,15 @@ def remove_empty_inventory(root, inventory, validate, removed):
         path = root / relative
         if not any(relative == prefix or relative.startswith(prefix + '/') for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups')) or '..' in Path(relative).parts or ':' in relative:
             raise ValueError('Invalid directory inventory')
-        if not path.exists():
+        if not io_path(path).exists():
             continue
         with pin_ancestors(path.parent), ExitStack() as held:
             pin = PinnedEntry(path, delete=True)
             held.callback(pin.close)
             validate()
-            stat = path.stat()
+            stat = io_path(path).stat()
             if inventory[relative] != [stat.st_dev, stat.st_ino]:
                 raise ValueError('Directory inventory identity changed')
-            if pin.directory and not any(path.iterdir()):
+            if pin.directory and not any(io_path(path).iterdir()):
                 pin.delete()
                 removed.append(relative + '/')
