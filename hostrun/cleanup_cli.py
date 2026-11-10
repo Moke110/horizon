@@ -36,6 +36,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('prepare')
+    shortcut = commands.add_parser('shortcut', help='Create the fixed instance-owned launch shortcut')
+    shortcut.add_argument('instance_id')
     install = commands.add_parser('install')
     install.add_argument('instance_id')
     install.add_argument('--package', required=True, type=Path)
@@ -63,6 +65,8 @@ def main(argv=None):
                 cleanup.initialize_layout(control, result['instance_id'])
             elif args.command == 'install':
                 result = cleanup.install_test_package(control, args.instance_id, args.package, args.sha256)
+            elif args.command == 'shortcut':
+                result = cleanup.create_test_shortcut(control, args.instance_id)
             elif args.command == 'recover':
                 from hostrun.managed_upgrade_operation import recover_upgrade
                 cleanup.preview(control, args.instance_id)
