@@ -1754,3 +1754,61 @@ def test_managed_real_desktop_failure_exports_category_without_raw_traceback(tmp
     assert str(reports[0]) in result.stdout
     events = (reports[0] / 'events.jsonl').read_text(encoding='utf-8')
     assert 'RuntimeError' in events
+
+
+@pytest.mark.parametrize('managed,connected', [(True, True), (False, True), (True, False)])
+def test_managed_renderer_raw_stderr_is_not_persisted_and_exit_is_reported(tmp_path, managed, connected):
+    import json
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    home = instance['home'] if managed else tmp_path.parent / 'ordinary'
+    source = Path(__file__).resolve().parents[1]
+    tool = tmp_path.parent / 'tool'
+    shutil.copytree(source / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
+    shutil.copyfile(source / 'common.py', tool / 'common.py')
+    (tool / 'sitecustomize.py').write_text(
+        'import ctypes\nctypes.windll.user32.MessageBoxW = lambda *args: 1\n', encoding='utf-8')
+    desktop = instance['code'] / 'desktop'
+    runtime = desktop / 'node_modules/electron/dist'
+    runtime.mkdir(parents=True)
+    shutil.copyfile(shutil.which('node'), runtime / 'electron.exe')
+    (desktop / 'package.json').write_text(json.dumps({'main': 'actor.cjs'}))
+    marker = 'SYNTHETIC-RENDERER-SECRET-DO-NOT-LOG'
+    (desktop / 'actor.cjs').write_text('''
+const fs = require('fs');
+const net = require('net');
+const secret = 'SYNTHETIC-RENDERER-SECRET-DO-NOT-LOG';
+process.stderr.write(secret);
+if (process.env.ELECTRON_LOG_FILE) fs.writeFileSync(process.env.ELECTRON_LOG_FILE, secret);
+if (process.env.TEST_RENDERER_EARLY_EXIT === '1') process.exit(17);
+const socket = net.connect(Number(process.env.HORIZON_DESKTOP_PORT), '127.0.0.1', () => {
+  socket.write(process.env.HORIZON_DESKTOP_TOKEN + '\\n');
+});
+socket.once('data', () => process.exit(17));
+setTimeout(() => process.exit(18), 8000);
+''', encoding='utf-8')
+    result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.desktop',
+                             '--code', str(instance['code']), '--archive', str(instance['archive'])],
+                            cwd=tool, env={**os.environ, 'PYTHONPATH': os.pathsep.join((str(tool), str(source))),
+                                           'HORIZON_DATA_HOME': str(home),
+                                           'ELECTRON_LOG_FILE': str(tmp_path.parent / 'inherited.log'),
+                                           'ELECTRON_ENABLE_LOGGING': '1',
+                                           'TEST_RENDERER_EARLY_EXIT': '0' if connected else '1'},
+                            capture_output=True, text=True, encoding='utf-8', timeout=20)
+    if not managed:
+        assert result.returncode == 1
+        assert marker in (home / 'desktop-electron.log').read_text(encoding='utf-8')
+        return
+    assert result.returncode == 2, result.stderr
+    assert not (instance['home'] / 'desktop-electron.log').exists()
+    assert marker not in result.stdout + result.stderr
+    report = next((tmp_path.parent / 'test-reports' / instance['instance_id']).glob('horizon-report-*'))
+    events = [json.loads(line) for line in (report / 'events.jsonl').read_text().splitlines()]
+    category = 'renderer_exit' if connected else 'renderer_start_failed'
+    assert any(event.get('code') == category and event.get('exit_code') == 17 for event in events)
+    assert all(marker not in path.read_text(encoding='utf-8') for path in report.iterdir() if path.is_file())
