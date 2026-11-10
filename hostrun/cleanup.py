@@ -175,8 +175,17 @@ def preview(control_root, identity, *, mode='full'):
     preserve = [registration]
     data = [root / 'data', root / 'archive']
     (delete if mode == 'full' else preserve).extend(data)
+    candidates = set(inventory)
+    directories = set(application_directories)
+    if mode == 'full':
+        candidates.update(data_inventory)
+        directories.update(data_directories)
+        if model_update:
+            candidates.update((model_update['temporary'], model_update['backup']))
     return {'status': 'confirmation_required', 'instance_id': identity,
             'mode': mode, 'delete': [str(p) for p in delete],
+            'registered_file_candidates': [str(root / name) for name in sorted(candidates)],
+            'empty_directory_candidates': sorted({str(root / name) for name in directories} | {str(p) for p in delete if p.name in children}),
             'preserve': [str(p) for p in preserve], 'owned_children': sorted(children)}
 
 
@@ -345,14 +354,26 @@ def initialize_layout(control_root, identity):
 
 def collect_instance_report(control_root, identity, output):
     """Export allowlisted metadata with this tool's runtime, never the target app."""
+    with _instance_report(control_root, identity, output) as report:
+        return report
+
+
+@contextmanager
+def _instance_report(control_root, identity, output):
     preview(control_root, identity)
     control = Path(control_root).resolve(strict=True)
-    output = Path(output).resolve()
+    output = Path(os.path.abspath(output))
     if output.is_relative_to(control) or control.is_relative_to(output):
         raise InstanceInvalid('Unsafe report location')
-    from hostrun.diagnostics import export_report
+    from hostrun.diagnostics import pinned_report_directory, _write_report
+    with pinned_report_directory(output) as report:
+        _collect_report_metadata(control, identity, report, _write_report)
+        yield report
+
+
+def _collect_report_metadata(control, identity, report, write_report):
     root = control / identity
-    report = export_report(root / 'data', output, code=root / 'app')
+    write_report(root / 'data', report, code=root / 'app', tasks=())
     record = _read_registration(control / (identity + '.json'))
     database = root / 'data/horizon.sqlite3'
     expected = record.get('data_inventory', {}).get('data/horizon.sqlite3')
@@ -370,14 +391,17 @@ def collect_instance_report(control_root, identity, output):
         'status': 'incomplete' if missing else 'collected', 'missing': missing,
         'application_present': (root / 'app').is_dir(),
         'preserved_staging_residuals': residuals}), encoding='utf-8')
-    return report
 
 
 def cleanup_instance(control_root, identity, output, *, confirmation=None, mode='full'):
     plan = preview(control_root, identity, mode=mode)
     if confirmation != identity:
         return plan
-    report = collect_instance_report(control_root, identity, output)
+    with _instance_report(control_root, identity, output) as report:
+        return _cleanup_after_report(control_root, identity, report, mode)
+
+
+def _cleanup_after_report(control_root, identity, report, mode):
     if json.loads((report / 'instance.json').read_text(encoding='utf-8'))['status'] == 'incomplete':
         result = {'status': 'blocked', 'reason': 'diagnostics_incomplete', 'report': str(report)}
         (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
