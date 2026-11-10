@@ -21,6 +21,9 @@ CONTROL_MARKER = '.horizon-test-control.json'
 CONTROL_SCHEMA = {'schema_version': 1, 'purpose': 'isolated-horizon-test-instances'}
 SESSION_ID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 SESSION_DIRECTORY_PATTERN = r'data/agent/pi/sessions/' + SESSION_ID_PATTERN
+UPGRADE_DATA_PATTERN = r'data/(?:horizon\.sqlite3|agent/model\.json|agent/pi/sessions/' + SESSION_ID_PATTERN + r'/session\.jsonl)'
+UPGRADE_BACKUP_PATTERN = r'data/upgrade-backups/[0-9a-f]{32}/' + UPGRADE_DATA_PATTERN.removeprefix('data/')
+UPGRADE_DIRECTORY_PATTERN = r'data/upgrade-backups(?:/[0-9a-f]{32}(?:/agent(?:/pi(?:/sessions(?:/' + SESSION_ID_PATTERN + r')?)?)?)?)?'
 
 
 def control_directory():
@@ -114,11 +117,21 @@ def preview(control_root, identity, *, mode='full'):
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
+    snapshots = record.pop('data_backups', {})
+    if not isinstance(snapshots, dict) or any(
+            not re.fullmatch(r'[0-9a-f]{32}', name) or not isinstance(snapshot, dict)
+            or set(snapshot) != {'complete', 'files'} or type(snapshot['complete']) is not bool
+            or not isinstance(snapshot['files'], dict) or any(
+                not re.fullmatch(UPGRADE_DATA_PATTERN, source) or not isinstance(digest, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', digest) for source, digest in snapshot['files'].items())
+            for name, snapshot in snapshots.items()):
+        raise InstanceInvalid('Invalid data backup inventory')
     upgrade = record.pop('upgrade', None)
     if upgrade is not None and (not isinstance(upgrade, str) or not re.fullmatch(r'[0-9a-f]{32}', upgrade)):
         raise InstanceInvalid('Invalid upgrade identity')
     if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal', 'data/desktop.lock', 'data/desktop.activate'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
+            and not re.fullmatch(UPGRADE_BACKUP_PATTERN, name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
     if model_update is not None and (not isinstance(model_update, dict)
@@ -126,6 +139,7 @@ def preview(control_root, identity, *, mode='full'):
             or not all(re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', model_update[key]) for key in ('temporary', 'backup'))):
         raise InstanceInvalid('Invalid model update journal')
     if not isinstance(data_directories, dict) or any(name not in {'data/agent', 'data/agent/pi', 'data/agent/pi/sessions', 'data/diagnostics'}
+            and not re.fullmatch(UPGRADE_DIRECTORY_PATTERN, name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN, name) for name in data_directories):
         raise InstanceInvalid('Invalid data directory inventory')
     installation = record.pop('installation', None)
@@ -165,7 +179,7 @@ def preview(control_root, identity, *, mode='full'):
     for relative, expected in {**application_directories, **data_directories}.items():
         if (not isinstance(relative, str) or '..' in Path(relative).parts or ':' in relative
                 or not any(relative == prefix or relative.startswith(prefix + '/')
-                           for prefix in ('app/current', 'data/agent', 'data/diagnostics'))):
+                           for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups'))):
             raise InstanceInvalid('Invalid enrolled directory path')
         directory = root / relative
         if directory.is_symlink() or directory.is_junction():
@@ -285,7 +299,7 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'data_backups'):
                 record.pop(key, None)
         if not record.get('children') and any(root.iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')

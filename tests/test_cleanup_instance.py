@@ -1384,9 +1384,12 @@ def test_model_runtime_recovers_real_process_interruption(tmp_path, crash_at, ex
     import sys
     from hostrun.cleanup import initialize_layout, cleanup_instance
     from hostrun.embedded_agent import configure, runtime
+    from hostrun.managed_upgrade_data import backup_owned_data, restore_owned_data
+    from hostrun.cleanup import InstanceInvalid
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     configure(instance['home'], provider='test', model='first', api_key='SECRET')
+    snapshot = backup_owned_data(instance['home'])
     script = '''
 import ctypes, os, sys
 from pathlib import Path
@@ -1419,6 +1422,10 @@ configure(Path(sys.argv[1]), provider='test', model='second', api_key='SECRET')
     process = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, str(instance['home']), crash_at],
                              env=os.environ.copy(), capture_output=True, timeout=10)
     assert process.returncode == 74, process.stderr
+    before = {path: path.read_bytes() for path in (instance['home'] / 'agent').iterdir() if path.is_file()}
+    with pytest.raises(InstanceInvalid):
+        restore_owned_data(instance['home'], snapshot['snapshot_id'])
+    assert {path: path.read_bytes() for path in (instance['home'] / 'agent').iterdir() if path.is_file()} == before
     assert runtime(instance['home'])['model'] == expected
     result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
                               confirmation=instance['instance_id'])
@@ -1516,6 +1523,18 @@ def test_managed_pi_session_resumes_and_cleanup_removes_only_owned_files(tmp_pat
             assert 'SECRET' not in process.stdout + process.stderr
         assert 'First unique question' in json.dumps(requests[-1])
         assert protected == [True, True]
+        if residue == 'none':
+            from hostrun.managed_upgrade_data import backup_owned_data, restore_owned_data
+            session_path = instance['home'] / 'agent/pi/sessions' / session / 'session.jsonl'
+            before = session_path.read_bytes()
+            snapshot = backup_owned_data(instance['home'])
+            args = embedded_agent.argv(instance['home'], 'After snapshot', kind='intent_judgement', code=Path.cwd(), session_id=session)
+            process = subprocess.run(args, env={**os.environ, 'HORIZON_PYTHON': sys.executable},
+                                     capture_output=True, text=True, encoding='utf-8', timeout=20)
+            assert process.returncode == 0, process.stdout + process.stderr
+            assert session_path.read_bytes() != before
+            assert restore_owned_data(instance['home'], snapshot['snapshot_id'])['status'] == 'restored'
+            assert session_path.read_bytes() == before
     finally:
         server.shutdown()
         server.server_close()
@@ -1878,3 +1897,102 @@ def test_startup_rechecks_pending_upgrade_after_acquiring_lease(tmp_path, monkey
                             confirmation=instance['instance_id'])['status'] == 'cleaned'
     initialize_layout(tmp_path, instance['instance_id'])
     assert AgentService(instance['home'], token='test').list_tasks(token='test') == []
+
+
+def test_internal_upgrade_data_snapshot_restores_real_database_and_credentials(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.managed_upgrade_data import backup_owned_data, restore_owned_data
+    from hostrun.embedded_agent import configure, load_model_config
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    home = instance['home']
+    configure(home, provider='openai', model='test', api_key='before-upgrade')
+    service = AgentService(home, token='test')
+    original = service.create_task({'schema_version': 1, 'operation_id': 'first', 'title': 'before'}, token='test')
+    snapshot = backup_owned_data(home)
+    assert snapshot['status'] == 'backed_up'
+    configure(home, provider='openai', model='changed', api_key='after-upgrade')
+    service.create_task({'schema_version': 1, 'operation_id': 'second', 'title': 'after'}, token='test')
+    assert restore_owned_data(home, snapshot['snapshot_id'])['status'] == 'restored'
+    assert load_model_config(home)['apiKey'] == 'before-upgrade'
+    assert [task['task_id'] for task in AgentService(home, token='test').list_tasks(token='test')] == [original['task_id']]
+    assert cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports',
+                            confirmation=instance['instance_id'])['status'] == 'cleaned'
+
+
+def test_data_restore_partial_write_blocks_startup_and_retries_from_snapshot(tmp_path, monkeypatch):
+    import ctypes
+    from hostrun.cleanup import initialize_layout, InstanceInvalid
+    from hostrun.managed_upgrade_data import backup_owned_data, restore_owned_data
+    from hostrun.embedded_agent import configure, load_model_config
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='before')
+    snapshot = backup_owned_data(instance['home'])
+    configure(instance['home'], provider='test', model='second', api_key='after')
+    original = ctypes.WinDLL
+    kernel = original('kernel32', use_last_error=True)
+    def partial_write(handle, buffer, size, written, overlap):
+        kernel.WriteFile.argtypes = partial_write.argtypes
+        kernel.WriteFile(handle, buffer, min(size, 7), written, overlap)
+        ctypes.set_last_error(112)
+        return 0
+    class Proxy:
+        def __getattr__(self, name):
+            return partial_write if name == 'WriteFile' else getattr(kernel, name)
+    with monkeypatch.context() as patch:
+        patch.setattr(ctypes, 'WinDLL', lambda name, *a, **kw: Proxy() if name == 'kernel32' else original(name, *a, **kw))
+        with pytest.raises(OSError):
+            restore_owned_data(instance['home'], snapshot['snapshot_id'])
+    with pytest.raises(InstanceInvalid):
+        load_model_config(instance['home'])
+    assert restore_owned_data(instance['home'], snapshot['snapshot_id'])['status'] == 'restored'
+    assert load_model_config(instance['home'])['apiKey'] == 'before'
+
+
+@pytest.mark.parametrize('target', ['original', 'backup', 'backup_content'])
+def test_data_restore_preserves_foreign_or_changed_snapshot_files(tmp_path, target):
+    from hostrun.cleanup import initialize_layout, InstanceInvalid
+    from hostrun.managed_upgrade_data import backup_owned_data, restore_owned_data
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='before')
+    snapshot = backup_owned_data(instance['home'])
+    original = instance['home'] / 'agent/model.json'
+    backup = instance['home'] / 'upgrade-backups' / snapshot['snapshot_id'] / 'agent/model.json'
+    changed = original if target == 'original' else backup
+    if target != 'backup_content':
+        changed.rename(changed.with_suffix('.retained'))
+    changed.write_text('USER REPLACEMENT', encoding='utf-8')
+    before = original.read_bytes()
+    with pytest.raises(InstanceInvalid):
+        restore_owned_data(instance['home'], snapshot['snapshot_id'])
+    assert changed.read_text(encoding='utf-8') == 'USER REPLACEMENT'
+    assert original.read_bytes() == before
+
+
+def test_data_backup_refuses_external_wal_mode_without_creating_sidecars(tmp_path):
+    import sqlite3
+    from contextlib import closing
+    from hostrun.cleanup import initialize_layout, InstanceInvalid
+    from hostrun.managed_upgrade_data import backup_owned_data
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    AgentService(instance['home'], token='test')
+    path = instance['home'] / 'horizon.sqlite3'
+    journal = path.with_name(path.name + '-journal')
+    retained = path.with_name('saved-journal')
+    journal.rename(retained)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+    retained.rename(journal)
+    before = path.read_bytes()
+    with pytest.raises(InstanceInvalid):
+        backup_owned_data(instance['home'])
+    assert path.read_bytes() == before
+    assert not (instance['home'] / 'upgrade-backups').exists()
+    assert not path.with_name(path.name + '-wal').exists()
+    assert not path.with_name(path.name + '-shm').exists()
