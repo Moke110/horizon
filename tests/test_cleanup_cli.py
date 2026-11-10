@@ -56,9 +56,14 @@ def test_cli_prepare_preview_confirmation_and_repeated_cleanup(tmp_path, cli):
     assert (Path(collected['report']) / 'instance.json').exists()
     result = run('cleanup', identity, '--output', str(report), '--mode', 'keep-data', '--confirm', identity)
     assert result['status'] == 'uninstalled'
+    assert result['postverification']['status'] == 'verified'
+    assert result['next_action'] == 'review_process_evidence'
     assert unknown.exists()
     unknown.unlink()  # Only the test user removes their original file.
-    assert run('cleanup', identity, '--output', str(report), '--confirm', identity)['status'] == 'cleaned'
+    repeated = run('cleanup', identity, '--output', str(report), '--confirm', identity)
+    assert repeated['status'] == 'cleaned'
+    assert repeated['scope_complete'] is False
+    assert json.loads((Path(repeated['report']) / 'cleanup.json').read_text()) == repeated
     assert run('cleanup', identity, '--output', str(report), '--confirm', identity)['status'] == 'cleaned'
     assert Path(collected['report']).is_dir()
 

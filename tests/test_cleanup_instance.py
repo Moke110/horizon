@@ -24,6 +24,194 @@ def test_new_test_instance_never_adopts_existing_installation(tmp_path):
     assert first['home'] == first['root'] / 'data'
 
 
+def test_cleanup_reports_repeat_outcomes_and_postverification_without_process_claim(tmp_path):
+    import json
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    configure(instance['home'], provider='test', model='test', api_key='SECRET-POSTCHECK-MARKER')
+    first = cleanup_instance(tmp_path, identity, tmp_path.parent / 'first-report', confirmation=identity)
+    assert first['status'] == 'cleaned'
+    assert next(row for row in first['items'] if row['path'] == 'data/agent/model.json')['status'] == 'deleted'
+    assert first['postverification']['status'] == 'verified'
+    assert first['process_evidence']['status'] == 'unknown'
+    assert first['next_action'] == 'review_process_evidence'
+    second = cleanup_instance(tmp_path, identity, tmp_path.parent / 'second-report', confirmation=identity)
+    assert second['status'] == 'cleaned'
+    assert all(row['status'] == 'already_absent' for row in second['items'])
+    assert second['postverification']['status'] == 'verified'
+    assert second['scope_complete'] is False
+    assert json.loads((Path(second['report']) / 'cleanup.json').read_text()) == second
+    assert 'SECRET-POSTCHECK-MARKER' not in json.dumps(first)
+
+
+def test_cleanup_outcomes_preserve_replacement_and_redact_unknown_names(tmp_path):
+    import json
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    configure(instance['home'], provider='test', model='test', api_key='SECRET-CONTENT-MARKER')
+    model = instance['home'] / 'agent/model.json'
+    model.rename(tmp_path.parent / 'saved-model')
+    model.write_text('SECRET-REPLACEMENT-CONTENT')
+    (instance['root'] / 'SECRET-UNKNOWN-NAME').write_text('SECRET-UNKNOWN-CONTENT')
+    result = cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity)
+    assert result['status'] == 'partial'
+    row = next(item for item in result['items'] if item.get('path') == 'data/agent/model.json')
+    assert row['status'] == 'preserved' and row['reason'] == 'identity_mismatch'
+    assert any(item.get('reason') == 'unknown' and 'name_digest' in item for item in result['items'])
+    assert result['postverification']['status'] == 'residuals'
+    assert result['next_action'] == 'resolve_blockers'
+    assert model.read_text() == 'SECRET-REPLACEMENT-CONTENT'
+    assert 'SECRET-' not in json.dumps(result)
+    assert 'SECRET-' not in (Path(result['report']) / 'cleanup.json').read_text()
+
+
+def test_cleanup_shared_file_failure_is_reported_without_exception_details(tmp_path):
+    import json
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    from hostrun.windows_cleanup import PinnedEntry
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    configure(instance['home'], provider='test', model='test', api_key='SECRET-SHARING-CONTENT')
+    pin = PinnedEntry(instance['home'] / 'agent/model.json')
+    try:
+        result = cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity)
+    finally:
+        pin.close()
+    assert result['status'] == 'partial'
+    row = next(item for item in result['items'] if item.get('path') == 'data/agent/model.json')
+    assert row['status'] == 'failed' and row['reason'] == 'operation_incomplete'
+    assert result['next_action'] == 'resolve_blockers'
+    assert result['postverification']['status'] == 'residuals'
+    assert 'SECRET-' not in json.dumps(result)
+
+
+def test_cleanup_failed_final_listing_never_leaks_unknown_names(tmp_path, monkeypatch):
+    import json
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    (instance['root'] / 'SECRET-UNKNOWN-NAME').write_text('private')
+    original = Path.iterdir
+    listings = []
+    def iterdir(path):
+        if str(path).removeprefix('\\\\?\\') == str(instance['root']):
+            listings.append(True)
+            if len(listings) == 2:
+                raise OSError('SECRET-EXCEPTION-MESSAGE')
+        return original(path)
+    monkeypatch.setattr(Path, 'iterdir', iterdir)
+    result = cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity)
+    assert result['postverification']['status'] == 'failed'
+    assert result['next_action'] == 'resolve_blockers'
+    assert 'SECRET-' not in json.dumps(result)
+    assert 'SECRET-' not in (Path(result['report']) / 'cleanup.json').read_text()
+
+
+def test_cleanup_empty_directory_sharing_failure_is_not_reported_as_preserved(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.windows_cleanup import PinnedEntry
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    pin = PinnedEntry(instance['code'])
+    try:
+        result = cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity)
+    finally:
+        pin.close()
+    row = next(item for item in result['items'] if item.get('path') == 'app')
+    assert row['status'] == 'failed'
+    assert row['reason'] == 'empty_directory_not_removed'
+    assert result['next_action'] == 'resolve_blockers'
+
+
+def test_cleanup_busy_gate_returns_unobserved_result_schema(tmp_path):
+    from common import file_lock
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    with file_lock(tmp_path / (identity + '.gate'), blocking=False) as held:
+        assert held
+        result = cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity)
+    assert result['reason'] == 'instance_busy'
+    assert result['items'] == []
+    assert result['postverification']['status'] == 'not_performed'
+    assert result['process_evidence']['status'] == 'unknown'
+    assert result['next_action'] == 'resolve_blockers'
+    assert result['scope_complete'] is False
+
+
+@pytest.mark.parametrize('replacement', ['directory', 'missing', 'dangling_junction'])
+def test_keep_data_postcheck_refuses_changed_retained_container(tmp_path, monkeypatch, replacement):
+    import subprocess
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    original = Path.iterdir
+    listings = []
+    def iterdir(path):
+        if str(path).removeprefix('\\\\?\\') == str(instance['root']):
+            listings.append(True)
+            if len(listings) == 2:
+                instance['home'].rename(tmp_path.parent / 'retained-original-data')
+                if replacement == 'directory':
+                    instance['home'].mkdir()
+                elif replacement == 'dangling_junction':
+                    target = tmp_path.parent / 'junction-target'
+                    target.mkdir()
+                    linked = subprocess.run(['cmd', '/c', 'mklink', '/J', str(instance['home']), str(target)], capture_output=True, text=True)
+                    assert linked.returncode == 0, linked.stderr
+                    target.rmdir()
+        return original(path)
+    monkeypatch.setattr(Path, 'iterdir', iterdir)
+    result = cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity, mode='keep-data')
+    assert result['status'] == 'partial'
+    assert result['postverification']['status'] == 'failed'
+    assert result['next_action'] == 'resolve_blockers'
+
+
+@pytest.mark.parametrize('mode', ['full', 'keep-data'])
+def test_cleanup_postreport_is_written_while_gate_and_exclusive_lease_are_held(tmp_path, monkeypatch, mode):
+    import json, subprocess, sys
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    initialize_layout(tmp_path, identity)
+    original = Path.write_text
+    observed = []
+    script = '''
+import json,sys
+from pathlib import Path
+from common import file_lock
+from hostrun.cleanup import lifecycle_lock
+with file_lock(Path(sys.argv[1])/(sys.argv[2]+'.gate'),blocking=False) as gate:
+    with lifecycle_lock(Path(sys.argv[1])/(sys.argv[2]+'.lock'),exclusive=False) as lease:
+        print(json.dumps([gate,lease]))
+'''
+    def write(path, text, *args, **kwargs):
+        if path.name == 'cleanup.json':
+            if mode == 'keep-data':
+                with pytest.raises(OSError):
+                    instance['home'].rename(tmp_path.parent / 'unexpected-move')
+            process = subprocess.run([sys.executable, '-B', '-c', script, str(tmp_path), identity], capture_output=True, text=True, timeout=15)
+            assert process.returncode == 0, process.stderr
+            observed.append(json.loads(process.stdout))
+        return original(path, text, *args, **kwargs)
+    monkeypatch.setattr(Path, 'write_text', write)
+    assert cleanup_instance(tmp_path, identity, tmp_path.parent / 'report', confirmation=identity, mode=mode)['status'] == ('cleaned' if mode == 'full' else 'uninstalled')
+    assert observed == [[False, False]]
+
+
 @pytest.mark.parametrize('root', [Path.home(), Path(Path.cwd().anchor)])
 def test_refuses_shared_control_locations(root):
     with pytest.raises(ValueError, match='control root'):
@@ -836,6 +1024,10 @@ def test_busy_database_snapshot_blocks_cleanup_before_deletion(tmp_path):
                                       confirmation=instance['instance_id'])
             assert result['status'] == 'blocked'
             assert result['reason'] == 'diagnostics_incomplete'
+            assert result['items'] == []
+            assert result['postverification']['status'] == 'not_performed'
+            assert result['process_evidence']['status'] == 'unknown'
+            assert result['next_action'] == 'resolve_blockers'
             assert (instance['home'] / 'horizon.sqlite3').exists()
             assert (instance['home'] / 'horizon.sqlite3-journal').exists()
         finally:
@@ -1168,6 +1360,10 @@ def test_cleanup_stops_exact_job_owner_and_preserves_unrelated_process(tmp_path,
         assert (Path(result['report']) / 'summary.md').is_file()
         assert result['processes']['status'] == 'stopped'
         assert result['processes']['observed_processes'] >= 2
+        assert result['process_evidence']['status'] == 'verified'
+        assert result['process_evidence']['scope'] == 'registered_job_and_observed_process_snapshot'
+        assert result['postverification']['status'] == 'verified'
+        assert result['next_action'] == 'prepare_reinstall'
         import ctypes
         from ctypes import wintypes as w
         api = ctypes.WinDLL('kernel32', use_last_error=True)
