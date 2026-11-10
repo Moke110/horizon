@@ -4,7 +4,8 @@ from pathlib import Path
 import uuid
 import os
 import base64
-from contextlib import contextmanager, ExitStack
+import re
+from contextlib import contextmanager, ExitStack, closing
 from common import file_lock
 
 
@@ -108,6 +109,17 @@ def preview(control_root, identity, *, mode='full'):
     staging_identity = record.pop('staging_identity', None)
     inventory = record.pop('application_inventory', {})
     application_directories = record.pop('application_directories', {})
+    data_inventory = record.pop('data_inventory', {})
+    data_directories = record.pop('data_directories', {})
+    model_update = record.pop('model_update', None)
+    if not isinstance(data_inventory, dict) or any(name != 'data/agent/model.json' and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name) for name in data_inventory):
+        raise InstanceInvalid('Invalid data inventory')
+    if model_update is not None and (not isinstance(model_update, dict)
+            or set(model_update) != {'temporary', 'backup', 'new', 'previous'}
+            or not all(re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', model_update[key]) for key in ('temporary', 'backup'))):
+        raise InstanceInvalid('Invalid model update journal')
+    if not isinstance(data_directories, dict) or set(data_directories) - {'data/agent'}:
+        raise InstanceInvalid('Invalid data directory inventory')
     installation = record.pop('installation', None)
     if not isinstance(application_directories, dict):
         raise InstanceInvalid('Invalid application directory inventory')
@@ -142,6 +154,18 @@ def preview(control_root, identity, *, mode='full'):
             child_stat = child.stat()
             if expected != [child_stat.st_dev, child_stat.st_ino]:
                 raise InstanceInvalid('Child directory identity changed')
+    for relative, expected in {**application_directories, **data_directories}.items():
+        if (not isinstance(relative, str) or '..' in Path(relative).parts or ':' in relative
+                or not any(relative == prefix or relative.startswith(prefix + '/')
+                           for prefix in ('app/current', 'data/agent'))):
+            raise InstanceInvalid('Invalid enrolled directory path')
+        directory = root / relative
+        if directory.is_symlink() or directory.is_junction():
+            raise InstanceInvalid('Linked enrolled directory')
+        if directory.exists():
+            directory_stat = directory.stat()
+            if expected != [directory_stat.st_dev, directory_stat.st_ino]:
+                raise InstanceInvalid('Enrolled directory identity changed')
     delete = [root / 'app']
     preserve = [registration]
     data = [root / 'data', root / 'archive']
@@ -244,6 +268,8 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories'):
+                record.pop(key, None)
         if not record.get('children') and any(root.iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
         if not record.get('children'):
@@ -363,6 +389,208 @@ def register_instance_owner(home):
         'process': current_identity()})
 
 
+def _recover_model_update(home, registration, record):
+    """Finish a published update, or restore the enrolled previous file."""
+    update = record.get('model_update')
+    if not update:
+        return
+    from hostrun.windows_cleanup import PinnedEntry
+    relative = 'data/agent/model.json'
+    root = home.parent
+    with ExitStack() as held:
+        pins = {}
+        identities = {}
+        for name in (relative, update['temporary'], update['backup']):
+            path = root / name
+            try:
+                pin = PinnedEntry(path, delete=True)
+            except FileNotFoundError:
+                continue
+            held.callback(pin.close)
+            stat = path.stat()
+            pins[name] = pin
+            identities[name] = [stat.st_dev, stat.st_ino]
+        for name, expected in ((update['temporary'], update['new']),
+                               (update['backup'], update['previous'])):
+            if name in identities and identities[name] != expected:
+                raise InstanceInvalid('Interrupted model file identity changed')
+        current = identities.get(relative)
+        if current == update['new']:
+            committed = update['new']
+        elif current == update['previous'] and current is not None:
+            committed = update['previous']
+        elif current is None and update['previous'] is None:
+            committed = None
+        elif current is None and identities.get(update['backup']) == update['previous']:
+            pins.pop(update['backup']).rename(root / relative)
+            committed = update['previous']
+        else:
+            raise InstanceInvalid('Interrupted model configuration cannot be recovered')
+        inventory = record['data_inventory']
+        if committed is not None:
+            inventory[relative] = committed
+        else:
+            inventory.pop(relative, None)
+        # Keep the journal and old backup until the selected identity is durable.
+        _write_registration(registration, record)
+        for name in (update['temporary'], update['backup']):
+            if name in pins:
+                pins[name].delete()
+            inventory.pop(name, None)
+        record.pop('model_update')
+        _write_registration(registration, record)
+
+
+def load_managed_model_config(home):
+    """Read the committed managed config under the publication/recovery lock."""
+    if os.name != 'nt':
+        return False, None, None
+    home = _lexical_home(home)
+    control = control_directory()
+    if home.parent.parent != control:
+        return False, None, None
+    identity = home.parent.name
+    from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
+    with instance_lock(home) as available:
+        if not available:
+            raise InstanceBusy('instance_busy')
+        with file_lock(control / (identity + '.inventory.lock')), pin_ancestors(home):
+            preview(control, identity)
+            registration = control / (identity + '.json')
+            record = _read_registration(registration)
+            expected = record.get('data_directories', {}).get('data/agent')
+            if expected is None:
+                if (home / 'agent').exists():
+                    raise InstanceInvalid('Unowned model directory')
+                return True, None, None
+            with closing(PinnedEntry(home / 'agent')):
+                stat = (home / 'agent').stat()
+                if expected != [stat.st_dev, stat.st_ino]:
+                    raise InstanceInvalid('Model directory identity changed')
+                _recover_model_update(home, registration, record)
+                path = home / 'agent' / 'model.json'
+                expected = record.get('data_inventory', {}).get('data/agent/model.json')
+                if expected is None:
+                    if path.exists():
+                        raise InstanceInvalid('Unowned model configuration')
+                    return True, None, None
+                with closing(PinnedEntry(path)):
+                    stat = path.stat()
+                    if expected != [stat.st_dev, stat.st_ino]:
+                        raise InstanceInvalid('Model file identity changed')
+                    return True, json.loads(path.read_text(encoding='utf-8')), expected
+
+
+def save_managed_model_config(home, data, *, expected=None):
+    """Persist model credentials only after enrolling the actual open file identity."""
+    if os.name != 'nt':
+        return False
+    home = _lexical_home(home)
+    control = control_directory()
+    if home.parent.parent != control:
+        return False
+    identity = home.parent.name
+    from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
+    with instance_lock(home) as available:
+        if not available:
+            raise InstanceBusy('instance_busy')
+        with file_lock(control / (identity + '.inventory.lock')), pin_ancestors(home), ExitStack() as held:
+            preview(control, identity)
+            registration = control / (identity + '.json')
+            record = _read_registration(registration)
+            directories = record.setdefault('data_directories', {})
+            inventory = record.setdefault('data_inventory', {})
+            folder = home / 'agent'
+            if 'data/agent' not in directories:
+                parent_pin = PinnedEntry(home)
+                held.callback(parent_pin.close)
+                folder_pin = PinnedEntry(folder, create_parent=parent_pin)
+                held.callback(folder_pin.close)
+                stat = folder.stat()
+                directories['data/agent'] = [stat.st_dev, stat.st_ino]
+                try:
+                    _write_registration(registration, record)
+                except BaseException:
+                    folder_pin.delete()
+                    raise
+                folder_pin.close()
+                folder_pin = PinnedEntry(folder)
+                held.callback(folder_pin.close)
+                preview(control, identity)
+            else:
+                folder_pin = PinnedEntry(folder)
+                held.callback(folder_pin.close)
+                stat = folder.stat()
+                if directories['data/agent'] != [stat.st_dev, stat.st_ino]:
+                    raise InstanceInvalid('Model directory identity changed')
+            path = folder / 'model.json'
+            relative = 'data/agent/model.json'
+            _recover_model_update(home, registration, record)
+            previous = inventory.get(relative)
+            if expected is not None:
+                if previous != expected[1]:
+                    raise InstanceInvalid('Model configuration changed; retry the operation')
+                current = {}
+                if previous is not None:
+                    with closing(PinnedEntry(path)):
+                        stat = path.stat()
+                        if previous != [stat.st_dev, stat.st_ino]:
+                            raise InstanceInvalid('Model file identity changed')
+                        current = json.loads(path.read_text(encoding='utf-8'))
+                if current != expected[0]:
+                    raise InstanceInvalid('Model configuration changed; retry the operation')
+            if previous is not None:
+                old_pin = PinnedEntry(path, delete=True)
+                held.callback(old_pin.close)
+                stat = path.stat()
+                if previous != [stat.st_dev, stat.st_ino]:
+                    raise InstanceInvalid('Model file identity changed')
+            elif path.exists():
+                raise InstanceInvalid('Unowned model configuration')
+            temporary = folder / ('model-' + uuid.uuid4().hex + '.tmp')
+            backup = folder / ('model-' + uuid.uuid4().hex + '.tmp')
+            model_pin = PinnedEntry(temporary, create_parent=folder_pin, create_file=True, writable=True)
+            held.callback(model_pin.close)
+            stat = temporary.stat()
+            file_identity = [stat.st_dev, stat.st_ino]
+            temp_relative = temporary.relative_to(home.parent).as_posix()
+            backup_relative = backup.relative_to(home.parent).as_posix()
+            inventory[temp_relative] = file_identity
+            if previous is not None:
+                inventory[backup_relative] = previous
+            record['model_update'] = {'temporary': temp_relative, 'backup': backup_relative,
+                                      'new': file_identity, 'previous': previous}
+            published = False
+            old_moved = False
+            try:
+                _write_registration(registration, record)
+                model_pin.write_bytes(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+                if previous is not None:
+                    old_pin.rename(backup)
+                    old_moved = True
+                model_pin.rename(path)
+                published = True
+                inventory[relative] = file_identity
+                _write_registration(registration, record)
+                if old_moved:
+                    old_pin.delete()
+                inventory.pop(temp_relative)
+                inventory.pop(backup_relative, None)
+                record.pop('model_update')
+                _write_registration(registration, record)
+            except BaseException:
+                if not published:
+                    if old_moved:
+                        old_pin.rename(path)
+                    model_pin.delete()
+                    inventory.pop(temp_relative, None)
+                    inventory.pop(backup_relative, None)
+                    record.pop('model_update', None)
+                    _write_registration(registration, record)
+                raise
+    return True
+
+
 def _cleanup_confirmed(control, identity, report, mode):
     root = control / identity
     result = {'status': 'blocked', 'report': str(report), 'removed': [], 'preserved': []}
@@ -390,7 +618,15 @@ def _cleanup_confirmed(control, identity, report, mode):
             plan = preview(control, identity, mode=mode)
             targets = []
             record = _read_registration(control / (identity + '.json'))
-            for name, expected in record.get('application_inventory', {}).items():
+            identities = dict(record.get('application_inventory', {}))
+            if mode == 'full':
+                identities.update(record.get('data_inventory', {}))
+                update = record.get('model_update')
+                if update and (root / 'data/agent/model.json').exists():
+                    stat = (root / 'data/agent/model.json').stat()
+                    if update['new'] == [stat.st_dev, stat.st_ino]:
+                        identities['data/agent/model.json'] = update['new']
+            for name, expected in identities.items():
                 path = root / name
                 if path.exists():
                     stat = path.stat()
@@ -404,8 +640,11 @@ def _cleanup_confirmed(control, identity, report, mode):
             from hostrun.windows_cleanup import remove_owned_files, remove_empty_children, remove_empty_inventory
             try:
                 remove_owned_files(root, targets, lambda: preview(control, identity),
-                                   removed=result['removed'], identities=record.get('application_inventory'))
-                remove_empty_inventory(root, record.get('application_directories', {}),
+                                   removed=result['removed'], identities=identities)
+                directory_inventory = dict(record.get('application_directories', {}))
+                if mode == 'full':
+                    directory_inventory.update(record.get('data_directories', {}))
+                remove_empty_inventory(root, directory_inventory,
                                        lambda: preview(control, identity), result['removed'])
                 directories = [name for name in plan['owned_children'] if mode == 'full' or name == 'app']
                 remove_empty_children(root, directories, lambda: preview(control, identity), result['removed'])
@@ -418,15 +657,19 @@ def _cleanup_confirmed(control, identity, report, mode):
     return result
 
 
-@contextmanager
-def instance_lock(home):
-    """Serialize registered test instances using a lock outside removable data."""
+def _lexical_home(home):
     spelling = os.fspath(home)
     if spelling.startswith('\\\\?\\UNC\\'):
         spelling = '\\\\' + spelling[8:]
     elif spelling.startswith('\\\\?\\'):
         spelling = spelling[4:]
-    home = Path(os.path.abspath(os.path.normpath(spelling)))
+    return Path(os.path.abspath(os.path.normpath(spelling)))
+
+
+@contextmanager
+def instance_lock(home):
+    """Serialize registered test instances using a lock outside removable data."""
+    home = _lexical_home(home)
     root = home.parent
     registration = root.parent / (root.name + '.json')
     try:

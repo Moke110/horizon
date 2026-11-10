@@ -14,6 +14,16 @@ def config_path(home: Path) -> Path:
     return Path(home) / "agent" / "model.json"
 
 
+def load_model_config(home):
+    return _model_snapshot(home)[0]
+
+
+def _model_snapshot(home):
+    from hostrun.cleanup import load_managed_model_config
+    managed, data, identity = load_managed_model_config(home)
+    return ((data if managed else read_json(config_path(home))) or {}, identity)
+
+
 def configure(home: Path, *, provider: str, model: str, api_key: str, base_url: str = "") -> dict:
     provider, model, api_key = provider.strip(), model.strip(), api_key.strip()
     if not provider or not model or not api_key:
@@ -21,6 +31,10 @@ def configure(home: Path, *, provider: str, model: str, api_key: str, base_url: 
     if base_url and not base_url.startswith(("https://", "http://localhost:", "http://127.0.0.1:")):
         raise HostRunError("模型地址必须使用 HTTPS（本机服务可以使用 HTTP）")
     path = config_path(home)
+    from hostrun.cleanup import save_managed_model_config
+    if save_managed_model_config(home, {"provider": provider, "model": model, "apiKey": api_key,
+                                        "baseUrl": base_url.strip()}):
+        return {"provider": provider, "model": model, "configured": True}
     ensure_dir(path.parent)
     # Kept out of install/config.json, reports, process arguments and run logs.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -38,7 +52,7 @@ def runtime(home: Path, *, code: Path | None = None) -> dict:
     entry = code / "agent" / "dist" / "main.js"
     problems = []
     try:
-        model = read_json(config_path(home)) or {}
+        model = load_model_config(home)
         if not isinstance(model, dict):
             raise ValueError("model configuration must be an object")
     except (ValueError, OSError):
@@ -68,16 +82,20 @@ def argv(home: Path, task: str, *, kind: str, code: Path | None = None, session_
         args.extend(["--session-id", session_id])
     return args
 
-def discover_and_configure(home, *, provider, api_key, base_url=''):
+def discover_and_configure(home, *, provider, api_key, base_url='', expected=None):
     from hostrun.model_catalog import discover
+    snapshot = expected if expected is not None else _model_snapshot(home)
+    previous = snapshot[0]
     base, models = discover(provider, api_key, base_url)
-    previous = read_json(config_path(home)) or {}
     selected = previous.get('model') if previous.get('provider') == provider and previous.get('model') in models else models[0]
     data = {'provider': provider, 'model': selected, 'apiKey': api_key.strip(), 'baseUrl': base, 'models': models}
-    _save_model_config(home, data)
+    _save_model_config(home, data, expected=snapshot)
     return models
 
-def _save_model_config(home, data):
+def _save_model_config(home, data, *, expected=None):
+    from hostrun.cleanup import save_managed_model_config
+    if save_managed_model_config(home, data, expected=expected):
+        return
     import tempfile
     path = config_path(home)
     ensure_dir(path.parent)
@@ -90,12 +108,14 @@ def _save_model_config(home, data):
         Path(name).unlink(missing_ok=True)
 
 def refresh_models(home):
-    data = read_json(config_path(home)) or {}
-    return discover_and_configure(home, provider=data.get('provider', ''), api_key=data.get('apiKey', ''), base_url=data.get('baseUrl', ''))
+    snapshot = _model_snapshot(home)
+    data = snapshot[0]
+    return discover_and_configure(home, provider=data.get('provider', ''), api_key=data.get('apiKey', ''), base_url=data.get('baseUrl', ''), expected=snapshot)
 
 def select_model(home, model):
-    data = read_json(config_path(home)) or {}
+    snapshot = _model_snapshot(home)
+    data = dict(snapshot[0])
     if model not in data.get('models', []):
         raise HostRunError('请先刷新模型列表并选择其中的模型')
     data['model'] = model
-    _save_model_config(home, data)
+    _save_model_config(home, data, expected=snapshot)

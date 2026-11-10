@@ -553,6 +553,304 @@ def test_cleanup_stops_exact_job_owner_and_preserves_unrelated_process(tmp_path,
             process.wait(timeout=5)
 
 
+def test_real_model_configuration_is_owned_and_removed_without_secret_report(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='test-model', api_key='SECRET-CONFIG-MARKER')
+    config = instance['home'] / 'agent' / 'model.json'
+    assert config.exists()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+    assert not config.exists()
+    report_text = '\n'.join(p.read_text(encoding='utf-8') for p in Path(result['report']).iterdir() if p.is_file())
+    assert 'SECRET-CONFIG-MARKER' not in report_text
+
+
+def test_model_cleanup_preserves_replaced_file_and_unknown_neighbor(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='test-model', api_key='SECRET')
+    folder = instance['home'] / 'agent'
+    config = folder / 'model.json'
+    config.rename(folder / 'user-retained-original.json')
+    config.write_text('USER REPLACEMENT')
+    neighbor = folder / 'personal.txt'
+    neighbor.write_text('USER DOCUMENT')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'partial'
+    assert config.read_text() == 'USER REPLACEMENT'
+    assert neighbor.read_text() == 'USER DOCUMENT'
+
+
+def test_model_reconfiguration_keeps_registered_identity(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    for key in ('FIRST SECRET', 'SECOND SECRET'):
+        configure(instance['home'], provider='test', model='test-model', api_key=key)
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_model_update_write_failure_preserves_previous_configuration(tmp_path, monkeypatch):
+    import ctypes
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='ORIGINAL SECRET')
+    config = instance['home'] / 'agent' / 'model.json'
+    before = config.read_bytes()
+    original_dll = ctypes.WinDLL
+    kernel = original_dll('kernel32', use_last_error=True)
+    def partial_write(handle, buffer, size, written, overlap):
+        kernel.WriteFile.argtypes = partial_write.argtypes
+        kernel.WriteFile(handle, buffer, min(size, 55), written, overlap)
+        ctypes.set_last_error(112)
+        return 0
+    class KernelProxy:
+        def __getattr__(self, name):
+            return partial_write if name == 'WriteFile' else getattr(kernel, name)
+    def dll(name, *args, **kwargs):
+        return KernelProxy() if name == 'kernel32' else original_dll(name, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(ctypes, 'WinDLL', dll)
+        with pytest.raises(OSError):
+            configure(instance['home'], provider='test', model='second', api_key='NEW SECRET')
+    assert config.read_bytes() == before
+
+
+def test_model_public_save_recovers_published_config_after_receipt_failure(tmp_path, monkeypatch):
+    import os
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='SECRET')
+    original = os.replace
+    writes = 0
+    def replace(source, target):
+        nonlocal writes
+        if Path(target) == instance['registration']:
+            writes += 1
+            if writes == 2:
+                raise OSError('injected final receipt failure')
+        return original(source, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'replace', replace)
+        with pytest.raises(OSError):
+            configure(instance['home'], provider='test', model='second', api_key='SECRET')
+    configure(instance['home'], provider='test', model='third', api_key='SECRET')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_model_runtime_waits_for_configuration_publication(tmp_path, monkeypatch):
+    import ctypes
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure, runtime
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='SECRET')
+    original_dll = ctypes.WinDLL
+    kernel = original_dll('kernel32', use_last_error=True)
+    moved = threading.Event()
+    release = threading.Event()
+    def set_info(handle, kind, buffer, size):
+        kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
+        result = kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+        if kind == 3 and result and not moved.is_set():
+            moved.set()
+            assert release.wait(5)
+        return result
+    class KernelProxy:
+        def __init__(self):
+            self.api = original_dll('kernel32', use_last_error=True)
+        def __getattr__(self, name):
+            return set_info if name == 'SetFileInformationByHandle' else getattr(self.api, name)
+    def dll(name, *args, **kwargs):
+        return KernelProxy() if name == 'kernel32' else original_dll(name, *args, **kwargs)
+    with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=2) as pool:
+        patch.setattr(ctypes, 'WinDLL', dll)
+        writer = pool.submit(configure, instance['home'], provider='test', model='second', api_key='SECRET')
+        assert moved.wait(5)
+        reader = pool.submit(runtime, instance['home'])
+        try:
+            with pytest.raises(TimeoutError):
+                reader.result(timeout=0.15)
+        finally:
+            release.set()
+        writer.result(timeout=5)
+        assert reader.result(timeout=5)['model'] == 'second'
+
+
+def test_configure_cleanup_reinitialize_configure_round_trip(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    for _ in range(2):
+        initialize_layout(tmp_path, instance['instance_id'])
+        configure(instance['home'], provider='test', model='test', api_key='SECRET')
+        result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                                  confirmation=instance['instance_id'])
+        assert result['status'] == 'cleaned'
+
+
+def test_gui_model_discovery_selection_refresh_are_owned(tmp_path):
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun import embedded_agent
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({'data': [{'id': 'chat-a'}, {'id': 'chat-b'}]}).encode())
+        def log_message(self, *args):
+            pass
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        embedded_agent.discover_and_configure(instance['home'], provider='custom', api_key='SECRET',
+                                             base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        embedded_agent.select_model(instance['home'], 'chat-b')
+        embedded_agent.refresh_models(instance['home'])
+        assert embedded_agent.runtime(instance['home'])['model'] == 'chat-b'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('crash_at, expected', [('written', 'first'), ('backup', 'first'), ('published', 'second')])
+def test_model_runtime_recovers_real_process_interruption(tmp_path, crash_at, expected):
+    import os
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure, runtime
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='SECRET')
+    script = '''
+import ctypes, os, sys
+from pathlib import Path
+from hostrun.embedded_agent import configure
+original = ctypes.WinDLL
+kernel = original('kernel32', use_last_error=True)
+count = 0
+def set_info(handle, kind, buffer, size):
+    global count
+    kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
+    result = kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+    if kind == 3 and result:
+        count += 1
+        if (sys.argv[2] == 'backup' and count == 1) or (sys.argv[2] == 'published' and count == 2):
+            os._exit(74)
+    return result
+def flush(handle):
+    kernel.FlushFileBuffers.argtypes = flush.argtypes
+    result = kernel.FlushFileBuffers(handle)
+    if result and sys.argv[2] == 'written': os._exit(74)
+    return result
+class Proxy:
+    def __getattr__(self, name):
+        if name == 'SetFileInformationByHandle': return set_info
+        if name == 'FlushFileBuffers': return flush
+        return getattr(kernel, name)
+ctypes.WinDLL = lambda name, *args, **kwargs: Proxy() if name == 'kernel32' else original(name, *args, **kwargs)
+configure(Path(sys.argv[1]), provider='test', model='second', api_key='SECRET')
+'''
+    process = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, str(instance['home']), crash_at],
+                             env=os.environ.copy(), capture_output=True, timeout=10)
+    assert process.returncode == 74, process.stderr
+    assert runtime(instance['home'])['model'] == expected
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_node_agent_rejects_replaced_managed_credentials(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='SECRET')
+    config = instance['home'] / 'agent' / 'model.json'
+    config.rename(config.with_suffix('.retained'))
+    config.write_text('{"provider":"test","model":"first","apiKey":"REPLACED"}')
+    process = subprocess.run([shutil.which('node'), 'agent/dist/main.js', '--home', str(instance['home']),
+                              '--task', 'hello', '--kind', 'intent_judgement'],
+                             env={**os.environ, 'HORIZON_PYTHON': sys.executable}, capture_output=True,
+                             text=True, encoding='utf-8', timeout=15)
+    assert process.returncode != 0
+    assert 'Model configuration identity validation failed' in process.stdout + process.stderr
+    assert not (instance['home'] / 'agent' / 'pi').exists()
+
+
+def test_gui_refresh_cannot_overwrite_new_credentials(tmp_path):
+    import json
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hostrun.cleanup import initialize_layout
+    from hostrun import embedded_agent
+    entered, release = threading.Event(), threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            entered.set()
+            assert release.wait(5)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({'data': [{'id': 'old-model'}]}).encode())
+        def log_message(self, *args): pass
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    embedded_agent.configure(instance['home'], provider='custom', model='old-model', api_key='OLD',
+                             base_url=f'http://127.0.0.1:{server.server_port}/v1')
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            refresh = pool.submit(embedded_agent.refresh_models, instance['home'])
+            try:
+                assert entered.wait(5)
+                embedded_agent.configure(instance['home'], provider='new-provider', model='new-model', api_key='NEW')
+            finally:
+                release.set()
+            with pytest.raises(ValueError, match='configuration changed'):
+                refresh.result(timeout=5)
+        assert embedded_agent.runtime(instance['home'])['provider'] == 'new-provider'
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 @pytest.mark.parametrize('damage', ['missing', 'tampered', 'lock_directory', 'junction'])
 def test_invalid_instance_real_desktop_never_writes_home(tmp_path, damage):
     import os
