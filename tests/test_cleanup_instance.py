@@ -2701,13 +2701,17 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize('replacement', [False, True])
-def test_interrupted_first_install_cleans_only_creation_enrolled_files(tmp_path, replacement):
+@pytest.mark.parametrize('write_position', [2, 33])
+def test_interrupted_first_install_cleans_only_creation_enrolled_files(tmp_path, replacement, write_position):
     import os
     import subprocess
     import sys
-    from test_dist_install import _build
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
     from hostrun.cleanup import initialize_layout, preview, cleanup_instance, install_test_package
-    package = _build(tmp_path.parent / 'package')
+    source = _write_tree(tmp_path.parent / 'source', {**PACKAGE_FILES,
+                         **{f'hostrun/payload/file-{i:03}.txt': 'package contents' for i in range(65)}})
+    package = build(source=source, out=tmp_path.parent / 'package', version='0.1.0', channel='stable', commit='test', compat=_host_compat())
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     script = '''
@@ -2720,10 +2724,10 @@ def write(*args):
     global count
     kernel.WriteFile.argtypes=write.argtypes
     count+=1
-    if count==2:
+    if count==int(sys.argv[5]):
         args=list(args);args[2]=max(1,args[2]//2)
     result=kernel.WriteFile(*args)
-    if count==2: os._exit(77)
+    if count==int(sys.argv[5]): os._exit(77)
     return result
 class Proxy:
     def __getattr__(self,name):
@@ -2732,11 +2736,11 @@ ctypes.WinDLL=lambda name,*a,**kw: Proxy() if name=='kernel32' else native(name,
 install_test_package(sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4])
 '''
     stopped = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script, str(tmp_path), instance['instance_id'],
-                              str(package['artifact']['path']), package['artifact']['sha256']],
+                              str(package['artifact']['path']), package['artifact']['sha256'], str(write_position)],
                              env=os.environ.copy(), capture_output=True, timeout=15)
     assert stopped.returncode == 77, stopped.stderr
     files = [Path(name) for name in preview(tmp_path, instance['instance_id'])['registered_file_candidates']]
-    assert len(files) == 2
+    assert len(files) == (32 if write_position == 2 else 64)
     assert install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])['status'] == 'blocked'
     if replacement:
         changed = files[-1]
@@ -2841,3 +2845,44 @@ install_test_package(sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6])
     assert result['status'] == 'partial', result
     assert target.stat().st_ino == identity
     assert not list(target.iterdir()) if target.is_dir() else target.read_bytes() == b''
+
+
+@pytest.mark.parametrize('receipt_failure', [False, True])
+def test_first_install_bounds_file_receipts_and_reclaims_only_empty_batch(tmp_path, monkeypatch, receipt_failure):
+    import time
+    import zipfile
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun import cleanup
+    source = _write_tree(tmp_path.parent / 'source', {**PACKAGE_FILES,
+                         **{f'hostrun/payload/file-{i:03}.txt': 'package contents' for i in range(65)}})
+    package = build(source=source, out=tmp_path.parent / 'package', version='0.1.0', channel='stable', commit='test', compat=_host_compat())
+    instance = prepare_instance(tmp_path)
+    cleanup.initialize_layout(tmp_path, instance['instance_id'])
+    code = instance['code'] / 'current'
+    original = cleanup._write_registration
+    writes, byte_counts, failed_names, prior_names = [], [], [], []
+    def measured(path, record):
+        names = list(record.get('application_inventory', {}))
+        if receipt_failure and not failed_names and len(names) >= 64:
+            prior_names.extend(names[:32])
+            failed_names.extend(names[32:])
+            raise OSError('Injected second batch receipt failure')
+        original(path, record)
+        writes.append(1)
+        byte_counts.append(path.stat().st_size)
+    monkeypatch.setattr(cleanup, '_write_registration', measured)
+    started = time.perf_counter()
+    if receipt_failure:
+        with pytest.raises(OSError):
+            cleanup.install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])
+        assert len(failed_names) == 32
+        assert all(not (instance['root'] / name).exists() for name in failed_names)
+        with zipfile.ZipFile(package['artifact']['path']) as archive:
+            assert all((instance['root'] / name).read_bytes() == archive.read(Path(name).relative_to('app/current').as_posix()) for name in prior_names)
+    else:
+        assert cleanup.install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])['status'] == 'ok'
+        assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == 'package contents' for i in range(65))
+    print({'install_seconds': round(time.perf_counter() - started, 3), 'registration_writes': len(writes), 'registration_bytes': sum(byte_counts)})
+    assert len(writes) < 30
+    assert cleanup.cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])['status'] == 'cleaned'

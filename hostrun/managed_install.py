@@ -8,6 +8,8 @@ from common import file_lock, now
 from hostrun import cleanup, dist
 from hostrun.windows_cleanup import PinnedEntry, io_path, pin_ancestors
 
+_BATCH_SIZE = 32
+
 
 def install(control_root, identity, package, digest):
     package = Path(package)
@@ -76,19 +78,26 @@ def install(control_root, identity, package, digest):
                 raise
             directory_pins[path] = pin
             return pin
-        for name, payload in payloads.items():
-            path = code / name
-            parent = directory(path.parent)
-            pin = PinnedEntry(path, create_parent=parent, create_file=True, writable=True, create_share=3)
-            held.callback(pin.close)
-            stat = io_path(path).stat()
-            inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
+        names = list(payloads)
+        for offset in range(0, len(names), _BATCH_SIZE):
+            batch = names[offset:offset + _BATCH_SIZE]
+            parents = {name: directory((code / name).parent) for name in batch}
+            empty = {}
             try:
+                for name in batch:
+                    path = code / name
+                    pin = PinnedEntry(path, create_parent=parents[name], create_file=True, writable=True, create_share=3)
+                    held.callback(pin.close)
+                    empty[name] = pin
+                    stat = io_path(path).stat()
+                    inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
                 save()
             except BaseException:
-                pin.delete()
+                for pin in empty.values():
+                    pin.delete()
                 raise
-            pin.write_bytes(payload)
+            for name, pin in empty.items():
+                pin.write_bytes(payloads[name])
         record.pop('installation')
         save()
     return dist._success(code, manifest, digest, package, '', channel, True, installed_at)
