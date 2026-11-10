@@ -7,6 +7,7 @@ import base64
 import re
 from contextlib import contextmanager, ExitStack, closing
 from common import file_lock
+from hostrun.windows_cleanup import io_path
 
 
 class InstanceBusy(RuntimeError):
@@ -88,7 +89,7 @@ def prepare_instance(control_root, *, protected_roots=()):
     root.mkdir()  # Exclusive creation: never claim an existing directory.
     registration = control / (identity + '.json')
     from hostrun.windows_protection import protect
-    stat = root.stat()
+    stat = io_path(root).stat()
     record = {'schema_version': 1, 'instance_id': identity, 'state': 'prepared',
               'volume': stat.st_dev, 'file_id': stat.st_ino}
     sealed = protect(json.dumps(record).encode('utf-8'), str(registration).encode('utf-8'))
@@ -109,11 +110,11 @@ def preview(control_root, identity, *, mode='full'):
     if control != control_directory():
         raise InstanceInvalid('Unexpected control root')
     registration = control / (identity + '.json')
-    if registration.is_symlink() or registration.is_junction():
+    if io_path(registration).is_symlink() or io_path(registration).is_junction():
         raise ValueError('Unsafe registration')
     record = _read_registration(registration)
     root = control / identity
-    if root.is_symlink() or root.is_junction():
+    if io_path(root).is_symlink() or io_path(root).is_junction():
         raise ValueError('Unsafe instance root')
     children = record.pop('children', {})
     staging = record.pop('staging', None)
@@ -193,13 +194,13 @@ def preview(control_root, identity, *, mode='full'):
         raise InstanceInvalid('Invalid staging identity')
     if staging:
         stage = control / (identity + '.stage-' + staging)
-        if stage.is_symlink() or stage.is_junction():
+        if io_path(stage).is_symlink() or io_path(stage).is_junction():
             raise InstanceInvalid('Linked staging identity')
-        if stage.exists():
-            stage_stat = stage.stat()
+        if io_path(stage).exists():
+            stage_stat = io_path(stage).stat()
             if staging_identity != [stage_stat.st_dev, stage_stat.st_ino]:
                 raise InstanceInvalid('Staging directory identity changed')
-    stat = root.stat()
+    stat = io_path(root).stat()
     if record != {'schema_version': 1, 'instance_id': identity, 'state': 'prepared',
                   'volume': stat.st_dev, 'file_id': stat.st_ino}:
         raise InstanceInvalid('Instance directory identity changed')
@@ -207,10 +208,10 @@ def preview(control_root, identity, *, mode='full'):
         raise InstanceInvalid('Invalid child registration')
     for name, expected in children.items():
         child = root / name
-        if child.is_symlink() or child.is_junction():
+        if io_path(child).is_symlink() or io_path(child).is_junction():
             raise InstanceInvalid('Linked child identity')
-        if child.exists():
-            child_stat = child.stat()
+        if io_path(child).exists():
+            child_stat = io_path(child).stat()
             if expected != [child_stat.st_dev, child_stat.st_ino]:
                 raise InstanceInvalid('Child directory identity changed')
     for relative, expected in {**application_directories, **data_directories}.items():
@@ -219,10 +220,10 @@ def preview(control_root, identity, *, mode='full'):
                            for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups'))):
             raise InstanceInvalid('Invalid enrolled directory path')
         directory = root / relative
-        if directory.is_symlink() or directory.is_junction():
+        if io_path(directory).is_symlink() or io_path(directory).is_junction():
             raise InstanceInvalid('Linked enrolled directory')
-        if directory.exists():
-            directory_stat = directory.stat()
+        if io_path(directory).exists():
+            directory_stat = io_path(directory).stat()
             if expected != [directory_stat.st_dev, directory_stat.st_ino]:
                 raise InstanceInvalid('Enrolled directory identity changed')
     delete = [root / 'app']
@@ -250,7 +251,7 @@ def install_test_package(control_root, identity, package, digest):
     from hostrun import dist
     from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
     package = Path(package)
-    if hashlib.sha256(package.read_bytes()).hexdigest() != digest:
+    if hashlib.sha256(io_path(package).read_bytes()).hexdigest() != digest:
         raise InstanceInvalid('Package digest mismatch')
     with zipfile.ZipFile(package) as archive:
         manifest = json.loads(archive.read('manifest.json'))
@@ -266,13 +267,13 @@ def install_test_package(control_root, identity, package, digest):
         record = _read_registration(registration)
         installation = record.get('installation')
         if installation is None:
-            if code.exists():
+            if io_path(code).exists():
                 raise InstanceInvalid('Refusing existing application contents')
             app_pin = PinnedEntry(root / 'app')
             held.callback(app_pin.close)
             code_pin = PinnedEntry(code, create_parent=app_pin, create_share=3)
             held.callback(code_pin.close)
-            stat = code.stat()
+            stat = io_path(code).stat()
             record['installation'] = {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}
             try:
                 _write_registration(registration, record)
@@ -282,7 +283,7 @@ def install_test_package(control_root, identity, package, digest):
         else:
             code_pin = PinnedEntry(code)
             held.callback(code_pin.close)
-            stat = code.stat()
+            stat = io_path(code).stat()
             if installation != {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}:
                 raise InstanceInvalid('Different interrupted installation')
             return {'status': 'blocked', 'reason': 'interrupted_inventory_unavailable'}
@@ -301,19 +302,19 @@ def install_test_package(control_root, identity, package, digest):
             with pin_ancestors(path.parent, already_pinned=(code,)), ExitStack() as held:
                 pin = PinnedEntry(path)
                 held.callback(pin.close)
-                stat = path.stat()
+                stat = io_path(path).stat()
                 expected = expected_digests.get(name)
-                if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                if expected and hashlib.sha256(io_path(path).read_bytes()).hexdigest() != expected:
                     raise InstanceInvalid('Installed file digest mismatch')
                 inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
                 for directory in (path.parent, *path.parent.parents):
                     if directory.is_relative_to(code):
-                        stat = directory.stat()
+                        stat = io_path(directory).stat()
                         directories[directory.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
         for directory in (code / dist.STAGING_REL,):
-            if directory.exists():
+            if io_path(directory).exists():
                 with pin_ancestors(directory, already_pinned=(code,)):
-                    stat = directory.stat()
+                    stat = io_path(directory).stat()
                     directories[directory.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
         record['application_inventory'] = inventory
         record['application_directories'] = directories
@@ -338,7 +339,7 @@ def initialize_layout(control_root, identity):
             record.pop('children')
             for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions'):
                 record.pop(key, None)
-        if not record.get('children') and any(root.iterdir()):
+        if not record.get('children') and any(io_path(root).iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
         if not record.get('children'):
             staging = uuid.uuid4().hex
@@ -355,9 +356,9 @@ def initialize_layout(control_root, identity):
                     child_pin = PinnedEntry(child, create_parent=stage_pin)
                     held.callback(child_pin.close)
                     new_pins[name] = child_pin
-                    stat = child.stat()
+                    stat = io_path(child).stat()
                     children[name] = [stat.st_dev, stat.st_ino]
-                stage_stat = stage.stat()
+                stage_stat = io_path(stage).stat()
                 record.update(children=children, staging=staging,
                               staging_identity=[stage_stat.st_dev, stage_stat.st_ino])
                 _write_registration(registration, record)
@@ -376,7 +377,7 @@ def initialize_layout(control_root, identity):
             new_pins = {}
         if record.get('staging'):
             stage = control / (identity + '.stage-' + record['staging'])
-            if not new_pins and stage.exists():
+            if not new_pins and io_path(stage).exists():
                 stage_pin = PinnedEntry(stage, delete=True)
                 held.callback(stage_pin.close)
                 preview(control, identity)
@@ -392,9 +393,9 @@ def initialize_layout(control_root, identity):
                     else:
                         pin = PinnedEntry(child, delete=True)
                         handles.callback(pin.close)
-                    if child.is_symlink() or child.is_junction():
+                    if io_path(child).is_symlink() or io_path(child).is_junction():
                         raise InstanceInvalid('Linked staging child')
-                    stat = child.stat()
+                    stat = io_path(child).stat()
                     if expected != [stat.st_dev, stat.st_ino]:
                         raise InstanceInvalid('Staging child identity changed')
                     pin.rename(root / name)
@@ -432,8 +433,8 @@ def _collect_report_metadata(control, identity, report, write_report):
     database = root / 'data/horizon.sqlite3'
     expected = record.get('data_inventory', {}).get('data/horizon.sqlite3')
     required = False
-    if expected is not None and database.exists():
-        stat = database.stat()
+    if expected is not None and io_path(database).exists():
+        stat = io_path(database).stat()
         required = expected == [stat.st_dev, stat.st_ino]
     snapshot = json.loads((report / 'tasks.json').read_text(encoding='utf-8'))
     missing = ['database_snapshot'] if required and not snapshot.get('available') else []
@@ -504,7 +505,7 @@ def _recover_model_update(home, registration, record):
             except FileNotFoundError:
                 continue
             held.callback(pin.close)
-            stat = path.stat()
+            stat = io_path(path).stat()
             pins[name] = pin
             identities[name] = [stat.st_dev, stat.st_ino]
         for name, expected in ((update['temporary'], update['new']),
@@ -568,11 +569,11 @@ def load_managed_model_config(home):
                 path = home / 'agent' / 'model.json'
                 expected = record.get('data_inventory', {}).get('data/agent/model.json')
                 if expected is None:
-                    if path.exists():
+                    if io_path(path).exists():
                         raise InstanceInvalid('Unowned model configuration')
                     return True, None, None
                 with closing(PinnedEntry(path)):
-                    stat = path.stat()
+                    stat = io_path(path).stat()
                     if expected != [stat.st_dev, stat.st_ino]:
                         raise InstanceInvalid('Model file identity changed')
                     return True, json.loads(path.read_text(encoding='utf-8')), expected
@@ -603,7 +604,7 @@ def save_managed_model_config(home, data, *, expected=None):
                 held.callback(parent_pin.close)
                 folder_pin = PinnedEntry(folder, create_parent=parent_pin)
                 held.callback(folder_pin.close)
-                stat = folder.stat()
+                stat = io_path(folder).stat()
                 directories['data/agent'] = [stat.st_dev, stat.st_ino]
                 try:
                     _write_registration(registration, record)
@@ -617,7 +618,7 @@ def save_managed_model_config(home, data, *, expected=None):
             else:
                 folder_pin = PinnedEntry(folder)
                 held.callback(folder_pin.close)
-                stat = folder.stat()
+                stat = io_path(folder).stat()
                 if directories['data/agent'] != [stat.st_dev, stat.st_ino]:
                     raise InstanceInvalid('Model directory identity changed')
             path = folder / 'model.json'
@@ -630,7 +631,7 @@ def save_managed_model_config(home, data, *, expected=None):
                 current = {}
                 if previous is not None:
                     with closing(PinnedEntry(path)):
-                        stat = path.stat()
+                        stat = io_path(path).stat()
                         if previous != [stat.st_dev, stat.st_ino]:
                             raise InstanceInvalid('Model file identity changed')
                         current = json.loads(path.read_text(encoding='utf-8'))
@@ -639,16 +640,16 @@ def save_managed_model_config(home, data, *, expected=None):
             if previous is not None:
                 old_pin = PinnedEntry(path, delete=True)
                 held.callback(old_pin.close)
-                stat = path.stat()
+                stat = io_path(path).stat()
                 if previous != [stat.st_dev, stat.st_ino]:
                     raise InstanceInvalid('Model file identity changed')
-            elif path.exists():
+            elif io_path(path).exists():
                 raise InstanceInvalid('Unowned model configuration')
             temporary = folder / ('model-' + uuid.uuid4().hex + '.tmp')
             backup = folder / ('model-' + uuid.uuid4().hex + '.tmp')
             model_pin = PinnedEntry(temporary, create_parent=folder_pin, create_file=True, writable=True)
             held.callback(model_pin.close)
-            stat = temporary.stat()
+            stat = io_path(temporary).stat()
             file_identity = [stat.st_dev, stat.st_ino]
             temp_relative = temporary.relative_to(home.parent).as_posix()
             backup_relative = backup.relative_to(home.parent).as_posix()
@@ -692,7 +693,7 @@ def _cleanup_confirmed(control, identity, report, mode):
     root = control / identity
     result = {'status': 'blocked', 'report': str(report), 'removed': [], 'preserved': []}
     owner_record = control / (identity + '.owner.json')
-    if owner_record.exists():
+    if io_path(owner_record).exists():
         try:
             owner = _read_registration(owner_record)
             if (set(owner) != {'schema_version', 'instance_id', 'containment', 'process'}
@@ -725,8 +726,8 @@ def _cleanup_confirmed(control, identity, report, mode):
                         identities['data/agent/model.json'] = update['new']
             for name, expected in identities.items():
                 path = root / name
-                if path.exists():
-                    stat = path.stat()
+                if io_path(path).exists():
+                    stat = io_path(path).stat()
                     if expected == [stat.st_dev, stat.st_ino]:
                         targets.append(name)
             from hostrun.windows_cleanup import remove_owned_files, remove_empty_children, remove_empty_inventory
@@ -740,7 +741,7 @@ def _cleanup_confirmed(control, identity, report, mode):
                                        lambda: preview(control, identity), result['removed'])
                 directories = [name for name in plan['owned_children'] if mode == 'full' or name == 'app']
                 remove_empty_children(root, directories, lambda: preview(control, identity), result['removed'])
-                result['preserved'] = [child.name for child in root.iterdir()]
+                result['preserved'] = [child.name for child in io_path(root).iterdir()]
                 expected_preserved = {'data', 'archive'} if mode == 'keep-data' else set()
                 unexpected = set(result['preserved']) - expected_preserved
                 result['status'] = 'partial' if unexpected else ('uninstalled' if mode == 'keep-data' else 'cleaned')
@@ -776,13 +777,13 @@ def instance_lock(home):
         raise InstanceInvalid('Invalid managed instance location')
     try:
         for component in (home, root, root.parent):
-            if component.is_symlink() or component.is_junction():
+            if io_path(component).is_symlink() or io_path(component).is_junction():
                 raise ValueError('Linked managed instance location')
         if home.resolve() != home:
             raise ValueError('Managed instance path escaped')
         if json.loads(marker.read_text(encoding='utf-8')) != CONTROL_SCHEMA:
             raise ValueError('Invalid control root registration')
-        if not registration.exists():
+        if not io_path(registration).exists():
             raise ValueError('Missing instance registration')
         preview(root.parent, root.name)
         pending_record = _read_registration(registration)

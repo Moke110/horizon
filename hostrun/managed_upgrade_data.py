@@ -8,7 +8,7 @@ import uuid
 
 from hostrun.managed_upgrade_scope import exclusive_scope
 from hostrun import cleanup
-from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
+from hostrun.windows_cleanup import PinnedEntry, pin_ancestors, io_path
 
 
 class _DataTransaction:
@@ -28,16 +28,16 @@ class _DataTransaction:
             return self.pins[path]
         parent = self.directory(path.parent) if path != self.home else None
         name = path.relative_to(self.root).as_posix()
-        if path.exists():
+        if io_path(path).exists():
             pin = PinnedEntry(path)
             self.held.callback(pin.close)
-            stat = path.stat()
+            stat = io_path(path).stat()
             if path != self.home and self.directories.get(name) != [stat.st_dev, stat.st_ino]:
                 raise cleanup.InstanceInvalid('Data directory identity changed')
         else:
             pin = PinnedEntry(path, create_parent=parent, create_share=3, create_delete=False)
             self.held.callback(pin.close)
-            stat = path.stat()
+            stat = io_path(path).stat()
             self.directories[name] = [stat.st_dev, stat.st_ino]
             self.save()  # Failed receipts leave unknown empty directories, not adopted contents.
         self.pins[path] = pin
@@ -48,7 +48,7 @@ class _DataTransaction:
         self.directory(path.parent)
         pin = PinnedEntry(path, writable=writable)
         self.held.callback(pin.close)
-        stat = path.stat()
+        stat = io_path(path).stat()
         if self.inventory.get(name) != [stat.st_dev, stat.st_ino]:
             raise cleanup.InstanceInvalid('Data file identity changed')
         return pin
@@ -58,7 +58,7 @@ class _DataTransaction:
         parent = self.directory(path.parent)
         pin = PinnedEntry(path, create_parent=parent, create_file=True, writable=True, create_share=3)
         self.held.callback(pin.close)
-        stat = path.stat()
+        stat = io_path(path).stat()
         self.inventory[name] = [stat.st_dev, stat.st_ino]
         try:
             self.save()
@@ -95,12 +95,12 @@ def backup_owned_data(home, *, snapshot_id=None):
             tx.pin(name)
         database = 'data/horizon.sqlite3'
         if database in sources:
-            with (tx.root / database).open('rb') as stream:
+            with io_path(tx.root / database).open('rb') as stream:
                 header = stream.read(20)
             if header and (len(header) < 20 or header[18:20] != b'\x01\x01'):
                 raise cleanup.InstanceInvalid('Unsupported managed database journal mode')
             tx.pin(database + '-journal')
-            if any((tx.home / ('horizon.sqlite3' + suffix)).exists() for suffix in ('-wal', '-shm')):
+            if any(io_path(tx.home / ('horizon.sqlite3' + suffix)).exists() for suffix in ('-wal', '-shm')):
                 raise cleanup.InstanceInvalid('Unenrolled SQLite sidecar')
         identity = snapshot_id or uuid.uuid4().hex
         if identity in tx.record.get('data_backups', {}):
@@ -114,19 +114,19 @@ def backup_owned_data(home, *, snapshot_id=None):
             if source == database:
                 created.close()
                 tx.pin(target)
-                with closing(sqlite3.connect(tx.root / source)) as reader, closing(sqlite3.connect(tx.root / target)) as writer:
+                with closing(sqlite3.connect(io_path(tx.root / source))) as reader, closing(sqlite3.connect(io_path(tx.root / target))) as writer:
                     reader.execute('PRAGMA locking_mode=EXCLUSIVE')
                     if reader.execute('PRAGMA journal_mode=PERSIST').fetchone()[0] != 'persist':
                         raise cleanup.InstanceInvalid('Unsupported backup journal mode')
                     writer.execute('PRAGMA journal_mode=OFF')
                     reader.backup(writer)
-                with (tx.root / target).open('r+b') as stream:
+                with io_path(tx.root / target).open('r+b') as stream:
                     os.fsync(stream.fileno())
             else:
-                created.write_bytes((tx.root / source).read_bytes())
+                created.write_bytes(io_path(tx.root / source).read_bytes())
                 created.close()
                 tx.pin(target)
-            snapshot['files'][source] = hashlib.sha256((tx.root / target).read_bytes()).hexdigest()
+            snapshot['files'][source] = hashlib.sha256(io_path(tx.root / target).read_bytes()).hexdigest()
             tx.save()
         snapshot['complete'] = True
         tx.save()
@@ -145,11 +145,11 @@ def restore_owned_data(home, snapshot_id):
         for name, digest in snapshot['files'].items():
             backup = 'data/upgrade-backups/' + snapshot_id + '/' + name.removeprefix('data/')
             tx.pin(backup)
-            payload = (tx.root / backup).read_bytes()
+            payload = io_path(tx.root / backup).read_bytes()
             if hashlib.sha256(payload).hexdigest() != digest:
                 raise cleanup.InstanceInvalid('Backup content changed')
             payloads[name] = payload
-            if (tx.root / name).exists():
+            if io_path(tx.root / name).exists():
                 targets[name] = tx.pin(name, writable=True)
         journal = 'data/horizon.sqlite3-journal'
         if 'data/horizon.sqlite3' in payloads:
