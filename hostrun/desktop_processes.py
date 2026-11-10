@@ -8,6 +8,11 @@ _job = None
 _original_init = subprocess.Popen.__init__
 
 
+def has_owner_job():
+    """Whether this process holds the Horizon KILL_ON_JOB_CLOSE owner handle."""
+    return os.name == 'nt' and _job is not None
+
+
 class GuiProcess(subprocess.Popen):
     """Visible GUI child in the same job, without a console or SW_HIDE."""
     def __init__(self, *args, **kwargs):

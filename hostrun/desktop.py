@@ -33,6 +33,8 @@ def _run(args, home):
             return
         if (home / 'upgrade.pending.json').exists():
             raise RuntimeError('An interrupted upgrade needs recovery. Run the Horizon installer again before opening the desktop.')
+        from hostrun.cleanup import register_instance_owner
+        register_instance_owner(home)
         record_event(home,'desktop_started',pid=os.getpid())
         try:
             serve(resolved)
