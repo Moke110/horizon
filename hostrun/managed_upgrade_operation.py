@@ -6,8 +6,8 @@ import uuid
 
 from hostrun import cleanup, dist
 from hostrun.managed_upgrade_scope import exclusive_scope
-from hostrun.managed_upgrade_data import _transaction, backup_owned_data
-from hostrun.managed_upgrade import stage_code_transaction
+from hostrun.managed_upgrade_data import _transaction, backup_owned_data, restore_owned_data
+from hostrun.managed_upgrade import stage_code_transaction, rollback_code_transaction
 from hostrun.managed_upgrade_initialize import initialize_target_schema
 from hostrun.windows_cleanup import PinnedEntry
 
@@ -25,7 +25,13 @@ def _publish_version(home, operation, version):
             stat = (tx.root / current).stat()
             if tx.inventory.get(current) != [stat.st_dev, stat.st_ino]:
                 raise cleanup.InstanceInvalid('Version identity changed')
+        journal = {'before': tx.inventory[current] if old else None, 'new': None,
+                   'temporary': temporary, 'previous': prior}
+        tx.record['upgrade_operation']['version'] = journal
+        tx.save()
         created = tx.create(temporary)
+        journal['new'] = tx.inventory[temporary]
+        tx.save()
         created.write_bytes(json.dumps({'schema_version': 1, 'version': version,
                                        'backup': 'upgrade-backups/' + operation}).encode())
         if old:
@@ -39,6 +45,47 @@ def _publish_version(home, operation, version):
         created.rename(tx.root / current)
         del tx.inventory[temporary]
         tx.save()
+
+
+def _restore_version(home):
+    with _transaction(home) as tx:
+        journal = tx.record['upgrade_operation'].get('version')
+        if journal is None:
+            return
+        current, previous = 'data/version.json', journal['previous']
+        pins = {}
+        identities = {}
+        for name in (current, previous, journal['temporary']):
+            path = tx.root / name
+            if not path.exists():
+                continue
+            pin = PinnedEntry(path, delete=True)
+            tx.held.callback(pin.close)
+            stat = path.stat()
+            identity = [stat.st_dev, stat.st_ino]
+            expected = tx.inventory.get(name)
+            # A newly created temporary receipt may precede journal.new.
+            allowed = (journal['before'], journal['new']) if name != journal['temporary'] else (journal['new'] or expected,)
+            if identity != expected or identity not in allowed:
+                raise cleanup.InstanceInvalid('Version recovery identity changed')
+            pins[name], identities[name] = pin, identity
+        before, new = journal['before'], journal['new']
+        if before is not None and identities.get(current) != before and identities.get(previous) != before:
+            raise cleanup.InstanceInvalid('Original version unavailable')
+        if current in pins and identities[current] == new:
+            pins[current].delete()
+            tx.inventory.pop(current, None)
+            tx.save()
+            identities.pop(current)
+        if before is not None and identities.get(current) != before:
+            tx.inventory[current] = before
+            tx.save()
+            pins[previous].rename(tx.root / current)
+            tx.inventory.pop(previous, None)
+            tx.save()
+        elif before is None and current not in identities:
+            tx.inventory.pop(current, None)
+            tx.save()
 
 
 def run_upgrade(code, home, *, from_source, sha256):
@@ -68,12 +115,23 @@ def run_upgrade(code, home, *, from_source, sha256):
                                         sha256=sha256, transaction_id=operation)
         if staged['status'] != 'ok':
             return staged
-        initialized = initialize_target_schema(code, home, manifest_sha256=manifest_sha,
-                                                snapshot_id=operation)
-        if initialized['status'] != 'initialized':
-            return initialized
-        _publish_version(home, operation, manifest['version'])
-        record = cleanup._read_registration(registration)
-        record.pop('upgrade_operation')
-        cleanup._write_registration(registration, record)
+        try:
+            initialized = initialize_target_schema(code, home, manifest_sha256=manifest_sha,
+                                                    snapshot_id=operation)
+            if initialized['status'] != 'initialized':
+                return initialized
+            _publish_version(home, operation, manifest['version'])
+            record = cleanup._read_registration(registration)
+            record.pop('upgrade_operation')
+            cleanup._write_registration(registration, record)
+        except Exception:
+            # The overall marker remains throughout both restores. Any recovery
+            # failure propagates with that marker intact and startup stays closed.
+            _restore_version(home)
+            rollback_code_transaction(code, home, operation)
+            restore_owned_data(home, operation)
+            record = cleanup._read_registration(registration)
+            record.pop('upgrade_operation')
+            cleanup._write_registration(registration, record)
+            return {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
         return {'status': 'ok', 'version': manifest['version'], 'operation_id': operation}

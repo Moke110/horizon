@@ -150,10 +150,21 @@ def preview(control_root, identity, *, mode='full'):
         raise InstanceInvalid('Invalid upgrade identity')
     operation = record.pop('upgrade_operation', None)
     if operation is not None and (not isinstance(operation, dict)
-            or set(operation) != {'id', 'artifact'}
+            or set(operation) not in ({'id', 'artifact'}, {'id', 'artifact', 'version'})
             or not isinstance(operation['id'], str) or not re.fullmatch(r'[0-9a-f]{32}', operation['id'])
             or not isinstance(operation['artifact'], str) or not re.fullmatch(r'[0-9a-f]{64}', operation['artifact'])):
         raise InstanceInvalid('Invalid overall upgrade operation')
+    version = operation.get('version') if operation else None
+    if version is not None and (not isinstance(version, dict)
+            or set(version) != {'before', 'new', 'temporary', 'previous'}
+            or version['temporary'] != 'data/version-' + operation['id'] + '.tmp'
+            or not isinstance(version['previous'], str)
+            or not re.fullmatch(r'data/version-[0-9a-f]{32}\.tmp', version['previous'])
+            or version['previous'] == version['temporary']
+            or any(value is not None and (not isinstance(value, list) or len(value) != 2
+                or any(type(part) is not int or part < 0 for part in value))
+                for value in (version['before'], version['new']))):
+        raise InstanceInvalid('Invalid upgrade version journal')
     if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal', 'data/desktop.lock', 'data/desktop.activate'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
             and not re.fullmatch(r'data/version(?:-[0-9a-f]{32}\.tmp|\.json)', name)
