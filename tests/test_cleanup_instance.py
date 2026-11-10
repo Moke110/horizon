@@ -126,7 +126,7 @@ def test_managed_upgrade_inventory_guard_applies_with_shared_desktop_lease(tmp_p
     with instance_lock(instance['home']), file_lock(instance['home'] / 'desktop.lock'):
         result = upgrade(instance['code'], instance['home'],
                          from_source='missing.zip', sha256='0' * 64)
-    assert result['reason'] == 'managed_upgrade_inventory_pending'
+        assert result['reason'] == 'managed_upgrade_inventory_pending'
 
 
 def test_existing_uuid_shaped_home_is_not_claimed(tmp_path):
@@ -1812,3 +1812,69 @@ setTimeout(() => process.exit(18), 8000);
     category = 'renderer_exit' if connected else 'renderer_start_failed'
     assert any(event.get('code') == category and event.get('exit_code') == 17 for event in events)
     assert all(marker not in path.read_text(encoding='utf-8') for path in report.iterdir() if path.is_file())
+
+
+def test_experimental_code_transaction_preserves_home_and_cleans_enrolled_backups(tmp_path):
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
+    from hostrun.managed_upgrade import stage_code_transaction
+    from hostrun.embedded_agent import configure, load_model_config
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first', version='0.1.0')
+    second = _build(tmp_path.parent / 'second', version='0.2.0')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    configure(instance['home'], provider='openai', api_key='synthetic-upgrade-key', model='gpt-4o')
+    service = AgentService(instance['home'], token='test')
+    task = service.create_task({'schema_version': 1, 'operation_id': 'create', 'title': 'kept'}, token='test')
+    code = instance['code'] / 'current'
+    result = stage_code_transaction(code, instance['home'], from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    assert result['status'] == 'ok', result
+    assert json.loads((code / 'manifest.json').read_text())['version'] == '0.2.0'
+    assert load_model_config(instance['home'])['apiKey'] == 'synthetic-upgrade-key'
+    assert AgentService(instance['home'], token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
+    assert result['data_migration'] == 'not_performed'
+    assert cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                            confirmation=instance['instance_id'])['status'] == 'cleaned'
+
+
+def test_startup_rechecks_pending_upgrade_after_acquiring_lease(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, InstanceInvalid
+    from hostrun.managed_upgrade import stage_code_transaction
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    second = _build(tmp_path.parent / 'second', version='0.2.0')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    entered, resume = threading.Event(), threading.Event()
+    original = Path.open
+    def open_file(path, *args, **kwargs):
+        if path.name == instance['instance_id'] + '.gate' and threading.current_thread().name.startswith('startup') and not entered.is_set():
+            entered.set()
+            assert resume.wait(10)
+        return original(path, *args, **kwargs)
+    with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1, thread_name_prefix='startup') as pool:
+        patch.setattr(Path, 'open', open_file)
+        future = pool.submit(AgentService, instance['home'], token='test')
+        assert entered.wait(5)
+        try:
+            # An actual no-delete-sharing file handle interrupts publishing.
+            with (instance['code'] / 'current/README.md').open('rb'):
+                with pytest.raises(PermissionError):
+                    stage_code_transaction(instance['code'] / 'current', instance['home'],
+                        from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+        finally:
+            resume.set()
+        with pytest.raises(InstanceInvalid):
+            future.result(timeout=5)
+    from hostrun.cleanup import cleanup_instance
+    assert cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                            confirmation=instance['instance_id'])['status'] == 'cleaned'
+    initialize_layout(tmp_path, instance['instance_id'])
+    assert AgentService(instance['home'], token='test').list_tasks(token='test') == []
