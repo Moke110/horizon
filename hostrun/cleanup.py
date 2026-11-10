@@ -19,6 +19,8 @@ class InstanceInvalid(ValueError):
 
 CONTROL_MARKER = '.horizon-test-control.json'
 CONTROL_SCHEMA = {'schema_version': 1, 'purpose': 'isolated-horizon-test-instances'}
+SESSION_ID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+SESSION_DIRECTORY_PATTERN = r'data/agent/pi/sessions/' + SESSION_ID_PATTERN
 
 
 def control_directory():
@@ -112,13 +114,16 @@ def preview(control_root, identity, *, mode='full'):
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
-    if not isinstance(data_inventory, dict) or any(name != 'data/agent/model.json' and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name) for name in data_inventory):
+    if not isinstance(data_inventory, dict) or any(name != 'data/agent/model.json'
+            and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
+            and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
     if model_update is not None and (not isinstance(model_update, dict)
             or set(model_update) != {'temporary', 'backup', 'new', 'previous'}
             or not all(re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', model_update[key]) for key in ('temporary', 'backup'))):
         raise InstanceInvalid('Invalid model update journal')
-    if not isinstance(data_directories, dict) or set(data_directories) - {'data/agent'}:
+    if not isinstance(data_directories, dict) or any(name not in {'data/agent', 'data/agent/pi', 'data/agent/pi/sessions'}
+            and not re.fullmatch(SESSION_DIRECTORY_PATTERN, name) for name in data_directories):
         raise InstanceInvalid('Invalid data directory inventory')
     installation = record.pop('installation', None)
     if not isinstance(application_directories, dict):

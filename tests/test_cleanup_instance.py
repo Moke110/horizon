@@ -810,6 +810,94 @@ def test_node_agent_rejects_replaced_managed_credentials(tmp_path):
     assert not (instance['home'] / 'agent' / 'pi').exists()
 
 
+def test_managed_node_does_not_duplicate_credentials_in_pi_auth(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='first', api_key='SECRET')
+    process = subprocess.run([shutil.which('node'), 'agent/dist/main.js', '--home', str(instance['home']),
+                              '--task', 'hello', '--kind', 'intent_judgement'],
+                             env={**os.environ, 'HORIZON_PYTHON': sys.executable}, capture_output=True,
+                             text=True, encoding='utf-8', timeout=15)
+    assert 'Unknown model' in process.stdout
+    assert not (instance['home'] / 'agent' / 'pi' / 'auth.json').exists()
+    assert 'SECRET' not in process.stdout + process.stderr
+
+
+@pytest.mark.parametrize('residue', ['none', 'replacement', 'unknown'])
+def test_managed_pi_session_resumes_and_cleanup_removes_only_owned_files(tmp_path, residue):
+    import json
+    import os
+    import subprocess
+    import sys
+    import threading
+    import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun import embedded_agent
+    requests = []
+    protected = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            path = instance['home'] / 'agent' / 'pi' / 'sessions' / session / 'session.jsonl'
+            try:
+                path.rename(path.with_suffix('.moved'))
+            except PermissionError:
+                protected.append(True)
+            else:
+                protected.append(False)
+                path.with_suffix('.moved').rename(path)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            for delta, finish in [({'role': 'assistant', 'content': 'Ready'}, None), ({}, 'stop')]:
+                chunk = {'id': 'test', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'test-model',
+                         'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
+                self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+        def log_message(self, *args): pass
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        embedded_agent.configure(instance['home'], provider='horizon-test', model='test-model', api_key='SECRET',
+                                 base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        session = str(uuid.uuid4())
+        for prompt in ('First unique question', 'Continue'):
+            args = embedded_agent.argv(instance['home'], prompt, kind='intent_judgement', code=Path.cwd(), session_id=session)
+            process = subprocess.run(args, env={**os.environ, 'HORIZON_PYTHON': sys.executable},
+                                     capture_output=True, text=True, encoding='utf-8', timeout=20)
+            assert process.returncode == 0, process.stdout + process.stderr
+            assert 'SECRET' not in process.stdout + process.stderr
+        assert 'First unique question' in json.dumps(requests[-1])
+        assert protected == [True, True]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    session_path = instance['home'] / 'agent' / 'pi' / 'sessions' / session / 'session.jsonl'
+    if residue == 'replacement':
+        session_path.rename(session_path.with_suffix('.retained'))
+        session_path.write_text('USER REPLACEMENT')
+    elif residue == 'unknown':
+        session_path.with_name('personal.txt').write_text('USER DOCUMENT')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == ('cleaned' if residue == 'none' else 'partial')
+    if residue == 'replacement':
+        assert session_path.read_text() == 'USER REPLACEMENT'
+    elif residue == 'unknown':
+        assert session_path.with_name('personal.txt').read_text() == 'USER DOCUMENT'
+
+
 def test_gui_refresh_cannot_overwrite_new_credentials(tmp_path):
     import json
     import threading
@@ -845,6 +933,110 @@ def test_gui_refresh_cannot_overwrite_new_credentials(tmp_path):
                 refresh.result(timeout=5)
         assert embedded_agent.runtime(instance['home'])['provider'] == 'new-provider'
     finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize('written', [0, 12])
+def test_pi_interrupted_header_stays_blocked_without_identity_drift(tmp_path, written):
+    import os
+    import subprocess
+    import sys
+    import uuid
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun import embedded_agent
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    embedded_agent.configure(instance['home'], provider='horizon-test', model='test-model', api_key='SECRET',
+                             base_url='http://127.0.0.1:9/v1')
+    injection = tmp_path.parent / 'injection'
+    injection.mkdir()
+    (injection / 'sitecustomize.py').write_text('''
+import ctypes, os
+original = ctypes.WinDLL
+kernel = original('kernel32', use_last_error=True)
+def write(handle, buffer, size, written, overlap):
+    kernel.WriteFile.argtypes = write.argtypes
+    kernel.WriteFile(handle, buffer, int(os.environ['HEADER_BYTES']), written, overlap)
+    os._exit(75)
+class Proxy:
+    def __getattr__(self, name):
+        return write if name == 'WriteFile' else getattr(kernel, name)
+ctypes.WinDLL = lambda name, *args, **kwargs: Proxy() if name == 'kernel32' else original(name, *args, **kwargs)
+''')
+    session = str(uuid.uuid4())
+    args = embedded_agent.argv(instance['home'], 'hello', kind='intent_judgement', code=Path.cwd(), session_id=session)
+    environment = {**os.environ, 'HORIZON_PYTHON': sys.executable}
+    failed = subprocess.run(args, env={**environment, 'PYTHONPATH': str(injection), 'HEADER_BYTES': str(written)},
+                            capture_output=True, text=True, encoding='utf-8', timeout=15)
+    assert failed.returncode != 0
+    path = instance['home'] / 'agent' / 'pi' / 'sessions' / session / 'session.jsonl'
+    before = path.read_bytes()
+    assert len(before) == written
+    identity = path.stat().st_ino
+    retry = subprocess.run(args, env=environment, capture_output=True, text=True, encoding='utf-8', timeout=15)
+    assert retry.returncode != 0
+    assert 'Managed Pi session unavailable' in retry.stdout
+    assert path.read_bytes() == before
+    assert path.stat().st_ino == identity
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_killed_node_releases_pi_guardian_without_polling_process(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import threading
+    import time
+    import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun import embedded_agent
+    entered, release = threading.Event(), threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            entered.set()
+            release.wait(10)
+        def log_message(self, *args): pass
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    process = None
+    try:
+        embedded_agent.configure(instance['home'], provider='horizon-test', model='test-model', api_key='SECRET',
+                                 base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        session = str(uuid.uuid4())
+        args = embedded_agent.argv(instance['home'], 'hello', kind='intent_judgement', code=Path.cwd(), session_id=session)
+        process = subprocess.Popen(args, env={**os.environ, 'HORIZON_PYTHON': sys.executable},
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert entered.wait(10)
+        path = instance['home'] / 'agent' / 'pi' / 'sessions' / session / 'session.jsonl'
+        with pytest.raises(PermissionError):
+            path.rename(path.with_suffix('.moved'))
+        process.kill()
+        process.communicate(timeout=5)
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                path.rename(path.with_suffix('.moved'))
+                path.with_suffix('.moved').rename(path)
+                break
+            except PermissionError:
+                assert time.monotonic() < deadline, 'guardian retained file after Node exit'
+                time.sleep(0.02)
+        result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                                  confirmation=instance['instance_id'])
+        assert result['status'] == 'cleaned'
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
         release.set()
         server.shutdown()
         server.server_close()
