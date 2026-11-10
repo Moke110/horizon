@@ -49,6 +49,16 @@
 
 桌面安装程序使用新包在临时目录中的内置解释器执行 `hostrun.desktop_upgrade`，不使用目标目录中的解释器替换自身。升级持有稳定数据 home 的 `desktop.lock`；用户必须先退出桌面。数据 home 与代码目录不得相互嵌套。升级先备份原安装树和数据 home（SQLite 使用 backup API），安装校验成功后执行公开 AgentService 初始化，最后以 fsync 和 replace 提交 `version.json`。schema 初始化或版本提交失败时恢复原数据与原代码树，新安装失败则隔离失败代码目录。备份保留在 home/upgrade-backups 和安装目录相邻的 pre-upgrade 目录，不清空每阶段数据。
 
+### 2.2 受控 Windows 测试实例升级
+
+固定 `test-instances/<id>` 内的已登记实例使用独立工具的升级实现，不进入上面的普通目录复制/恢复路径。工具解释器和实际加载的升级模块都必须位于目标代码目录外；包摘要及 manifest 的 OS、架构和 Python 兼容要求在操作开始前核验。桌面必须退出：实例外部 entrance gate 和独占生命周期租约覆盖整个备份、发布、schema 与版本提交，普通启动没有绕过入口。
+
+数据快照只覆盖已登记的数据库、模型凭据、Pi 会话和版本文件；SQLite 使用 backup API。未知既有资料不被扫描认领或删除，受支持的目标 schema 接口仅执行数据库初始化。数据备份保留于 `data/upgrade-backups/<operation-id>`，代码原件通过持有句柄移至已登记的 `app/current/.horizon/upgrades/<operation-id>/old`，失败代码保留于同一事务目录。与普通目录实现不同，版本通过先登记、flush、两个句柄 rename 和持久恢复日志提交；这是独占租约保护的可恢复事务，不声称一次原子 replace。失败恢复原代码 FileID、业务数据及原版本内容/不存在状态；无法核验的替换项保留并阻止恢复。
+
+目标包内 `AgentService.initialize_database(db)` 与正常 AgentService 构造共享同一实现。独立工具核对目标模块身份与摘要后，用工具的兼容运行时执行该纯 SQL/标准库接口；缺接口、无原数据库快照或不兼容要求均拒绝。这里不等于验证目标包全部运行时依赖，也不隔离可信目标模块顶层代码的任意副作用。完整发行包的组件、包装器、无系统 Python 和桌面现场验收仍按本契约单独执行。
+
+进程中断后，普通升级只返回待恢复，不自动重投递。用户显式执行独立工具 `cleanup-tool.cmd recover <id> --sha256 <pending-artifact-digest>` 恢复，再自行发起新的升级。恢复以绑定实例的 DPAPI 保护登记为依据；具体库存、安全拒绝及未完成备份语义见 `contracts/windows-test-cleanup.md`。
+
 ## 3. 启动包装器 `<package>/bin/horizon.cmd`
 
 内置运行时存在时，构建入口生成该文件。它是一段固定文本，不是安装步骤产物：

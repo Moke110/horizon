@@ -13,7 +13,7 @@ from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
 
 
 def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=None):
-    """Experimental internal code transaction, not the public upgrade contract."""
+    """Internal code-publication primitive; the coordinator owns data/schema/version."""
     if transaction_id is not None and (not isinstance(transaction_id, str) or not re.fullmatch(r'[0-9a-f]{32}', transaction_id)):
         raise cleanup.InstanceInvalid('Invalid code transaction identity')
     home = cleanup._lexical_home(home)

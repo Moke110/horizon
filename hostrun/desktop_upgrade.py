@@ -125,14 +125,29 @@ def _upgrade(code, home, *, from_source, sha256):
 
 
 def upgrade(code, home, *, from_source, sha256):
-    from hostrun.cleanup import instance_lock, _lexical_home, control_directory
+    from hostrun.cleanup import instance_lock, _lexical_home, control_directory, preview
+    if os.name == 'nt' and _lexical_home(home).parent.parent == control_directory():
+        from hostrun.managed_upgrade_scope import exclusive_scope
+        from hostrun.managed_upgrade_operation import run_upgrade
+        canonical_home, canonical_code = _lexical_home(home), _lexical_home(code)
+        preview(canonical_home.parent.parent, canonical_home.parent.name)
+        if any(_lexical_home(path.resolve()).is_relative_to(canonical_code)
+               for path in (Path(sys.executable), Path(__file__))):
+            return {'status': 'blocked', 'reason': 'upgrader_inside_target'}
+        record_event(home, 'upgrade_started', pid=os.getpid())
+        with exclusive_scope(home) as acquired:
+            if not acquired:
+                result = {'status': 'blocked', 'reason': 'instance_busy'}
+            elif canonical_code != canonical_home.parent / 'app/current':
+                result = {'status': 'blocked', 'reason': 'unexpected_managed_code'}
+            else:
+                result = run_upgrade(code, home, from_source=from_source, sha256=sha256)
+        record_event(home, 'result', status=result['status'], code=result.get('reason', 'installed'),
+                     version=result.get('version'))
+        return result
     with instance_lock(home) as acquired:
         if not acquired:
             return {'status': 'blocked', 'reason': 'instance_busy'}
-        if os.name == 'nt' and _lexical_home(home).parent.parent == control_directory():
-            # The legacy backup/restore path replaces file identities. Managed
-            # upgrades wait for their own inventory transaction implementation.
-            return {'status': 'blocked', 'reason': 'managed_upgrade_inventory_pending'}
         return _recorded_upgrade(code, home, from_source=from_source, sha256=sha256)
 
 
