@@ -1837,7 +1837,7 @@ def test_experimental_code_transaction_preserves_home_and_cleans_enrolled_backup
     import json
     from test_dist_install import _build
     from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
-    from hostrun.managed_upgrade import stage_code_transaction
+    from hostrun.managed_upgrade import stage_code_transaction, rollback_code_transaction
     from hostrun.embedded_agent import configure, load_model_config
     from hostrun.agent_service import AgentService
     instance = prepare_instance(tmp_path)
@@ -1849,12 +1849,17 @@ def test_experimental_code_transaction_preserves_home_and_cleans_enrolled_backup
     service = AgentService(instance['home'], token='test')
     task = service.create_task({'schema_version': 1, 'operation_id': 'create', 'title': 'kept'}, token='test')
     code = instance['code'] / 'current'
+    previous_id = (code / 'README.md').stat().st_ino
     result = stage_code_transaction(code, instance['home'], from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
     assert result['status'] == 'ok', result
     assert json.loads((code / 'manifest.json').read_text())['version'] == '0.2.0'
     assert load_model_config(instance['home'])['apiKey'] == 'synthetic-upgrade-key'
     assert AgentService(instance['home'], token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
     assert result['data_migration'] == 'not_performed'
+    assert rollback_code_transaction(code, instance['home'], result['transaction_id'])['status'] == 'restored'
+    assert json.loads((code / 'manifest.json').read_text())['version'] == '0.1.0'
+    assert (code / 'README.md').stat().st_ino == previous_id
+    assert rollback_code_transaction(code, instance['home'], result['transaction_id'])['status'] == 'restored'
     assert cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
                             confirmation=instance['instance_id'])['status'] == 'cleaned'
 
@@ -1996,3 +2001,110 @@ def test_data_backup_refuses_external_wal_mode_without_creating_sidecars(tmp_pat
     assert not (instance['home'] / 'upgrade-backups').exists()
     assert not path.with_name(path.name + '-wal').exists()
     assert not path.with_name(path.name + '-shm').exists()
+
+
+def test_internal_code_rollback_interrupted_rename_blocks_then_retries(tmp_path, monkeypatch):
+    import ctypes
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, InstanceInvalid
+    from hostrun.managed_upgrade import stage_code_transaction, rollback_code_transaction
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    second = _build(tmp_path.parent / 'second', version='0.2.0')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    code = instance['code'] / 'current'
+    old_id = (code / 'README.md').stat().st_ino
+    transaction = stage_code_transaction(code, instance['home'], from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    original = ctypes.WinDLL
+    kernel = original('kernel32', use_last_error=True)
+    moves = 0
+    def set_info(handle, kind, buffer, size):
+        nonlocal moves
+        kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
+        if kind == 3:
+            moves += 1
+            if moves == 2:
+                ctypes.set_last_error(32)
+                return 0
+        return kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+    class Proxy:
+        def __getattr__(self, name):
+            return set_info if name == 'SetFileInformationByHandle' else getattr(kernel, name)
+    with monkeypatch.context() as patch:
+        patch.setattr(ctypes, 'WinDLL', lambda name, *a, **kw: Proxy() if name == 'kernel32' else original(name, *a, **kw))
+        with pytest.raises(OSError):
+            rollback_code_transaction(code, instance['home'], transaction['transaction_id'])
+    with pytest.raises(InstanceInvalid):
+        AgentService(instance['home'], token='test')
+    assert rollback_code_transaction(code, instance['home'])['status'] == 'restored'
+    assert json.loads((code / 'manifest.json').read_text())['version'] == '0.1.0'
+    assert (code / 'README.md').stat().st_ino == old_id
+
+
+@pytest.mark.parametrize('target', ['current', 'backup', 'backup_content'])
+def test_internal_code_rollback_preserves_replacements(tmp_path, target):
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, InstanceInvalid
+    from hostrun.managed_upgrade import stage_code_transaction, rollback_code_transaction
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    second = _build(tmp_path.parent / 'second', version='0.2.0')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    code = instance['code'] / 'current'
+    transaction = stage_code_transaction(code, instance['home'], from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    changed = code / 'README.md' if target == 'current' else code / '.horizon/upgrades' / transaction['transaction_id'] / 'old/README.md'
+    if target != 'backup_content': changed.rename(changed.with_suffix('.retained'))
+    changed.write_text('USER FILE', encoding='utf-8')
+    before = (code / 'manifest.json').read_bytes()
+    with pytest.raises(InstanceInvalid):
+        rollback_code_transaction(code, instance['home'], transaction['transaction_id'])
+    assert changed.read_text(encoding='utf-8') == 'USER FILE'
+    assert (code / 'manifest.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('phase', ['before_rename', 'after_rename'])
+def test_code_rollback_recovers_process_exit_between_alias_receipts(tmp_path, phase):
+    import json
+    import os
+    import subprocess
+    import sys
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, InstanceInvalid
+    from hostrun.managed_upgrade import stage_code_transaction, rollback_code_transaction
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    second = _build(tmp_path.parent / 'second', version='0.2.0')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    code = instance['code'] / 'current'
+    old_id = (code / 'README.md').stat().st_ino
+    transaction = stage_code_transaction(code, instance['home'], from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    script = '''
+import ctypes, os, sys
+from hostrun.managed_upgrade import rollback_code_transaction
+original = ctypes.WinDLL
+kernel = original('kernel32', use_last_error=True)
+def set_info(handle, kind, buffer, size):
+    kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
+    if kind == 3 and sys.argv[4] == 'before_rename': os._exit(77)
+    result = kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+    if kind == 3 and result: os._exit(77)
+    return result
+class Proxy:
+    def __getattr__(self, name):
+        return set_info if name == 'SetFileInformationByHandle' else getattr(kernel, name)
+ctypes.WinDLL = lambda name, *a, **kw: Proxy() if name == 'kernel32' else original(name, *a, **kw)
+rollback_code_transaction(sys.argv[1], sys.argv[2], sys.argv[3])
+'''
+    process = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, str(code), str(instance['home']),
+                              transaction['transaction_id'], phase], env=os.environ.copy(), capture_output=True, timeout=10)
+    assert process.returncode == 77, process.stderr
+    with pytest.raises(InstanceInvalid): AgentService(instance['home'], token='test')
+    assert rollback_code_transaction(code, instance['home'])['status'] == 'restored'
+    assert (code / 'README.md').stat().st_ino == old_id
+    assert json.loads((code / 'manifest.json').read_text())['version'] == '0.1.0'
