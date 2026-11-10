@@ -125,7 +125,7 @@ def serve(resolved):
                     raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
                 if action == 'ready': ui_ready.set()
                 elif action == 'export_diagnostics':
-                    report = export_report(service.home, service.home / 'diagnostics' / 'reports', code=code, tasks=service.list_turns(token=token))
+                    report = export_report(service.home, code=code, tasks=service.list_turns(token=token))
                     emit('notice', '诊断报告已导出：' + str(report))
                 elif action == 'exit':
                     exiting.set()

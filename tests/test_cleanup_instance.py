@@ -246,6 +246,97 @@ def test_managed_diagnostic_events_are_enrolled_before_append(tmp_path):
     assert 'desktop_started' in (Path(result['report']) / 'events.jsonl').read_text()
 
 
+def test_desktop_report_is_retained_outside_managed_instance(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.diagnostics import record_event, export_report
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    record_event(instance['home'], 'desktop_started', pid=123)
+    report = export_report(instance['home'], code=instance['code'])
+    assert report.parent == tmp_path.parent / 'test-reports' / instance['instance_id']
+    assert 'desktop_started' in (report / 'events.jsonl').read_text()
+    assert not (instance['home'] / 'diagnostics' / 'reports').exists()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'cleanup-reports',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+    assert (report / 'summary.md').is_file()
+
+
+def test_previous_internal_reports_are_not_adopted_or_removed(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.diagnostics import record_event, export_report
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    record_event(instance['home'], 'desktop_started')
+    old = instance['home'] / 'diagnostics' / 'reports'
+    old.mkdir()
+    (old / 'user-report.txt').write_text('PRESERVE')
+    report = export_report(instance['home'])
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'cleanup-reports',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'partial'
+    assert (old / 'user-report.txt').read_text() == 'PRESERVE'
+    assert (report / 'summary.md').exists()
+
+
+@pytest.mark.parametrize('level', ['root', 'instance'])
+def test_desktop_report_refuses_redirected_retained_directory(tmp_path, level):
+    import _winapi
+    from hostrun.cleanup import initialize_layout
+    from hostrun.diagnostics import export_report
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    external = tmp_path.parent / 'user-documents'
+    external.mkdir()
+    (external / 'keep.txt').write_text('USER DOCUMENT')
+    root = tmp_path.parent / 'test-reports'
+    link = root
+    if level == 'instance':
+        root.mkdir()
+        link = root / instance['instance_id']
+    _winapi.CreateJunction(str(external), str(link))
+    with pytest.raises(ValueError, match='Reparse'):
+        export_report(instance['home'])
+    assert [path.name for path in external.iterdir()] == ['keep.txt']
+
+
+def test_ordinary_desktop_report_default_location_is_unchanged(tmp_path):
+    from hostrun.diagnostics import export_report
+    home = tmp_path.parent / 'ordinary-home'
+    report = export_report(home)
+    assert report.parent == home / 'diagnostics' / 'reports'
+    assert (report / 'summary.md').exists()
+
+
+def test_managed_report_final_directory_cannot_be_replaced_before_write(tmp_path, monkeypatch):
+    import _winapi
+    from hostrun.cleanup import initialize_layout
+    from hostrun.diagnostics import export_report
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    external = tmp_path.parent / 'external'
+    external.mkdir()
+    original = Path.open
+    attempted = []
+    def open_file(path, *args, **kwargs):
+        if path.name == 'events.jsonl' and path.parent.name.startswith('horizon-report-') and not attempted:
+            folder = path.parent
+            try:
+                folder.rename(folder.with_name(folder.name + '.moved'))
+            except PermissionError:
+                attempted.append('blocked')
+            else:
+                attempted.append('replaced')
+                _winapi.CreateJunction(str(external), str(folder))
+        return original(path, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'open', open_file)
+        report = export_report(instance['home'])
+    assert attempted == ['blocked']
+    assert not list(external.iterdir())
+    assert (report / 'summary.md').is_file()
+
+
 def test_managed_diagnostic_rotation_keeps_bounded_owned_files(tmp_path):
     from hostrun.cleanup import initialize_layout, cleanup_instance
     from hostrun.diagnostics import record_event
