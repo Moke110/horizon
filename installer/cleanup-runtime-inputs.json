@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "python_version": "3.13",
+  "inputs": [
+    {
+      "kind": "cpython-embed",
+      "filename": "python-3.13.7-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.13.7/python-3.13.7-embed-amd64.zip",
+      "sha256": "f6cca216a359be84797cabb54149ce5e062afb16cc7567eb7fc51cacb2d86b65"
+    },
+    {
+      "kind": "wheel",
+      "filename": "PyYAML-6.0.2-cp313-cp313-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/fa/de/02b54f42487e3d3c6efb3f89428677074ca7bf43aae402517bc7cca949f3/PyYAML-6.0.2-cp313-cp313-win_amd64.whl",
+      "sha256": "8388ee1976c416731879ac16da0aff3f63b286ffdd57cdeb95f3f2e085687563"
+    }
+  ]
+}

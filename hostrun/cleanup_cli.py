@@ -49,7 +49,9 @@ def main(argv=None):
         command.add_argument('--mode', choices=('full', 'keep-data'), default='full')
         if name == 'cleanup':
             command.add_argument('--output', required=True, type=Path)
-            command.add_argument('--confirm')
+            confirmation = command.add_mutually_exclusive_group()
+            confirmation.add_argument('--confirm')
+            confirmation.add_argument('--interactive', action='store_true')
     args = parser.parse_args(argv)
     try:
         with _control(create=args.command == 'prepare') as control:
@@ -66,6 +68,16 @@ def main(argv=None):
                 result = cleanup.preview(control, args.instance_id, mode=args.mode)
                 result['containers'] = result.pop('delete')
                 result['deletion_policy'] = 'Only registered matching file identities and empty registered directories; unknown content is preserved.'
+                if args.command == 'cleanup' and args.interactive:
+                    result['scope_complete'] = False
+                    print(json.dumps(result, default=str), flush=True)
+                    print('Review the scope above. Type the complete instance ID to continue; anything else cancels:',
+                          file=sys.stderr, flush=True)
+                    answer = sys.stdin.readline().strip()
+                    if answer != args.instance_id:
+                        print(json.dumps({'status': 'cancelled', 'scope_complete': False}))
+                        return 0
+                    args.confirm = answer
                 if args.command == 'cleanup' and args.confirm is not None:
                     if args.confirm != args.instance_id:
                         raise cleanup.InstanceInvalid('Confirmation mismatch')
