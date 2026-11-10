@@ -1,5 +1,7 @@
 # Windows test-instance cleanup primitives
 
+After a validated managed desktop startup fails, the real module entry shows a fixed exception category and attempts a retained sanitized report. It does not write an unregistered `desktop-error.log` or emit the original traceback. A report-export failure remains visible and directs the user to the independent report command. A generated report path means an artifact exists, not that every snapshot item was available; inspect its availability fields. Invalid/busy instances still refuse without diagnostic-home writes. Ordinary desktop failures retain their previous traceback behavior.
+
 The development tool builder `scripts/prepare_cleanup_tool.py --inputs <offline-inputs> --output <new-directory>` verifies the fixed CPython 3.13.7 amd64 and PyYAML 6.0.2 inputs in `installer/cleanup-runtime-inputs.json`, reuses the runtime assembler and copies an explicit tool-module list. It never copies the developer interpreter or installed application. `cleanup-tool.cmd` runs its adjacent isolated runtime; the input and per-file manifests provide build verification, not runtime tamper resistance. Existing output directories are refused. This artifact is not the final Windows test kit.
 
 For human use, append `--interactive` to `cleanup`: it prints scope before reading the complete instance ID, and EOF or any other answer cancels without report creation or deletion. `--confirm` remains mutually exclusive automation authorization. No command reports complete P5 acceptance.

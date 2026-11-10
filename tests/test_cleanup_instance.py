@@ -1707,3 +1707,50 @@ def test_invalid_instance_real_desktop_never_writes_home(tmp_path, damage):
         assert not list(external.iterdir())
     else:
         assert not instance['home'].exists()
+
+
+@pytest.mark.parametrize('mode', ['managed', 'report_unavailable', 'ordinary'])
+def test_managed_real_desktop_failure_exports_category_without_raw_traceback(tmp_path, mode):
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    home = instance['home'] if mode != 'ordinary' else tmp_path.parent / 'ordinary'
+    if mode == 'report_unavailable':
+        import _winapi
+        external = tmp_path.parent / 'external-report'
+        external.mkdir()
+        _winapi.CreateJunction(str(external), str(tmp_path.parent / 'test-reports'))
+    source = Path(__file__).resolve().parents[1]
+    tool = tmp_path.parent / 'tool'
+    shutil.copytree(source / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
+    shutil.copyfile(source / 'common.py', tool / 'common.py')
+    # Only replace the OS dialog boundary so a real -m failure can finish unattended.
+    (tool / 'sitecustomize.py').write_text(
+        'import ctypes\nctypes.windll.user32.MessageBoxW = lambda owner, message, title, flags: print(message) or 1\n',
+        encoding='utf-8')
+    result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.desktop',
+                             '--code', str(instance['code']), '--archive', str(instance['archive'])],
+                            cwd=tool, env={**os.environ, 'PYTHONPATH': os.pathsep.join((str(tool), str(source))),
+                                           'HORIZON_DATA_HOME': str(home)},
+                            capture_output=True, text=True, encoding='utf-8', timeout=10)
+    if mode == 'ordinary':
+        assert result.returncode == 1
+        assert 'Traceback' in (tool / '.horizon/desktop-error.log').read_text(encoding='utf-8')
+        return
+    assert result.returncode == 2
+    assert 'RuntimeError' in result.stdout
+    assert 'Traceback' not in result.stdout + result.stderr
+    assert not (tool / '.horizon/desktop-error.log').exists()
+    if mode == 'report_unavailable':
+        assert '诊断导出未完成' in result.stdout
+        assert not list(external.iterdir())
+        return
+    reports = list((tmp_path.parent / 'test-reports' / instance['instance_id']).glob('horizon-report-*'))
+    assert len(reports) == 1
+    assert str(reports[0]) in result.stdout
+    events = (reports[0] / 'events.jsonl').read_text(encoding='utf-8')
+    assert 'RuntimeError' in events
