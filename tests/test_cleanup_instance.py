@@ -2363,7 +2363,10 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     ('backup', None), ('code_move', None), ('schema_write', None),
     ('version_before', None), ('version_after', None),
     ('backup', 'replacement'), ('version_after', 'replacement'),
-    ('code_move', 'wrong_artifact')])
+    ('code_move', 'wrong_artifact'),
+    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32)],
+    ('batch_old_16', 'code_replacement'), ('batch_new_16', 'code_replacement'),
+    ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit')])
 def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damage):
     import json
     import os
@@ -2376,6 +2379,10 @@ def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damag
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     first = _build(tmp_path.parent / 'first')
+    extra = {f'hostrun/payload/file-{i:03}.txt': 'original' for i in range(40)} if phase.startswith('batch_') else {}
+    if extra:
+        initial_source = _write_tree(tmp_path.parent / 'initial-source', {**PACKAGE_FILES, **extra})
+        first = build(source=initial_source, out=tmp_path.parent / 'initial', version='0.1.0', channel='stable', commit='test', compat=_host_compat())
     install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
     home, code = instance['home'], instance['code'] / 'current'
     AgentService(home, token='test')
@@ -2385,9 +2392,10 @@ def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damag
     target = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
     if phase == 'schema_write':
         target = target.replace("db.execute('BEGIN IMMEDIATE')", "db.execute('CREATE TABLE interrupted_schema(value TEXT)')\n        __import__('os')._exit(77)", 1)
-    source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, 'hostrun/agent_service.py': target})
+    source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, **{name: 'updated' for name in extra}, 'hostrun/agent_service.py': target})
     second = build(source=source, out=tmp_path.parent / 'second', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
     original_id = (code / 'README.md').stat().st_ino
+    original_ids = {name: (code / name).stat().st_ino for name in extra}
     script = '''
 import ctypes, os, sys
 from ctypes import wintypes as w
@@ -2397,10 +2405,12 @@ from hostrun.windows_cleanup import io_path
 native = ctypes.WinDLL
 kernel = native('kernel32', use_last_error=True)
 phase = sys.argv[5]
+rename_count = 0
 class RenameInfo(ctypes.Structure):
     _fields_ = [('ReplaceIfExists', w.BOOL), ('RootDirectory', w.HANDLE),
                 ('FileNameLength', w.DWORD), ('FileName', w.WCHAR * 1)]
 def set_info(handle, kind, buffer, size):
+    global rename_count
     kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
     is_version = False
     if kind == 3:
@@ -2409,6 +2419,13 @@ def set_info(handle, kind, buffer, size):
         is_version = Path(destination) == io_path(Path(sys.argv[2]) / 'version.json')
         if is_version and phase == 'version_before': os._exit(77)
     result = kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+    if kind == 3 and result and phase.startswith('batch_'):
+        direction, position = phase.split('_')[1:]
+        relative = Path(destination).relative_to(io_path(Path(sys.argv[1]))).as_posix()
+        matches = '/old/' in relative if direction == 'old' else not relative.startswith('.horizon/upgrades/')
+        if matches:
+            rename_count += 1
+            if rename_count == int(position): os._exit(77)
     if kind == 3 and result and (phase == 'code_move' or (is_version and phase == 'version_after')): os._exit(77)
     return result
 def write_file(*args):
@@ -2433,6 +2450,10 @@ print({key: result.get(key) for key in ('status', 'reason', 'recovery')}, flush=
         changed = home / ('version.json' if phase == 'version_after' else 'agent/model.json')
         changed.rename(changed.with_suffix('.retained'))
         changed.write_bytes(b'USER_REPLACEMENT')
+    if damage == 'code_replacement':
+        changed = next(path for path in code.rglob('*') if path.is_file() and '.horizon' not in path.relative_to(code).parts)
+        changed.rename(changed.with_suffix('.retained'))
+        changed.write_bytes(b'USER_REPLACEMENT')
     from hostrun.desktop_upgrade import upgrade
     assert upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256']) == {
         'status': 'blocked', 'reason': 'managed_upgrade_recovery_pending'}
@@ -2442,7 +2463,40 @@ print({key: result.get(key) for key in ('status', 'reason', 'recovery')}, flush=
     repository = Path(__file__).resolve().parents[1]
     shutil.copytree(repository / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copyfile(repository / 'common.py', tool / 'common.py')
-    process = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.cleanup_cli', 'recover',
+    if damage == 'recover_exit':
+        recovery_script = '''
+import ctypes,os,sys
+from hostrun.managed_upgrade_operation import recover_upgrade
+native=ctypes.WinDLL
+kernel=native('kernel32',use_last_error=True)
+def set_info(*args):
+    kernel.SetFileInformationByHandle.argtypes=set_info.argtypes
+    result=kernel.SetFileInformationByHandle(*args)
+    if args[1]==3 and result: os._exit(78)
+    return result
+class Proxy:
+    def __getattr__(self,name):
+        return set_info if name=='SetFileInformationByHandle' else getattr(kernel,name)
+ctypes.WinDLL=lambda name,*a,**kw: Proxy() if name=='kernel32' else native(name,*a,**kw)
+recover_upgrade(sys.argv[1],sys.argv[2],sha256=sys.argv[3])
+'''
+        interrupted = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', recovery_script, str(code), str(home), digest],
+                                     cwd=tool, env={**os.environ, 'PYTHONPATH': str(tool)}, capture_output=True, timeout=15)
+        assert interrupted.returncode == 78, interrupted.stderr
+        damage = None
+    recovery_entry = '''
+import json,runpy,sys
+def trace(frame,event,arg):
+    if event=='exception' and frame.f_code.co_name=='recover_upgrade' and frame.f_code.co_filename.endswith('managed_upgrade_operation.py'):
+        error=arg[1]
+        print(json.dumps({'function':frame.f_code.co_name,'class':type(error).__name__,
+                          'errno':getattr(error,'errno',None),'winerror':getattr(error,'winerror',None)}),file=sys.stderr)
+    return trace
+sys.settrace(trace)
+sys.argv=['hostrun.cleanup_cli',*sys.argv[1:]]
+runpy.run_module('hostrun.cleanup_cli',run_name='__main__')
+'''
+    process = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', recovery_entry, 'recover',
                               instance['instance_id'], '--sha256', digest], cwd=tool,
                              env={**os.environ, 'PYTHONPATH': str(tool)},
                              capture_output=True, text=True, encoding='utf-8', timeout=15)
@@ -2450,11 +2504,13 @@ print({key: result.get(key) for key in ('status', 'reason', 'recovery')}, flush=
     if damage:
         assert json.loads(process.stdout)['status'] == 'blocked'
         assert json.loads(process.stdout)['reason'] == ('recovery_artifact_mismatch' if damage == 'wrong_artifact' else 'upgrade_recovery_failed')
-        if damage == 'replacement': assert changed.read_bytes() == b'USER_REPLACEMENT'
+        if damage in ('replacement', 'code_replacement'): assert changed.read_bytes() == b'USER_REPLACEMENT'
         with pytest.raises(InstanceInvalid): AgentService(home, token='test')
         return
-    assert json.loads(process.stdout)['status'] == 'restored'
+    assert json.loads(process.stdout)['status'] == 'restored', process.stderr
     assert (code / 'README.md').stat().st_ino == original_id
+    assert all((code / name).stat().st_ino == identity and (code / name).read_text() == 'original'
+               for name, identity in original_ids.items())
     assert json.loads((code / 'manifest.json').read_text())['version'] == '0.1.0'
     assert not (home / 'version.json').exists()
     assert (home / 'agent/model.json').read_bytes() == credentials
@@ -2572,6 +2628,7 @@ def test_public_upgrade_handles_deep_installed_code_and_rollback(tmp_path, schem
     assert install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])['status'] == 'ok'
     home, code = instance['home'], instance['code'] / 'current'
     AgentService(home, token='test')
+
     deep = code / relative
     assert len(str(deep)) > 260
     before_id = io_path(deep).stat().st_ino
@@ -2587,3 +2644,60 @@ def test_public_upgrade_handles_deep_installed_code_and_rollback(tmp_path, schem
         assert result['status'] == 'ok', result
         assert io_path(deep).read_text() == 'updated deep contents'
     AgentService(home, token='test')
+
+
+
+@pytest.mark.parametrize('receipt_failure', [False, True])
+def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypatch, receipt_failure):
+    import time
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun import cleanup
+    from hostrun.agent_service import AgentService
+    from hostrun.desktop_upgrade import upgrade
+    module = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    def package(version):
+        files = {**PACKAGE_FILES, 'hostrun/agent_service.py': module,
+                 **{f'hostrun/payload/file-{i:03}.txt': version for i in range(65)}}
+        source = _write_tree(tmp_path.parent / ('source-' + version), files)
+        return build(source=source, out=tmp_path.parent / version, version=version,
+                     channel='stable', commit='test', compat=_host_compat())
+    first, second = package('0.1.0'), package('0.2.0')
+    instance = prepare_instance(tmp_path)
+    cleanup.initialize_layout(tmp_path, instance['instance_id'])
+    assert cleanup.install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])['status'] == 'ok'
+    home, code = instance['home'], instance['code'] / 'current'
+    AgentService(home, token='test')
+    writes, byte_counts = [], []
+    original = cleanup._write_registration
+    failed_names, prior_names = [], []
+    def measured(path, record):
+        transaction = next(iter(record.get('code_transactions', {}).values()), {})
+        after = list(transaction.get('after', {}))
+        if receipt_failure and not failed_names and len(after) > 32:
+            failed_names.extend(after[32:])
+            prior_names.extend(after[:32])
+            raise OSError('Injected second creation receipt failure')
+        original(path, record)
+        writes.append(1)
+        byte_counts.append(path.stat().st_size)
+    monkeypatch.setattr(cleanup, '_write_registration', measured)
+    started = time.perf_counter()
+    result = upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    elapsed = time.perf_counter() - started
+    print({'upgrade_seconds': round(elapsed, 3), 'registration_writes': len(writes), 'registration_bytes': sum(byte_counts)})
+    if receipt_failure:
+        assert result == {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
+        assert len(failed_names) == 32
+        operation = next((code / '.horizon/upgrades').iterdir())
+        assert all(not (operation / 'new' / name).exists() for name in failed_names)
+        import zipfile
+        with zipfile.ZipFile(second['artifact']['path']) as archive:
+            assert all((operation / 'new' / name).read_bytes() == archive.read(name) for name in prior_names)
+        assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.1.0' for i in range(65))
+        AgentService(home, token='test')
+        return
+    assert result['status'] == 'ok', result
+    assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.2.0' for i in range(65))
+    AgentService(home, token='test')
+    assert len(writes) < 100
