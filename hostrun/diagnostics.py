@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import platform
 import sqlite3
@@ -35,9 +36,43 @@ def record_event(home,event,**metadata):
     except (OSError, ValueError, RuntimeError):
         pass  # Diagnostics must never prevent application recovery.
 
-def export_report(home,output,*,code=None,tasks=()):
-    folder=Path(output)/('horizon-report-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8])
+def _desktop_report(home, *, code, tasks):
+    from hostrun.cleanup import _lexical_home, control_directory, instance_lock, InstanceBusy
+    home = _lexical_home(home)
+    control = control_directory() if os.name == 'nt' else None
+    if control is None or home.parent.parent != control:
+        return export_report(home, home / 'diagnostics' / 'reports', code=code, tasks=tasks)
+    from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
+    with instance_lock(home) as available:
+        if not available:
+            raise InstanceBusy('instance_busy')
+        # Reports are retained siblings of test-instances, never cleanup inventory.
+        with pin_ancestors(control.parent):
+            root = control.parent / 'test-reports'
+            root.mkdir(exist_ok=True)
+            with pin_ancestors(root):
+                output = root / home.parent.name
+                output.mkdir(exist_ok=True)
+                with pin_ancestors(output):
+                    with closing(PinnedEntry(output)) as parent:
+                        folder = output / _report_name()
+                        with closing(PinnedEntry(folder, create_parent=parent)):
+                            return _write_report(home, folder, code=code, tasks=tasks)
+
+
+def _report_name():
+    return 'horizon-report-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]
+
+
+def export_report(home,output=None,*,code=None,tasks=()):
+    if output is None:
+        return _desktop_report(home, code=code, tasks=tasks)
+    folder=Path(output)/_report_name()
     folder.mkdir(parents=True)
+    return _write_report(home, folder, code=code, tasks=tasks)
+
+
+def _write_report(home, folder, *, code, tasks):
     events=[]
     for name in ('events.previous.jsonl','events.jsonl'):
         try:
