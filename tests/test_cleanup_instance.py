@@ -479,12 +479,78 @@ def test_interrupted_package_copy_preserves_unproven_replacement(tmp_path, monke
         with pytest.raises(KeyboardInterrupt):
             install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
     assert (code / '.horizon' / 'dist.pending.json').exists()
+
     (code / 'common.py').rename(code / 'original-partial.py')
     (code / 'common.py').write_text('USER REPLACEMENT MUST SURVIVE')
     result = install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
     assert result['status'] == 'blocked'
     assert (code / 'common.py').read_text() == 'USER REPLACEMENT MUST SURVIVE'
     assert (code / '.horizon' / 'dist.pending.json').exists()
+
+
+@pytest.mark.parametrize('report_failure', [False, True])
+def test_cleanup_stops_exact_job_owner_and_preserves_unrelated_process(tmp_path, report_failure):
+    import os
+    import subprocess
+    import sys
+    import time
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    ready = tmp_path.parent / 'owner-ready'
+    script = (
+        'import subprocess,sys,time; from pathlib import Path; '
+        'from hostrun.desktop_processes import install; '
+        'from hostrun.cleanup import register_instance_owner, instance_lock; '
+        'install(); lease=instance_lock(Path(sys.argv[1])); lease.__enter__(); '
+        'register_instance_owner(Path(sys.argv[1])); '
+        'child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"]); '
+        'Path(sys.argv[2]).write_text(str(child.pid)); time.sleep(60)'
+    )
+    owner = subprocess.Popen([sys.executable, '-X', 'utf8', '-c', script, str(instance['home']), str(ready)],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=os.environ.copy())
+    sentinel = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and owner.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), owner.communicate(timeout=2)
+        if report_failure:
+            output = tmp_path.parent / 'report'
+            output.write_text('not a directory')
+            with pytest.raises(OSError):
+                cleanup_instance(tmp_path, instance['instance_id'], output, confirmation=instance['instance_id'])
+            assert owner.poll() is None
+            assert sentinel.poll() is None
+            return
+        result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                                  confirmation=instance['instance_id'])
+        assert owner.wait(timeout=5) is not None
+        assert sentinel.poll() is None
+        assert result['status'] == 'cleaned'
+        assert (Path(result['report']) / 'summary.md').is_file()
+        assert result['processes']['status'] == 'stopped'
+        assert result['processes']['observed_processes'] >= 2
+        import ctypes
+        from ctypes import wintypes as w
+        api = ctypes.WinDLL('kernel32', use_last_error=True)
+        api.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+        api.OpenProcess.restype = w.HANDLE
+        api.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+        api.CloseHandle.argtypes = [w.HANDLE]
+        child = api.OpenProcess(0x100000, False, int(ready.read_text()))
+        if child:
+            try:
+                assert api.WaitForSingleObject(child, 0) == 0
+            finally:
+                api.CloseHandle(child)
+        else:
+            assert ctypes.get_last_error() == 87
+    finally:
+        for process in (owner, sentinel):
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
 
 
 @pytest.mark.parametrize('damage', ['missing', 'tampered', 'lock_directory', 'junction'])

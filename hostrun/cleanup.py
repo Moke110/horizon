@@ -5,6 +5,7 @@ import uuid
 import os
 import base64
 from contextlib import contextmanager, ExitStack
+from common import file_lock
 
 
 class InstanceBusy(RuntimeError):
@@ -165,8 +166,8 @@ def install_test_package(control_root, identity, package, digest):
     preview(control, identity)
     root = control / identity
     code = root / 'app' / 'current'
-    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root / 'app'), ExitStack() as held:
-        if not acquired:
+    with file_lock(control / (identity + '.gate'), blocking=False) as entrance, lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root / 'app'), ExitStack() as held:
+        if not entrance or not acquired:
             raise InstanceBusy('instance_busy')
         preview(control, identity)
         registration = control / (identity + '.json')
@@ -235,8 +236,8 @@ def initialize_layout(control_root, identity):
     control = Path(control_root).resolve(strict=True)
     root = control / identity
     from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
-    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root), ExitStack() as held:
-        if not acquired:
+    with file_lock(control / (identity + '.gate'), blocking=False) as entrance, lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root), ExitStack() as held:
+        if not entrance or not acquired:
             raise InstanceBusy('instance_busy')
         preview(control, identity)
         registration = control / (identity + '.json')
@@ -337,8 +338,51 @@ def cleanup_instance(control_root, identity, output, *, confirmation=None, mode=
         return plan
     report = collect_instance_report(control_root, identity, output)
     control = Path(control_root).resolve(strict=True)
+    with file_lock(control / (identity + '.gate'), blocking=False) as acquired:
+        if not acquired:
+            result = {'status': 'blocked', 'reason': 'instance_busy', 'report': str(report)}
+        else:
+            result = _cleanup_confirmed(control, identity, report, mode)
+    (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
+    return result
+
+
+def register_instance_owner(home):
+    home = Path(home).resolve()
+    control = control_directory()
+    if home.parent.parent != control:
+        return
+    from hostrun.desktop_processes import has_owner_job
+    if not has_owner_job():
+        raise InstanceInvalid('Desktop containment is not established')
+    identity = home.parent.name
+    preview(control, identity)
+    from hostrun.windows_process_cleanup import current_identity
+    _write_registration(control / (identity + '.owner.json'), {
+        'schema_version': 1, 'instance_id': identity, 'containment': 'kill_on_job_close',
+        'process': current_identity()})
+
+
+def _cleanup_confirmed(control, identity, report, mode):
     root = control / identity
     result = {'status': 'blocked', 'report': str(report), 'removed': [], 'preserved': []}
+    owner_record = control / (identity + '.owner.json')
+    if owner_record.exists():
+        try:
+            owner = _read_registration(owner_record)
+            if (set(owner) != {'schema_version', 'instance_id', 'containment', 'process'}
+                    or owner['schema_version'] != 1 or owner['instance_id'] != identity
+                    or owner['containment'] != 'kill_on_job_close'
+                    or set(owner['process']) != {'pid', 'created', 'image_path_digest'}):
+                raise InstanceInvalid('Invalid owner record')
+            from hostrun.windows_process_cleanup import stop_owner
+            result['processes'] = stop_owner(owner['process'])
+            if result['processes']['status'] == 'blocked':
+                result['reason'] = result['processes']['reason']
+                return result
+        except (OSError, ValueError, TypeError) as exc:
+            result['reason'] = type(exc).__name__
+            return result
     with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired:
         if not acquired:
             result['reason'] = 'instance_busy'
@@ -371,7 +415,6 @@ def cleanup_instance(control_root, identity, output, *, confirmation=None, mode=
                 result['status'] = 'partial' if unexpected else ('uninstalled' if mode == 'keep-data' else 'cleaned')
             except (OSError, ValueError) as exc:
                 result.update(status='partial', reason=type(exc).__name__)
-    (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
     return result
 
 
@@ -411,7 +454,8 @@ def instance_lock(home):
         raise InstanceInvalid('Invalid instance registration') from exc
     with ExitStack() as stack:
         try:
-            acquired = stack.enter_context(lifecycle_lock(root.parent / (root.name + '.lock')))
+            with file_lock(root.parent / (root.name + '.gate'), blocking=False) as entrance:
+                acquired = entrance and stack.enter_context(lifecycle_lock(root.parent / (root.name + '.lock')))
         except OSError as exc:
             raise InstanceInvalid('Cannot acquire instance lease') from exc
         yield acquired
