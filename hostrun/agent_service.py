@@ -34,7 +34,12 @@ class AgentService:
         self.home = Path(home)
         self._database = self.home / 'horizon.sqlite3'
         with self._connect() as db:
-            db.executescript('''
+            self.initialize_database(db)
+
+    @staticmethod
+    def initialize_database(db):
+        """Initialize/migrate schema on the caller's already-owned connection."""
+        db.executescript('''
                 CREATE TABLE IF NOT EXISTS agent_tasks (
                     task_id TEXT PRIMARY KEY, result TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS agent_turns (turn_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, result TEXT NOT NULL);
@@ -47,12 +52,12 @@ class AgentService:
                     operation_id TEXT UNIQUE NOT NULL, event TEXT NOT NULL);
             ''')
 
-            db.execute('BEGIN IMMEDIATE')
-            for task_id, encoded in db.execute('SELECT task_id,result FROM agent_tasks').fetchall():
-                task = json.loads(encoded)
-                if 'session_id' not in task:
-                    task['session_id'] = str(uuid.uuid4())
-                    db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?', (json.dumps(task), task_id))
+        db.execute('BEGIN IMMEDIATE')
+        for task_id, encoded in db.execute('SELECT task_id,result FROM agent_tasks').fetchall():
+            task = json.loads(encoded)
+            if 'session_id' not in task:
+                task['session_id'] = str(uuid.uuid4())
+                db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?', (json.dumps(task), task_id))
 
     @contextmanager
     def _connect(self):
