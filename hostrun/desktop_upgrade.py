@@ -125,6 +125,14 @@ def _upgrade(code, home, *, from_source, sha256):
 
 
 def upgrade(code, home, *, from_source, sha256):
+    from hostrun.cleanup import instance_lock
+    with instance_lock(home) as acquired:
+        if not acquired:
+            return {'status': 'blocked', 'reason': 'instance_busy'}
+        return _recorded_upgrade(code, home, from_source=from_source, sha256=sha256)
+
+
+def _recorded_upgrade(code, home, *, from_source, sha256):
     code, home = _filesystem_path(code), _filesystem_path(home)
     # Invalid overlapping locations must not acquire diagnostic files either.
     if home.is_relative_to(code) or code.is_relative_to(home):
