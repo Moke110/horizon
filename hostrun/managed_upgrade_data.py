@@ -1,4 +1,4 @@
-"""Internal enrolled data snapshots; public managed upgrades remain disabled."""
+"""Enrolled data snapshots used by managed upgrade and recovery."""
 from contextlib import contextmanager, ExitStack, closing
 import hashlib
 import os

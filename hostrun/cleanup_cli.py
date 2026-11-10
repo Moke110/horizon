@@ -1,4 +1,4 @@
-"""Independent Windows test tool entry; bundled runtime acceptance is still pending."""
+"""Independent Windows test-instance tool; complete kit acceptance remains pending."""
 import argparse
 from contextlib import ExitStack, contextmanager
 import json
@@ -40,6 +40,9 @@ def main(argv=None):
     install.add_argument('instance_id')
     install.add_argument('--package', required=True, type=Path)
     install.add_argument('--sha256', required=True)
+    recover = commands.add_parser('recover', help='Restore a pending managed upgrade; never retry installation automatically')
+    recover.add_argument('instance_id')
+    recover.add_argument('--sha256', required=True)
     report = commands.add_parser('report')
     report.add_argument('instance_id')
     report.add_argument('--output', required=True, type=Path)
@@ -60,6 +63,11 @@ def main(argv=None):
                 cleanup.initialize_layout(control, result['instance_id'])
             elif args.command == 'install':
                 result = cleanup.install_test_package(control, args.instance_id, args.package, args.sha256)
+            elif args.command == 'recover':
+                from hostrun.managed_upgrade_operation import recover_upgrade
+                cleanup.preview(control, args.instance_id)
+                root = control / args.instance_id
+                result = recover_upgrade(root / 'app/current', root / 'data', sha256=args.sha256)
             elif args.command == 'report':
                 folder = cleanup.collect_instance_report(control, args.instance_id, args.output)
                 metadata = json.loads((folder / 'instance.json').read_text(encoding='utf-8'))

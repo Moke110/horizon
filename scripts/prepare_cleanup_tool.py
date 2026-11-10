@@ -12,7 +12,10 @@ from prepare_runtime import prepare_runtime
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('__init__', 'cleanup_cli', 'cleanup', 'windows_cleanup', 'windows_protection',
            'windows_process_cleanup', 'desktop_processes', 'diagnostics', 'managed_diagnostics',
-           'dist', 'distribution', 'launcher', 'release', 'runtime_inventory')
+           'dist', 'distribution', 'launcher', 'release', 'runtime_inventory',
+           'managed_upgrade', 'managed_upgrade_scope', 'managed_upgrade_data',
+           'managed_upgrade_initialize', 'managed_upgrade_operation',
+           'desktop_upgrade', 'agent_service', 'managed_database')
 
 
 def main():

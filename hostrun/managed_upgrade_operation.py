@@ -1,4 +1,4 @@
-"""Internal normal-path coordinator; failures retain the overall recovery marker."""
+"""Managed upgrade coordination and explicit recovery through enrolled identities."""
 import hashlib
 import json
 import re
@@ -90,15 +90,21 @@ def _restore_version(home):
 
 
 def run_upgrade(code, home, *, from_source, sha256):
-    """Experimental only: public upgrade remains blocked pending recovery coverage."""
+    """Coordinate a compatible target schema upgrade under the external exclusive lease."""
     code, home = cleanup._lexical_home(code), cleanup._lexical_home(home)
     if code != home.parent / 'app/current':
         raise cleanup.InstanceInvalid('Unexpected managed code')
     package = Path(from_source)
+    if not package.is_file():
+        return {'status': 'blocked', 'reason': 'source_not_found'}
     if hashlib.sha256(package.read_bytes()).hexdigest() != sha256:
         return {'status': 'blocked', 'reason': 'artifact_digest_mismatch'}
-    archive, _, manifest, manifest_sha, _ = dist._read_archive(package, None, None)
-    archive.close()
+    try:
+        archive, _, manifest, manifest_sha, _ = dist._read_archive(package, None, None)
+        archive.close()
+        dist._check_compat(manifest)
+    except dist._InstallBlocked as exc:
+        return exc.payload
     with exclusive_scope(home) as available:
         if not available:
             return {'status': 'blocked', 'reason': 'instance_busy'}

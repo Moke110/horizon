@@ -126,7 +126,7 @@ def test_managed_upgrade_inventory_guard_applies_with_shared_desktop_lease(tmp_p
     with instance_lock(instance['home']), file_lock(instance['home'] / 'desktop.lock'):
         result = upgrade(instance['code'], instance['home'],
                          from_source='missing.zip', sha256='0' * 64)
-        assert result['reason'] == 'managed_upgrade_inventory_pending'
+        assert result['reason'] == 'instance_busy'
 
 
 def test_existing_uuid_shaped_home_is_not_claimed(tmp_path):
@@ -721,8 +721,8 @@ service.create_task({'schema_version': 1, 'operation_id': 'interrupted', 'title'
         assert refused['status'] == 'blocked'
         assert refused['reason'] == 'diagnostics_incomplete'
         assert [path.read_bytes() for path in paths] == before_upgrade
-    upgrade_result = upgrade(instance['code'], instance['home'], from_source='absent.zip', sha256='0' * 64)
-    assert upgrade_result == {'status': 'blocked', 'reason': 'managed_upgrade_inventory_pending'}
+    upgrade_result = upgrade(instance['code'] / 'current', instance['home'], from_source='absent.zip', sha256='0' * 64)
+    assert upgrade_result == {'status': 'blocked', 'reason': 'source_not_found'}
     assert [path.read_bytes() for path in paths] == before_upgrade
     reopened = AgentService(instance['home'], token='s')
     assert len(reopened.list_tasks(token='s')) == expected
@@ -2183,13 +2183,13 @@ def test_target_package_schema_entry_runs_verified_target_code(tmp_path, mode):
 
 
 @pytest.mark.parametrize('schema_failure', [False, True])
-def test_internal_upgrade_coordinates_schema_and_enrolled_version(tmp_path, schema_failure):
+def test_managed_public_upgrade_coordinates_schema_and_enrolled_version(tmp_path, schema_failure):
     import json
     from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
     from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
     from hostrun.agent_service import AgentService
-    from hostrun.managed_upgrade_operation import run_upgrade
+    from hostrun.desktop_upgrade import upgrade as run_upgrade
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     first = _build(tmp_path.parent / 'first')
@@ -2431,16 +2431,23 @@ run_upgrade(sys.argv[1], sys.argv[2], from_source=sys.argv[3], sha256=sys.argv[4
         changed = home / ('version.json' if phase == 'version_after' else 'agent/model.json')
         changed.rename(changed.with_suffix('.retained'))
         changed.write_bytes(b'USER_REPLACEMENT')
-    recover = '''
-import json, sys
-from hostrun.managed_upgrade_operation import recover_upgrade
-print(json.dumps(recover_upgrade(sys.argv[1], sys.argv[2], sha256=sys.argv[3])))
-'''
+    from hostrun.desktop_upgrade import upgrade
+    assert upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256']) == {
+        'status': 'blocked', 'reason': 'managed_upgrade_recovery_pending'}
     digest = '0' * 64 if damage == 'wrong_artifact' else second['artifact']['sha256']
-    process = subprocess.run([sys.executable, '-X', 'utf8', '-c', recover, str(code), str(home), digest], env=os.environ.copy(), capture_output=True, text=True, encoding='utf-8', timeout=15)
-    assert process.returncode == 0, process.stderr
+    import shutil
+    tool = tmp_path.parent / 'independent-tool'
+    repository = Path(__file__).resolve().parents[1]
+    shutil.copytree(repository / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
+    shutil.copyfile(repository / 'common.py', tool / 'common.py')
+    process = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.cleanup_cli', 'recover',
+                              instance['instance_id'], '--sha256', digest], cwd=tool,
+                             env={**os.environ, 'PYTHONPATH': str(tool)},
+                             capture_output=True, text=True, encoding='utf-8', timeout=15)
+    assert process.returncode == (2 if damage else 0), process.stderr
     if damage:
         assert json.loads(process.stdout)['status'] == 'blocked'
+        assert json.loads(process.stdout)['reason'] == ('recovery_artifact_mismatch' if damage == 'wrong_artifact' else 'upgrade_recovery_failed')
         if damage == 'replacement': assert changed.read_bytes() == b'USER_REPLACEMENT'
         with pytest.raises(InstanceInvalid): AgentService(home, token='test')
         return
@@ -2453,3 +2460,66 @@ print(json.dumps(recover_upgrade(sys.argv[1], sys.argv[2], sha256=sys.argv[3])))
     from hostrun.managed_database import database_connection
     with database_connection(home) as db:
         assert not db.execute("SELECT name FROM sqlite_master WHERE name='interrupted_schema'").fetchone()
+
+
+@pytest.mark.parametrize('refusal', ['digest', 'arch', 'python', 'self'])
+def test_managed_public_upgrade_refuses_incompatible_or_self_target(tmp_path, monkeypatch, refusal):
+    import sys
+    from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    from hostrun.agent_service import AgentService
+    from hostrun.desktop_upgrade import upgrade
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    home, code = instance['home'], instance['code'] / 'current'
+    AgentService(home, token='test')
+    before = (home / 'horizon.sqlite3').read_bytes()
+    manifest = (code / 'manifest.json').read_bytes()
+    compat = _host_compat()
+    if refusal == 'arch': compat['arch'] = 'arm64' if compat['arch'] != 'arm64' else 'x64'
+    if refusal == 'python': compat['python'] = '>=99.0'
+    source = _write_tree(tmp_path.parent / 'target', PACKAGE_FILES)
+    package = build(source=source, out=tmp_path.parent / 'package', version='0.2.0', channel='stable', commit='test', compat=compat)
+    if refusal == 'self': monkeypatch.setattr(sys, 'executable', str(code / 'runtime/python.exe'))
+    result = upgrade(code, home, from_source=package['artifact']['path'],
+                     sha256='0' * 64 if refusal == 'digest' else package['artifact']['sha256'])
+    expected = {'digest': 'artifact_digest_mismatch', 'arch': 'compat_arch_mismatch',
+                'python': 'compat_python_mismatch', 'self': 'upgrader_inside_target'}
+    assert result['status'] == 'blocked' and result['reason'] == expected[refusal]
+    assert (home / 'horizon.sqlite3').read_bytes() == before
+    assert (code / 'manifest.json').read_bytes() == manifest
+    assert not (home / 'version.json').exists()
+    assert not (home / 'upgrade-backups').exists()
+
+
+def test_public_upgrade_refuses_external_python_importing_target_tool(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    from hostrun.agent_service import AgentService
+    repository = Path(__file__).resolve().parents[1]
+    files = {**PACKAGE_FILES, 'common.py': (repository / 'common.py').read_text(encoding='utf-8')}
+    files.update({'hostrun/' + path.name: path.read_text(encoding='utf-8') for path in (repository / 'hostrun').glob('*.py')})
+    source = _write_tree(tmp_path.parent / 'source', files)
+    package = build(source=source, out=tmp_path.parent / 'package', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])
+    code, home = instance['code'] / 'current', instance['home']
+    AgentService(home, token='test')
+    before = (code / 'manifest.json').read_bytes()
+    script = "import json,sys;from hostrun.desktop_upgrade import upgrade;print(json.dumps(upgrade(sys.argv[1],sys.argv[2],from_source=sys.argv[3],sha256=sys.argv[4])))"
+    result = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, str(code), str(home), str(package['artifact']['path']), package['artifact']['sha256']],
+                            cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, capture_output=True, text=True, encoding='utf-8', timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {'status': 'blocked', 'reason': 'upgrader_inside_target'}
+    assert (code / 'manifest.json').read_bytes() == before
+    assert not (home / 'version.json').exists()
+    assert not (home / 'upgrade-backups').exists()
