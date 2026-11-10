@@ -271,6 +271,28 @@ def initialize_layout(control_root, identity):
         preview(control, identity)
         registration = control / (identity + '.json')
         record = _read_registration(registration)
+        if (record.get('children') and not record.get('staging')
+                and 'app' in record['children'] and not io_path(root / 'app').exists()
+                and all(io_path(root / name).is_dir() for name in ('data', 'archive'))):
+            if record.get('upgrade') or record.get('upgrade_operation'):
+                raise InstanceInvalid('Upgrade recovery pending')
+            # The original app is absent. Native exclusive creation cannot adopt
+            # a replacement that appears after preview; keep data receipts intact.
+            root_pin = PinnedEntry(root)
+            held.callback(root_pin.close)
+            preview(control, identity)
+            app_pin = PinnedEntry(root / 'app', create_parent=root_pin)
+            held.callback(app_pin.close)
+            try:
+                stat = io_path(root / 'app').stat()
+                record['children']['app'] = [stat.st_dev, stat.st_ino]
+                for key in ('application_inventory', 'application_directories',
+                            'code_transactions', 'installation', 'shortcut_digest'):
+                    record.pop(key, None)
+                _write_registration(registration, record)
+            except BaseException:
+                app_pin.delete()
+                raise
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
             for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions', 'installation', 'shortcut_digest'):
