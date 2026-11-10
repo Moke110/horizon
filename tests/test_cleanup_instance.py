@@ -2319,6 +2319,7 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
         return build(source=source, out=tmp_path.parent / name, version=version, channel='stable', commit='test', compat=_host_compat())
     good = package('good', target, '0.2.0')
     assert run_upgrade(code, home, from_source=good['artifact']['path'], sha256=good['artifact']['sha256'])['status'] == 'ok'
+
     attempted = package('attempted', target.replace('def initialize_database(', 'def unavailable_schema(') if failure == 'missing_initializer' else target, '0.3.0')
     before_manifest = (code / 'manifest.json').read_bytes()
     before_version = (home / 'version.json').read_bytes()
@@ -2351,3 +2352,99 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     assert (home / 'version.json').read_bytes() == before_version
     assert AgentService(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
     assert run_upgrade(code, home, from_source=good['artifact']['path'], sha256=good['artifact']['sha256'])['status'] == 'ok'
+
+
+@pytest.mark.parametrize(('phase', 'damage'), [
+    ('backup', None), ('code_move', None), ('schema_write', None),
+    ('version_before', None), ('version_after', None),
+    ('backup', 'replacement'), ('version_after', 'replacement'),
+    ('code_move', 'wrong_artifact')])
+def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damage):
+    import json
+    import os
+    import subprocess
+    import sys
+    from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package, InstanceInvalid
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    home, code = instance['home'], instance['code'] / 'current'
+    AgentService(home, token='test')
+    from hostrun import embedded_agent
+    embedded_agent.configure(home, provider='horizon-test', model='test-model', api_key='RECOVERY_SECRET')
+    credentials = (home / 'agent/model.json').read_bytes()
+    target = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    if phase == 'schema_write':
+        target = target.replace("db.execute('BEGIN IMMEDIATE')", "db.execute('CREATE TABLE interrupted_schema(value TEXT)')\n        __import__('os')._exit(77)", 1)
+    source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, 'hostrun/agent_service.py': target})
+    second = build(source=source, out=tmp_path.parent / 'second', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    original_id = (code / 'README.md').stat().st_ino
+    script = '''
+import ctypes, os, sys
+from ctypes import wintypes as w
+from pathlib import Path
+from hostrun.managed_upgrade_operation import run_upgrade
+native = ctypes.WinDLL
+kernel = native('kernel32', use_last_error=True)
+phase = sys.argv[5]
+class RenameInfo(ctypes.Structure):
+    _fields_ = [('ReplaceIfExists', w.BOOL), ('RootDirectory', w.HANDLE),
+                ('FileNameLength', w.DWORD), ('FileName', w.WCHAR * 1)]
+def set_info(handle, kind, buffer, size):
+    kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
+    is_version = False
+    if kind == 3:
+        info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
+        destination = ctypes.wstring_at(ctypes.addressof(info) + RenameInfo.FileName.offset, info.FileNameLength // 2)
+        is_version = Path(destination) == Path(sys.argv[2]) / 'version.json'
+        if is_version and phase == 'version_before': os._exit(77)
+    result = kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+    if kind == 3 and result and (phase == 'code_move' or (is_version and phase == 'version_after')): os._exit(77)
+    return result
+def write_file(*args):
+    kernel.WriteFile.argtypes = write_file.argtypes
+    result = kernel.WriteFile(*args)
+    if result and phase == 'backup': os._exit(77)
+    return result
+class Proxy:
+    def __getattr__(self, name):
+        if name == 'SetFileInformationByHandle': return set_info
+        if name == 'WriteFile': return write_file
+        return getattr(kernel, name)
+ctypes.WinDLL = lambda name, *a, **kw: Proxy() if name == 'kernel32' else native(name, *a, **kw)
+run_upgrade(sys.argv[1], sys.argv[2], from_source=sys.argv[3], sha256=sys.argv[4])
+'''
+    args = [str(code), str(home), str(second['artifact']['path']), second['artifact']['sha256'], phase]
+    process = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, *args], env=os.environ.copy(), capture_output=True, timeout=15)
+    assert process.returncode == 77, process.stderr
+    with pytest.raises(InstanceInvalid): AgentService(home, token='test')
+    if damage == 'replacement':
+        changed = home / ('version.json' if phase == 'version_after' else 'agent/model.json')
+        changed.rename(changed.with_suffix('.retained'))
+        changed.write_bytes(b'USER_REPLACEMENT')
+    recover = '''
+import json, sys
+from hostrun.managed_upgrade_operation import recover_upgrade
+print(json.dumps(recover_upgrade(sys.argv[1], sys.argv[2], sha256=sys.argv[3])))
+'''
+    digest = '0' * 64 if damage == 'wrong_artifact' else second['artifact']['sha256']
+    process = subprocess.run([sys.executable, '-X', 'utf8', '-c', recover, str(code), str(home), digest], env=os.environ.copy(), capture_output=True, text=True, encoding='utf-8', timeout=15)
+    assert process.returncode == 0, process.stderr
+    if damage:
+        assert json.loads(process.stdout)['status'] == 'blocked'
+        if damage == 'replacement': assert changed.read_bytes() == b'USER_REPLACEMENT'
+        with pytest.raises(InstanceInvalid): AgentService(home, token='test')
+        return
+    assert json.loads(process.stdout)['status'] == 'restored'
+    assert (code / 'README.md').stat().st_ino == original_id
+    assert json.loads((code / 'manifest.json').read_text())['version'] == '0.1.0'
+    assert not (home / 'version.json').exists()
+    assert (home / 'agent/model.json').read_bytes() == credentials
+    AgentService(home, token='test')
+    from hostrun.managed_database import database_connection
+    with database_connection(home) as db:
+        assert not db.execute("SELECT name FROM sqlite_master WHERE name='interrupted_schema'").fetchone()

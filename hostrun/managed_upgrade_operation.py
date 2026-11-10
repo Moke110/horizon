@@ -1,6 +1,7 @@
 """Internal normal-path coordinator; failures retain the overall recovery marker."""
 import hashlib
 import json
+import re
 from pathlib import Path
 import uuid
 
@@ -9,7 +10,7 @@ from hostrun.managed_upgrade_scope import exclusive_scope
 from hostrun.managed_upgrade_data import _transaction, backup_owned_data, restore_owned_data
 from hostrun.managed_upgrade import stage_code_transaction, rollback_code_transaction
 from hostrun.managed_upgrade_initialize import initialize_target_schema
-from hostrun.windows_cleanup import PinnedEntry
+from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
 
 
 def _publish_version(home, operation, version):
@@ -137,3 +138,53 @@ def run_upgrade(code, home, *, from_source, sha256):
             cleanup._write_registration(registration, record)
             return {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
         return {'status': 'ok', 'version': manifest['version'], 'operation_id': operation}
+
+
+def recover_upgrade(code, home, *, sha256):
+    """Internal restart recovery, bound to this home's DPAPI-protected operation."""
+    code, home = cleanup._lexical_home(code), cleanup._lexical_home(home)
+    if code != home.parent / 'app/current':
+        raise cleanup.InstanceInvalid('Unexpected managed code')
+    with exclusive_scope(home) as available:
+        if not available:
+            return {'status': 'blocked', 'reason': 'instance_busy'}
+        registration = home.parent.parent / (home.parent.name + '.json')
+        record = cleanup._read_registration(registration)
+        pending = record.get('upgrade_operation')
+        if pending is None:
+            return {'status': 'not_pending'}
+        if pending['artifact'] != sha256:
+            return {'status': 'blocked', 'reason': 'recovery_artifact_mismatch'}
+        operation = pending['id']
+        snapshot = record.get('data_backups', {}).get(operation)
+        if record.get('upgrade') not in (None, operation):
+            return {'status': 'blocked', 'reason': 'upgrade_recovery_unavailable'}
+        try:
+            if not snapshot or not snapshot['complete']:
+                if record.get('upgrade') or operation in record.get('code_transactions', {}) or pending.get('version'):
+                    return {'status': 'blocked', 'reason': 'upgrade_recovery_unavailable'}
+                # Code/schema publication cannot begin before a complete snapshot.
+                # Validate registered sources and partial backup identities;
+                # leave the partial backup enrolled without copying it over data.
+                with _transaction(home) as tx:
+                    for name, identity in tx.inventory.items():
+                        if not re.fullmatch(cleanup.UPGRADE_DATA_PATTERN, name) and not name.startswith('data/upgrade-backups/' + operation + '/'):
+                            continue
+                        path = tx.root / name
+                        tx.held.enter_context(pin_ancestors(path.parent))
+                        pin = PinnedEntry(path)
+                        tx.held.callback(pin.close)
+                        stat = path.stat()
+                        if identity != [stat.st_dev, stat.st_ino]:
+                            raise cleanup.InstanceInvalid('Interrupted backup identity changed')
+            else:
+                _restore_version(home)
+                if operation in record.get('code_transactions', {}):
+                    rollback_code_transaction(code, home, operation)
+                restore_owned_data(home, operation)
+            record = cleanup._read_registration(registration)
+            record.pop('upgrade_operation')
+            cleanup._write_registration(registration, record)
+        except Exception:
+            return {'status': 'blocked', 'reason': 'upgrade_recovery_failed'}
+        return {'status': 'restored', 'operation_id': operation}
