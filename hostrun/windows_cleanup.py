@@ -48,18 +48,18 @@ class PinnedEntry:
             raise ctypes.WinError(ctypes.get_last_error())
         self.close()
 
-    def write_bytes(self, payload):
+    def write_bytes(self, payload, *, append=False):
         self.api.SetFilePointerEx.argtypes = [w.HANDLE, ctypes.c_longlong, ctypes.c_void_p, w.DWORD]
         self.api.WriteFile.argtypes = [w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), ctypes.c_void_p]
         self.api.SetEndOfFile.argtypes = [w.HANDLE]
         self.api.FlushFileBuffers.argtypes = [w.HANDLE]
-        if not self.api.SetFilePointerEx(self.handle, 0, None, 0):
+        if not self.api.SetFilePointerEx(self.handle, 0, None, 2 if append else 0):
             raise ctypes.WinError(ctypes.get_last_error())
         buffer = ctypes.create_string_buffer(payload)
         written = w.DWORD()
         if not self.api.WriteFile(self.handle, buffer, len(payload), ctypes.byref(written), None) or written.value != len(payload):
             raise ctypes.WinError(ctypes.get_last_error())
-        if not self.api.SetEndOfFile(self.handle) or not self.api.FlushFileBuffers(self.handle):
+        if (not append and not self.api.SetEndOfFile(self.handle)) or not self.api.FlushFileBuffers(self.handle):
             raise ctypes.WinError(ctypes.get_last_error())
 
     def rename(self, destination):
@@ -179,7 +179,7 @@ def remove_empty_inventory(root, inventory, validate, removed):
     root = Path(root)
     for relative in sorted(inventory, key=lambda name: len(Path(name).parts), reverse=True):
         path = root / relative
-        if not any(relative == prefix or relative.startswith(prefix + '/') for prefix in ('app/current', 'data/agent')) or '..' in Path(relative).parts or ':' in relative:
+        if not any(relative == prefix or relative.startswith(prefix + '/') for prefix in ('app/current', 'data/agent', 'data/diagnostics')) or '..' in Path(relative).parts or ':' in relative:
             raise ValueError('Invalid directory inventory')
         if not path.exists():
             continue
