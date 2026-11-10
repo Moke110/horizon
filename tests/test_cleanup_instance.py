@@ -334,6 +334,85 @@ def test_managed_agent_database_reopens_and_is_cleaned(tmp_path):
     assert 'TEST TITLE' not in '\n'.join(p.read_text(encoding='utf-8') for p in Path(result['report']).iterdir() if p.is_file())
 
 
+def test_real_second_desktop_start_enrolls_activation_and_lock(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.managed_desktop import desktop_lock, consume_activation, signal_activation
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    with desktop_lock(instance['home']) as acquired:
+        assert acquired
+        for _ in range(2):
+            process = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.desktop',
+                                      '--code', str(instance['code']), '--archive', str(instance['archive'])],
+                                     env={**os.environ, 'HORIZON_DATA_HOME': str(instance['home'])},
+                                     capture_output=True, timeout=10)
+            assert process.returncode == 0, process.stderr
+            assert consume_activation(instance['home'])
+            assert not consume_activation(instance['home'])
+        signal_activation(instance['home'])
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('name', ['desktop.lock', 'desktop.activate'])
+def test_real_desktop_refuses_replaced_lock_or_activation_without_writing(tmp_path, name):
+    import os
+    import subprocess
+    import sys
+    from contextlib import nullcontext
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.managed_desktop import desktop_lock, signal_activation, consume_activation
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    with desktop_lock(instance['home']):
+        signal_activation(instance['home'])
+    path = instance['home'] / name
+    path.rename(path.with_name(name + '.retained'))
+    path.write_text('USER FILE')
+    with desktop_lock(instance['home']) if name == 'desktop.activate' else nullcontext():
+        process = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.desktop',
+                                  '--code', str(instance['code']), '--archive', str(instance['archive'])],
+                                 env={**os.environ, 'HORIZON_DATA_HOME': str(instance['home'])},
+                                 capture_output=True, timeout=10)
+        assert process.returncode == 2
+        if name == 'desktop.activate':
+            with pytest.raises(ValueError, match='identity'):
+                consume_activation(instance['home'])
+    assert path.read_text() == 'USER FILE'
+    assert not (instance['home'] / 'diagnostics').exists()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'partial'
+    assert path.read_text() == 'USER FILE'
+
+
+def test_activation_receipt_failure_releases_empty_file_and_can_retry(tmp_path, monkeypatch):
+    import os
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.managed_desktop import signal_activation, consume_activation
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    original = os.replace
+    def replace(source, target):
+        if Path(target) == instance['registration']:
+            raise OSError('receipt failure')
+        return original(source, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'replace', replace)
+        with pytest.raises(ValueError, match='unavailable'):
+            signal_activation(instance['home'])
+    assert not (instance['home'] / 'desktop.activate').exists()
+    signal_activation(instance['home'])
+    assert consume_activation(instance['home'])
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
 @pytest.mark.parametrize('phase, expected', [('before_commit', 1), ('after_commit', 2)])
 def test_managed_sqlite_real_transaction_crash_recovers_without_new_identity(tmp_path, phase, expected):
     import os
