@@ -42,6 +42,10 @@ def main(argv=None):
     install.add_argument('instance_id')
     install.add_argument('--package', required=True, type=Path)
     install.add_argument('--sha256', required=True)
+    upgrade = commands.add_parser('upgrade', help='Upgrade this managed instance; pending recovery requires an explicit recover command')
+    upgrade.add_argument('instance_id')
+    upgrade.add_argument('--package', required=True, type=Path)
+    upgrade.add_argument('--sha256', required=True)
     recover = commands.add_parser('recover', help='Restore a pending managed upgrade; never retry installation automatically')
     recover.add_argument('instance_id')
     recover.add_argument('--sha256', required=True)
@@ -67,6 +71,15 @@ def main(argv=None):
                 result = cleanup.install_test_package(control, args.instance_id, args.package, args.sha256)
             elif args.command == 'shortcut':
                 result = cleanup.create_test_shortcut(control, args.instance_id)
+            elif args.command == 'upgrade':
+                import hashlib
+                from hostrun.desktop_upgrade import upgrade
+                from hostrun.windows_cleanup import io_path
+                cleanup.preview(control, args.instance_id)
+                if hashlib.sha256(io_path(args.package).read_bytes()).hexdigest() != args.sha256:
+                    raise cleanup.InstanceInvalid('Package digest mismatch')
+                root = control / args.instance_id
+                result = upgrade(root / 'app/current', root / 'data', from_source=args.package, sha256=args.sha256)
             elif args.command == 'recover':
                 from hostrun.managed_upgrade_operation import recover_upgrade
                 cleanup.preview(control, args.instance_id)
