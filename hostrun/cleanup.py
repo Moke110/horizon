@@ -287,7 +287,9 @@ def install_test_package(control_root, identity, package, digest):
             if installation != {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}:
                 raise InstanceInvalid('Different interrupted installation')
             return {'status': 'blocked', 'reason': 'interrupted_inventory_unavailable'}
-        result = dist.install_package(code, from_source=package, sha256=digest)
+        result = dist.install_package(io_path(code), from_source=package, sha256=digest)
+        if 'code' in result:
+            result['code'] = str(code)
         if result['status'] != 'ok':
             return result
         names = [row['path'] for row in manifest['files']] + ['manifest.json', '.horizon/dist.lock.json', dist.CURRENT_REL.as_posix()]
