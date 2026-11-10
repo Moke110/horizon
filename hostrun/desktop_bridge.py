@@ -9,6 +9,7 @@ import threading
 import socket
 import secrets
 import uuid
+from contextlib import ExitStack
 from hostrun.diagnostics import record_event, export_report
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
@@ -35,10 +36,19 @@ def serve(resolved):
     token = secrets.token_hex(32)
     env['HORIZON_DESKTOP_PORT'] = str(listener.getsockname()[1])
     env['HORIZON_DESKTOP_TOKEN'] = token
-    log_path = Path(resolved['runtime']) / 'desktop-electron.log'
-    env['ELECTRON_LOG_FILE'] = str(log_path)
-    env['ELECTRON_ENABLE_LOGGING'] = '1'
-    with log_path.open('w', encoding='utf-8') as error_log:
+    from hostrun.cleanup import _lexical_home, control_directory
+    home = _lexical_home(resolved['runtime'])
+    managed = os.name == 'nt' and home.parent.parent == control_directory()
+    with ExitStack() as logging:
+        if managed:
+            env.pop('ELECTRON_LOG_FILE', None)
+            env.pop('ELECTRON_ENABLE_LOGGING', None)
+            error_log = subprocess.DEVNULL
+        else:
+            log_path = home / 'desktop-electron.log'
+            env['ELECTRON_LOG_FILE'] = str(log_path)
+            env['ELECTRON_ENABLE_LOGGING'] = '1'
+            error_log = logging.enter_context(log_path.open('w', encoding='utf-8'))
         child = desktop_processes.GuiProcess([str(executable), str(code / 'desktop')], stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=error_log, env=env)
     try:
@@ -50,7 +60,8 @@ def serve(resolved):
         connection.settimeout(None)
     except Exception:
         child.terminate()
-        child.wait(timeout=10)
+        failed_exit = child.wait(timeout=10)
+        record_event(home, 'error', code='renderer_start_failed', exit_code=failed_exit)
         raise
     finally:
         listener.close()
@@ -211,6 +222,7 @@ def serve(resolved):
         connection.close()
         app.closed = True; app.stop(); app.answers.put(None)
         if exit_code:
+            record_event(service.home, 'error', code='renderer_exit', exit_code=exit_code)
             raise RuntimeError(f'Electron exited before completing desktop session (exit {exit_code:#x})')
         if os.name == 'nt':
             record_event(service.home, 'desktop_exit', pid=os.getpid(), exit_code=0,
