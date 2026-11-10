@@ -199,33 +199,60 @@ def test_layout_never_adopts_existing_data(tmp_path):
 
 def test_confirmed_cleanup_preserves_report_and_unknown_content(tmp_path):
     from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    (instance['home'] / 'model-config.json').write_text('SECRET-MARKER')
+    configure(instance['home'], provider='test', model='test', api_key='SECRET-MARKER')
     (instance['root'] / 'unknown.txt').write_text('preserve')
     report_root = tmp_path.parent / 'report'
     result = cleanup_instance(tmp_path, instance['instance_id'], report_root,
                               confirmation=instance['instance_id'])
     assert result['status'] == 'partial'
-    assert not (instance['home'] / 'model-config.json').exists()
+    assert not (instance['home'] / 'agent' / 'model.json').exists()
     assert (instance['root'] / 'unknown.txt').read_text() == 'preserve'
     assert Path(result['report']).is_dir()
     assert instance['registration'].exists()
 
 
-def test_cleanup_failure_reports_files_already_removed(tmp_path):
+@pytest.mark.parametrize('name', ['model-config.json', 'horizon.sqlite3', 'horizon.sqlite3-wal',
+                                 'horizon.sqlite3-shm', 'version.json'])
+@pytest.mark.parametrize('replaced', [False, True])
+def test_root_filename_alone_never_authorizes_cleanup(tmp_path, name, replaced):
     from hostrun.cleanup import initialize_layout, cleanup_instance
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    (instance['home'] / 'model-config.json').write_text('secret')
-    database = instance['home'] / 'horizon.sqlite3'
-    database.write_bytes(b'broken database')
-    with database.open('rb'):
+    path = instance['home'] / name
+    if replaced:
+        path.write_text('ORIGINAL')
+        path.rename(path.with_name(name + '.retained'))
+    path.write_text('USER CONTENT')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'partial'
+    assert path.read_text() == 'USER CONTENT'
+    assert 'data/' + name not in result['removed']
+
+
+def test_cleanup_failure_reports_files_already_removed(tmp_path):
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
+    from hostrun.embedded_agent import configure
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    configure(instance['home'], provider='test', model='test', api_key='SECRET')
+    model = instance['home'] / 'agent' / 'model.json'
+    with model.open('rb'):
         result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
                                   confirmation=instance['instance_id'])
     assert result['status'] == 'partial'
-    assert result['removed'] == ['data/model-config.json']
-    assert database.exists()
+    assert result['removed']
+    assert all(name.startswith('app/current/') and not (instance['root'] / name).exists()
+               for name in result['removed'])
+    assert model.exists()
 
 
 def test_layout_can_retry_after_directory_creation_failure(tmp_path, monkeypatch):
