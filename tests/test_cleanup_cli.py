@@ -21,9 +21,9 @@ def cli(tmp_path):
     local.mkdir()
     env = dict(os.environ, LOCALAPPDATA=str(local), PYTHONPATH=str(kit))
 
-    def run(*arguments, expected=0):
+    def run(*arguments, expected=0, input_text=None):
         result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.cleanup_cli', *arguments],
-                                cwd=kit, env=env, capture_output=True, text=True, timeout=30)
+                                cwd=kit, env=env, capture_output=True, text=True, timeout=30, input=input_text)
         assert result.returncode == expected, result.stderr + result.stdout
         return json.loads(result.stdout.splitlines()[-1])
     return run
@@ -83,3 +83,14 @@ def test_cli_report_rejects_instance_destination(tmp_path, cli):
     result = cli('report', prepared['instance_id'], '--output', str(Path(prepared['home']) / 'report'), expected=2)
     assert result['status'] == 'blocked'
     assert not (Path(prepared['home']) / 'report').exists()
+
+
+def test_cli_human_confirmation_cancels_then_accepts_exact_id(tmp_path, cli):
+    instance = cli('prepare')
+    identity = instance['instance_id']
+    output = tmp_path / 'reports'
+    arguments = ('cleanup', identity, '--output', str(output), '--interactive')
+    assert cli(*arguments, input_text='no\n')['status'] == 'cancelled'
+    assert Path(instance['home']).exists()
+    assert not output.exists()
+    assert cli(*arguments, input_text=identity + '\n')['status'] == 'cleaned'
