@@ -9,7 +9,7 @@ import uuid
 from common import now
 from hostrun.managed_upgrade_scope import exclusive_scope, owns_scope
 from hostrun import cleanup, dist
-from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
+from hostrun.windows_cleanup import PinnedEntry, pin_ancestors, io_path
 
 
 def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=None):
@@ -31,10 +31,10 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
     if code != root / 'app/current':
         return {'status': 'blocked', 'reason': 'unexpected_managed_code'}
     package = Path(from_source)
-    if not package.is_file() or hashlib.sha256(package.read_bytes()).hexdigest() != sha256:
+    if not io_path(package).is_file() or hashlib.sha256(io_path(package).read_bytes()).hexdigest() != sha256:
         return {'status': 'blocked', 'reason': 'artifact_digest_mismatch'}
     try:
-        archive, manifest_bytes, manifest, manifest_sha, channel = dist._read_archive(package, None, None)
+        archive, manifest_bytes, manifest, manifest_sha, channel = dist._read_archive(io_path(package), None, None)
         with archive:
             dist._check_compat(manifest)
             payloads = {row['path']: archive.read(row['path']) for row in manifest['files']}
@@ -63,7 +63,7 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 return {'status': 'blocked', 'reason': 'managed_upgrade_recovery_pending'}
             inventory = record['application_inventory']
             directories = record['application_directories']
-            previous = json.loads((code / 'manifest.json').read_text(encoding='utf-8'))
+            previous = json.loads(io_path(code / 'manifest.json').read_text(encoding='utf-8'))
             old_names = [row['path'] for row in previous['files']] + ['manifest.json', '.horizon/current', '.horizon/dist.lock.json']
             old_digests = {}
             # Validate every target before creating any upgrade contents.
@@ -72,15 +72,15 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 relative = path.relative_to(root).as_posix()
                 if not dist._safe_relpath(name):
                     raise cleanup.InstanceInvalid('Unsafe installed manifest path')
-                if path.exists():
+                if io_path(path).exists():
                     with pin_ancestors(path.parent):
                         pin = PinnedEntry(path)
                         try:
-                            stat = path.stat()
+                            stat = io_path(path).stat()
                             if inventory.get(relative) != [stat.st_dev, stat.st_ino]:
                                 raise cleanup.InstanceInvalid('Unowned upgrade target')
                             if name in old_names:
-                                old_digests[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+                                old_digests[name] = hashlib.sha256(io_path(path).read_bytes()).hexdigest()
                         finally:
                             pin.close()
                 elif name in old_names:
@@ -103,17 +103,17 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                     return directory_pins[path]
                 parent = directory(path.parent) if path != code else None
                 relative = path.relative_to(root).as_posix()
-                if path.exists():
+                if io_path(path).exists():
                     pin = PinnedEntry(path)
                     held.callback(pin.close)
-                    stat = path.stat()
+                    stat = io_path(path).stat()
                     if directories.get(relative) != [stat.st_dev, stat.st_ino]:
                         raise cleanup.InstanceInvalid('Unowned upgrade directory')
                     directory_pins[path] = pin
                     return pin
                 pin = PinnedEntry(path, create_parent=parent, create_share=3, create_delete=False)
                 held.callback(pin.close)
-                stat = path.stat()
+                stat = io_path(path).stat()
                 directories[relative] = [stat.st_dev, stat.st_ino]
                 save()  # A receipt failure leaves an unclaimed empty directory, never adopted.
                 directory_pins[path] = pin
@@ -126,7 +126,7 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 parent = directory(path.parent)
                 pin = PinnedEntry(path, create_parent=parent, create_file=True, writable=True, create_share=3)
                 held.callback(pin.close)
-                stat = path.stat()
+                stat = io_path(path).stat()
                 inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
                 transaction['after'][name] = [stat.st_dev, stat.st_ino]
                 try:
@@ -153,7 +153,7 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 with pin_ancestors(source.parent):
                     pin = PinnedEntry(source, delete=True)
                     held.callback(pin.close)
-                    stat = source.stat()
+                    stat = io_path(source).stat()
                     if inventory[source.relative_to(root).as_posix()] != [stat.st_dev, stat.st_ino]:
                         raise cleanup.InstanceInvalid('Installed file changed')
                     move(source, destination, pin)
@@ -194,27 +194,27 @@ def rollback_code_transaction(code, home, transaction_id=None):
                     return directory_pins[path]
                 parent = directory(path.parent) if path != code else None
                 relative = path.relative_to(root).as_posix()
-                if path.exists():
+                if io_path(path).exists():
                     pin = PinnedEntry(path)
                     held.callback(pin.close)
-                    stat = path.stat()
+                    stat = io_path(path).stat()
                     if directories.get(relative) != [stat.st_dev, stat.st_ino]:
                         raise cleanup.InstanceInvalid('Rollback directory changed')
                 else:
                     pin = PinnedEntry(path, create_parent=parent, create_share=3, create_delete=False)
                     held.callback(pin.close)
-                    stat = path.stat()
+                    stat = io_path(path).stat()
                     directories[relative] = [stat.st_dev, stat.st_ino]
                     save()
                 directory_pins[path] = pin
                 return pin
             def inspect(path, expected):
-                if not path.exists():
+                if not io_path(path).exists():
                     return None
                 held.enter_context(pin_ancestors(path.parent))
                 pin = PinnedEntry(path, delete=True)
                 held.callback(pin.close)
-                stat = path.stat()
+                stat = io_path(path).stat()
                 actual = [stat.st_dev, stat.st_ino]
                 if actual not in expected or inventory.get(path.relative_to(root).as_posix()) != actual:
                     raise cleanup.InstanceInvalid('Rollback file identity changed')
@@ -235,8 +235,8 @@ def rollback_code_transaction(code, home, transaction_id=None):
                     with pin_ancestors(path.parent):
                         check = PinnedEntry(path)
                         try:
-                            stat = path.stat()
-                            if [stat.st_dev, stat.st_ino] != original[1] or hashlib.sha256(path.read_bytes()).hexdigest() != transaction['digests'][name]:
+                            stat = io_path(path).stat()
+                            if [stat.st_dev, stat.st_ino] != original[1] or hashlib.sha256(io_path(path).read_bytes()).hexdigest() != transaction['digests'][name]:
                                 raise cleanup.InstanceInvalid('Original code content changed')
                         finally:
                             check.close()

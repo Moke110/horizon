@@ -2422,11 +2422,12 @@ class Proxy:
         if name == 'WriteFile': return write_file
         return getattr(kernel, name)
 ctypes.WinDLL = lambda name, *a, **kw: Proxy() if name == 'kernel32' else native(name, *a, **kw)
-run_upgrade(sys.argv[1], sys.argv[2], from_source=sys.argv[3], sha256=sys.argv[4])
+result = run_upgrade(sys.argv[1], sys.argv[2], from_source=sys.argv[3], sha256=sys.argv[4])
+print({key: result.get(key) for key in ('status', 'reason', 'recovery')}, flush=True)
 '''
     args = [str(code), str(home), str(second['artifact']['path']), second['artifact']['sha256'], phase]
     process = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, *args], env=os.environ.copy(), capture_output=True, timeout=15)
-    assert process.returncode == 77, process.stderr
+    assert process.returncode == 77, (process.stdout, process.stderr)
     with pytest.raises(InstanceInvalid): AgentService(home, token='test')
     if damage == 'replacement':
         changed = home / ('version.json' if phase == 'version_after' else 'agent/model.json')
@@ -2547,3 +2548,42 @@ def test_managed_install_supports_deep_package_staging_without_changing_inventor
     assert str(code / relative) in plan['registered_file_candidates']
     assert all(not path.startswith('\\\\?\\') for path in plan['registered_file_candidates'])
     assert cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('schema_failure', [False, True])
+def test_public_upgrade_handles_deep_installed_code_and_rollback(tmp_path, schema_failure):
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    from hostrun.agent_service import AgentService
+    from hostrun.desktop_upgrade import upgrade
+    from hostrun.windows_cleanup import io_path
+    relative = 'agent/node_modules/' + 'segment-' * 9 + '/' + 'deep-' * 8 + 'module.json'
+    module = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    packages = tmp_path.parents[2] / ('packages-' + str(schema_failure))
+    def package(name, version, payload, target):
+        source = _write_tree(packages / (name + '-src'), {**PACKAGE_FILES, relative: payload, 'hostrun/agent_service.py': target})
+        return build(source=source, out=packages / name, version=version, channel='stable', commit='test', compat=_host_compat())
+    first = package('first', '0.1.0', 'original deep contents', module)
+    target = module.replace("db.execute('BEGIN IMMEDIATE')", "raise RuntimeError('TARGET_SCHEMA_FAILURE')", 1) if schema_failure else module
+    second = package('second', '0.2.0', 'updated deep contents', target)
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    assert install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])['status'] == 'ok'
+    home, code = instance['home'], instance['code'] / 'current'
+    AgentService(home, token='test')
+    deep = code / relative
+    assert len(str(deep)) > 260
+    before_id = io_path(deep).stat().st_ino
+    result = upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    if schema_failure:
+        assert result == {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
+        assert io_path(deep).read_text() == 'original deep contents'
+        assert io_path(deep).stat().st_ino == before_id
+        operations = list((code / '.horizon/upgrades').iterdir())
+        assert len(operations) == 1
+        assert io_path(operations[0] / 'failed' / relative).read_text() == 'updated deep contents'
+    else:
+        assert result['status'] == 'ok', result
+        assert io_path(deep).read_text() == 'updated deep contents'
+    AgentService(home, token='test')
