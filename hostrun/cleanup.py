@@ -114,6 +114,9 @@ def preview(control_root, identity, *, mode='full'):
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
+    upgrade = record.pop('upgrade', None)
+    if upgrade is not None and (not isinstance(upgrade, str) or not re.fullmatch(r'[0-9a-f]{32}', upgrade)):
+        raise InstanceInvalid('Invalid upgrade identity')
     if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal', 'data/desktop.lock', 'data/desktop.activate'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
@@ -282,7 +285,7 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade'):
                 record.pop(key, None)
         if not record.get('children') and any(root.iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
@@ -731,13 +734,19 @@ def instance_lock(home):
         if not registration.exists():
             raise ValueError('Missing instance registration')
         preview(root.parent, root.name)
+        if _read_registration(registration).get('upgrade'):
+            raise InstanceInvalid('Managed upgrade recovery pending')
     except (ValueError, OSError) as exc:
         raise InstanceInvalid('Invalid instance registration') from exc
     with ExitStack() as stack:
         try:
             with file_lock(root.parent / (root.name + '.gate'), blocking=False) as entrance:
                 acquired = entrance and stack.enter_context(lifecycle_lock(root.parent / (root.name + '.lock')))
-        except OSError as exc:
+                if acquired:
+                    preview(root.parent, root.name)
+                    if _read_registration(registration).get('upgrade'):
+                        raise InstanceInvalid('Managed upgrade recovery pending')
+        except (OSError, ValueError) as exc:
             raise InstanceInvalid('Cannot acquire instance lease') from exc
         yield acquired
 
