@@ -2295,3 +2295,59 @@ def test_internal_upgrade_recovers_version_publication_receipt_failure(tmp_path,
         assert not version.exists()
     AgentService(home, token='test')
     assert run_upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])['status'] == 'ok'
+
+
+@pytest.mark.parametrize('failure', ['sharing_conflict', 'missing_initializer'])
+def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monkeypatch, failure):
+    import ctypes
+    import json
+    from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    from hostrun.agent_service import AgentService
+    from hostrun.managed_upgrade_operation import run_upgrade
+    from hostrun.windows_cleanup import PinnedEntry
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    home, code = instance['home'], instance['code'] / 'current'
+    task = AgentService(home, token='test').create_task({'schema_version': 1, 'operation_id': 'before', 'title': 'preserved'}, token='test')
+    target = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    def package(name, module, version):
+        source = _write_tree(tmp_path.parent / (name + '-source'), {**PACKAGE_FILES, 'hostrun/agent_service.py': module})
+        return build(source=source, out=tmp_path.parent / name, version=version, channel='stable', commit='test', compat=_host_compat())
+    good = package('good', target, '0.2.0')
+    assert run_upgrade(code, home, from_source=good['artifact']['path'], sha256=good['artifact']['sha256'])['status'] == 'ok'
+    attempted = package('attempted', target.replace('def initialize_database(', 'def unavailable_schema(') if failure == 'missing_initializer' else target, '0.3.0')
+    before_manifest = (code / 'manifest.json').read_bytes()
+    before_version = (home / 'version.json').read_bytes()
+    before_id = (code / 'README.md').stat().st_ino
+    conflict_observed = []
+    if failure == 'sharing_conflict':
+        held = PinnedEntry(code / 'README.md')
+        native = ctypes.WinDLL
+        kernel = native('kernel32', use_last_error=True)
+        def create_file(path, access, *args):
+            kernel.CreateFileW.argtypes = create_file.argtypes
+            kernel.CreateFileW.restype = create_file.restype
+            result = kernel.CreateFileW(path, access, *args)
+            if Path(path) == code / 'README.md' and access & 0x10000 and held.handle is not None:
+                error = ctypes.get_last_error()
+                conflict_observed.append(result == ctypes.c_void_p(-1).value and error == 32)
+                held.close()
+                ctypes.set_last_error(error)
+            return result
+        class Proxy:
+            def __getattr__(self, name):
+                return create_file if name == 'CreateFileW' else getattr(kernel, name)
+        monkeypatch.setattr(ctypes, 'WinDLL', lambda name, *a, **kw: Proxy() if name == 'kernel32' else native(name, *a, **kw))
+    result = run_upgrade(code, home, from_source=attempted['artifact']['path'], sha256=attempted['artifact']['sha256'])
+    assert result == {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
+    if failure == 'sharing_conflict':
+        assert conflict_observed == [True]
+    assert (code / 'manifest.json').read_bytes() == before_manifest
+    assert (code / 'README.md').stat().st_ino == before_id
+    assert (home / 'version.json').read_bytes() == before_version
+    assert AgentService(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
+    assert run_upgrade(code, home, from_source=good['artifact']['path'], sha256=good['artifact']['sha256'])['status'] == 'ok'

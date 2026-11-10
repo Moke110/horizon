@@ -111,15 +111,15 @@ def run_upgrade(code, home, *, from_source, sha256):
         record['upgrade_operation'] = {'id': operation, 'artifact': sha256}
         cleanup._write_registration(registration, record)
         backup_owned_data(home, snapshot_id=operation)
-        staged = stage_code_transaction(code, home, from_source=from_source,
-                                        sha256=sha256, transaction_id=operation)
-        if staged['status'] != 'ok':
-            return staged
         try:
+            staged = stage_code_transaction(code, home, from_source=from_source,
+                                            sha256=sha256, transaction_id=operation)
+            if staged['status'] != 'ok':
+                raise cleanup.InstanceInvalid('Code publication refused')
             initialized = initialize_target_schema(code, home, manifest_sha256=manifest_sha,
                                                     snapshot_id=operation)
             if initialized['status'] != 'initialized':
-                return initialized
+                raise cleanup.InstanceInvalid('Target initialization refused')
             _publish_version(home, operation, manifest['version'])
             record = cleanup._read_registration(registration)
             record.pop('upgrade_operation')
@@ -128,7 +128,9 @@ def run_upgrade(code, home, *, from_source, sha256):
             # The overall marker remains throughout both restores. Any recovery
             # failure propagates with that marker intact and startup stays closed.
             _restore_version(home)
-            rollback_code_transaction(code, home, operation)
+            record = cleanup._read_registration(registration)
+            if operation in record.get('code_transactions', {}):
+                rollback_code_transaction(code, home, operation)
             restore_owned_data(home, operation)
             record = cleanup._read_registration(registration)
             record.pop('upgrade_operation')
