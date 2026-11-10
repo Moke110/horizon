@@ -2108,3 +2108,73 @@ rollback_code_transaction(sys.argv[1], sys.argv[2], sys.argv[3])
     assert rollback_code_transaction(code, instance['home'])['status'] == 'restored'
     assert (code / 'README.md').stat().st_ino == old_id
     assert json.loads((code / 'manifest.json').read_text())['version'] == '0.1.0'
+
+
+@pytest.mark.parametrize('mode', ['normal', 'missing', 'tampered', 'failure', 'no_database_snapshot'])
+def test_target_package_schema_entry_runs_verified_target_code(tmp_path, mode):
+    import json
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package, InstanceInvalid
+    from hostrun.managed_upgrade_data import backup_owned_data, restore_owned_data
+    from hostrun.managed_upgrade_initialize import initialize_target_schema
+    from hostrun.managed_database import database_connection
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    home = instance['home']
+    if mode == 'no_database_snapshot':
+        snapshot = backup_owned_data(home)
+    service = AgentService(home, token='test')
+    task = service.create_task({'schema_version': 1, 'operation_id': 'first', 'title': 'legacy'}, token='test')
+    with database_connection(home) as db, db:
+        data = json.loads(db.execute('SELECT result FROM agent_tasks').fetchone()[0])
+        data.pop('session_id')
+        db.execute('UPDATE agent_tasks SET result=?', (json.dumps(data),))
+    if mode != 'no_database_snapshot':
+        snapshot = backup_owned_data(home)
+    original = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    target = original.replace("task['session_id'] = str(uuid.uuid4())", "task['session_id'] = '11111111-1111-4111-8111-111111111111'")
+    if mode == 'missing':
+        target = target.replace('def initialize_database(', 'def unsupported_schema(')
+    if mode == 'failure':
+        target = target.replace("db.execute('BEGIN IMMEDIATE')", "db.execute('CREATE TABLE target_partial(value TEXT)')\n        raise RuntimeError('TARGET-SCHEMA-FAILURE')", 1)
+    source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, 'hostrun/agent_service.py': target})
+    package = build(source=source, out=tmp_path.parent / 'package', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])
+    manifest_sha = json.loads(Path(package['digest']).read_text())['manifest_sha256']
+    code = instance['code'] / 'current'
+    database = home / 'horizon.sqlite3'
+    before = database.read_bytes()
+    if mode == 'no_database_snapshot':
+        result = initialize_target_schema(code, home, manifest_sha256=manifest_sha, snapshot_id=snapshot['snapshot_id'])
+        assert result == {'status': 'blocked', 'reason': 'schema_database_snapshot_unavailable'}
+        assert database.read_bytes() == before
+        AgentService(home, token='test')
+        return
+    if mode == 'tampered':
+        with (code / 'hostrun/agent_service.py').open('ab') as stream:
+            stream.write(b'\n# changed target bytes\n')
+        with pytest.raises(InstanceInvalid):
+            initialize_target_schema(code, home, manifest_sha256=manifest_sha, snapshot_id=snapshot['snapshot_id'])
+        assert database.read_bytes() == before
+        return
+    if mode == 'failure':
+        with pytest.raises(RuntimeError, match='TARGET-SCHEMA-FAILURE'):
+            initialize_target_schema(code, home, manifest_sha256=manifest_sha, snapshot_id=snapshot['snapshot_id'])
+        with pytest.raises(InstanceInvalid): AgentService(home, token='test')
+        assert restore_owned_data(home, snapshot['snapshot_id'])['status'] == 'restored'
+        with database_connection(home) as db:
+            assert not db.execute("SELECT name FROM sqlite_master WHERE name='target_partial'").fetchall()
+        assert AgentService(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
+        return
+    result = initialize_target_schema(code, home, manifest_sha256=manifest_sha, snapshot_id=snapshot['snapshot_id'])
+    if mode == 'missing':
+        assert result == {'status': 'blocked', 'reason': 'target_schema_entry_unavailable'}
+        assert database.read_bytes() == before
+        return
+    assert result['status'] == 'initialized'
+    tasks = AgentService(home, token='test').list_tasks(token='test')
+    assert tasks[0]['task_id'] == task['task_id']
+    assert tasks[0]['session_id'] == '11111111-1111-4111-8111-111111111111'
+    assert not (code / 'hostrun/__pycache__').exists()
