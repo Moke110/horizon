@@ -416,16 +416,19 @@ def cleanup_instance(control_root, identity, output, *, confirmation=None, mode=
 
 def _cleanup_after_report(control_root, identity, report, mode):
     if json.loads((report / 'instance.json').read_text(encoding='utf-8'))['status'] == 'incomplete':
-        result = {'status': 'blocked', 'reason': 'diagnostics_incomplete', 'report': str(report)}
+        result = _cleanup_result(report)
+        result['reason'] = 'diagnostics_incomplete'
         (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
         return result
     control = Path(control_root).resolve(strict=True)
     with file_lock(control / (identity + '.gate'), blocking=False) as acquired:
         if not acquired:
-            result = {'status': 'blocked', 'reason': 'instance_busy', 'report': str(report)}
+            result = _cleanup_result(report)
+            result['reason'] = 'instance_busy'
         else:
             result = _cleanup_confirmed(control, identity, report, mode)
-    (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
+        if result.get('postverification', {}).get('status', 'not_performed') == 'not_performed':
+            (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
     return result
 
 
@@ -647,9 +650,17 @@ def save_managed_model_config(home, data, *, expected=None):
     return True
 
 
+def _cleanup_result(report):
+    return {'status': 'blocked', 'report': str(report), 'removed': [], 'preserved': [],
+              'items': [], 'scope_complete': False, 'next_action': 'resolve_blockers',
+              'postverification': {'status': 'not_performed'},
+              'process_evidence': {'status': 'unknown', 'reason': 'not_observed'}}
+
+
 def _cleanup_confirmed(control, identity, report, mode):
     root = control / identity
-    result = {'status': 'blocked', 'report': str(report), 'removed': [], 'preserved': []}
+    result = _cleanup_result(report)
+    result['process_evidence']['reason'] = 'owner_record_missing'
     owner_record = control / (identity + '.owner.json')
     if io_path(owner_record).exists():
         try:
@@ -661,13 +672,19 @@ def _cleanup_confirmed(control, identity, report, mode):
                 raise InstanceInvalid('Invalid owner record')
             from hostrun.windows_process_cleanup import stop_owner
             result['processes'] = stop_owner(owner['process'])
+            result['process_evidence'] = {
+                'status': 'verified' if result['processes']['status'] == 'stopped' else 'unknown',
+                'reason': 'owner_and_observed_descendants_exited' if result['processes']['status'] == 'stopped' else 'owner_exit_not_fully_observed',
+                'scope': 'registered_job_and_observed_process_snapshot',
+                'observed_processes': result['processes'].get('observed_processes', 0)}
             if result['processes']['status'] == 'blocked':
                 result['reason'] = result['processes']['reason']
                 return result
         except (OSError, ValueError, TypeError) as exc:
             result['reason'] = type(exc).__name__
             return result
-    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired:
+    from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
+    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root):
         if not acquired:
             result['reason'] = 'instance_busy'
         else:
@@ -675,8 +692,10 @@ def _cleanup_confirmed(control, identity, report, mode):
             targets = []
             record = _read_registration(control / (identity + '.json'))
             identities = dict(record.get('application_inventory', {}))
+            directory_inventory = dict(record.get('application_directories', {}))
             if mode == 'full':
                 identities.update(record.get('data_inventory', {}))
+                directory_inventory.update(record.get('data_directories', {}))
                 update = record.get('model_update')
                 if update and (root / 'data/agent/model.json').exists():
                     stat = (root / 'data/agent/model.json').stat()
@@ -692,20 +711,84 @@ def _cleanup_confirmed(control, identity, report, mode):
             try:
                 remove_owned_files(root, targets, lambda: preview(control, identity),
                                    removed=result['removed'], identities=identities)
-                directory_inventory = dict(record.get('application_directories', {}))
-                if mode == 'full':
-                    directory_inventory.update(record.get('data_directories', {}))
                 remove_empty_inventory(root, directory_inventory,
                                        lambda: preview(control, identity), result['removed'])
                 directories = [name for name in plan['owned_children'] if mode == 'full' or name == 'app']
                 remove_empty_children(root, directories, lambda: preview(control, identity), result['removed'])
-                result['preserved'] = [child.name for child in io_path(root).iterdir()]
+                remaining_names = [child.name for child in io_path(root).iterdir()]
                 expected_preserved = {'data', 'archive'} if mode == 'keep-data' else set()
-                unexpected = set(result['preserved']) - expected_preserved
+                unexpected = set(remaining_names) - expected_preserved
                 result['status'] = 'partial' if unexpected else ('uninstalled' if mode == 'keep-data' else 'cleaned')
             except (OSError, ValueError) as exc:
                 result.update(status='partial', reason=type(exc).__name__)
+            containers = {name: record['children'][name] for name in plan['owned_children']
+                          if mode == 'full' or name == 'app'}
+            with ExitStack() as retained:
+                _verify_cleanup_result(root, result, identities, {**directory_inventory, **containers}, mode, record['children'], retained)
+                (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
     return result
+
+
+def _verify_cleanup_result(root, result, files, directories, mode, children, retained):
+    """Observe remaining controlled entries without acquiring deletion authority."""
+    import hashlib
+    from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
+    removed = set(result['removed'])
+    for name, expected in sorted({**files, **directories}.items()):
+        row = {'path': name, 'kind': 'directory' if name in directories else 'file'}
+        try:
+            path = io_path(root / name)
+            if not path.exists() and not path.is_symlink() and not path.is_junction():
+                row['status'] = 'deleted' if name in removed or name + '/' in removed else 'already_absent'
+            else:
+                with pin_ancestors((root / name).parent):
+                    stat = path.lstat()
+                    row['status'] = 'preserved'
+                    if path.is_symlink() or path.is_junction() or expected != [stat.st_dev, stat.st_ino]:
+                        row['reason'] = 'identity_mismatch'
+                    elif name in directories:
+                        with closing(PinnedEntry(root / name)):
+                            if any(path.iterdir()):
+                                row['reason'] = 'nonempty'
+                            else:
+                                row.update(status='failed', reason='empty_directory_not_removed')
+                    else:
+                        row.update(status='failed', reason='operation_incomplete')
+        except (OSError, ValueError):
+            row.update(status='failed', reason='inspection_failed')
+        result['items'].append(row)
+    try:
+        remaining = list(io_path(root).iterdir())
+        allowed = {'data', 'archive'} & children.keys() if mode == 'keep-data' else set()
+        for name in allowed:
+            retained.enter_context(closing(PinnedEntry(root / name)))
+            stat = io_path(root / name).stat()
+            if children[name] != [stat.st_dev, stat.st_ino]:
+                raise InstanceInvalid('Retained container identity changed')
+        residuals = [path for path in remaining if path.name not in allowed]
+        result['preserved'] = [path.name if path.name in ('app', 'data', 'archive') else
+                               'unknown:' + hashlib.sha256(path.name.encode('utf-8')).hexdigest()
+                               for path in remaining]
+        for path in remaining:
+            if path.name not in ('app', 'data', 'archive'):
+                result['items'].append({'name_digest': hashlib.sha256(path.name.encode('utf-8')).hexdigest(),
+                                        'status': 'preserved', 'reason': 'unknown'})
+        result['postverification'] = {
+            'status': 'verified' if not residuals else 'residuals',
+            'scope': 'controlled_instance_contents', 'exclusive_lease': True,
+            'residual_count': len(residuals),
+            'residual_name_digests': [hashlib.sha256(path.name.encode('utf-8')).hexdigest() for path in residuals]}
+        if residuals:
+            result['status'] = 'partial'
+        elif any(row['status'] not in ('deleted', 'already_absent') for row in result['items']):
+            result['postverification']['status'] = 'failed'
+            result['status'] = 'partial'
+        elif result['status'] in ('cleaned', 'uninstalled'):
+            result['next_action'] = ('prepare_reinstall' if result['process_evidence']['status'] == 'verified'
+                                     else 'review_process_evidence')
+    except (OSError, ValueError):
+        result['postverification'] = {'status': 'failed', 'reason': 'inspection_failed'}
+        result['status'] = 'partial'
 
 
 def _lexical_home(home):
