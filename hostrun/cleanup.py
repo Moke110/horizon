@@ -637,11 +637,6 @@ def _cleanup_confirmed(control, identity, report, mode):
                     stat = path.stat()
                     if expected == [stat.st_dev, stat.st_ino]:
                         targets.append(name)
-            if mode == 'full' and 'data' in plan['owned_children']:
-                for name in ('model-config.json', 'horizon.sqlite3', 'horizon.sqlite3-wal',
-                             'horizon.sqlite3-shm', 'version.json'):
-                    if (root / 'data' / name).exists():
-                        targets.append('data/' + name)
             from hostrun.windows_cleanup import remove_owned_files, remove_empty_children, remove_empty_inventory
             try:
                 remove_owned_files(root, targets, lambda: preview(control, identity),
