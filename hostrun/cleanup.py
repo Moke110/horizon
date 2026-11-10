@@ -183,7 +183,7 @@ def preview(control_root, identity, *, mode='full'):
     installation = record.pop('installation', None)
     if not isinstance(application_directories, dict):
         raise InstanceInvalid('Invalid application directory inventory')
-    if installation is not None and (not isinstance(installation, dict) or set(installation) != {'digest', 'identity'}):
+    if installation is not None and (not isinstance(installation, dict) or (set(installation) != {'digest', 'identity'} and (set(installation) != {'digest', 'identity', 'protocol'} or installation.get('protocol') != 1))):
         raise InstanceInvalid('Invalid installation journal')
     if not isinstance(inventory, dict) or any(
         not isinstance(name, str) or not name.startswith('app/current/')
@@ -245,84 +245,9 @@ def preview(control_root, identity, *, mode='full'):
 
 
 def install_test_package(control_root, identity, package, digest):
-    """Install a verified local package into a fresh enrolled app container."""
-    import hashlib
-    import zipfile
-    from hostrun import dist
-    from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
-    package = Path(package)
-    if hashlib.sha256(io_path(package).read_bytes()).hexdigest() != digest:
-        raise InstanceInvalid('Package digest mismatch')
-    with zipfile.ZipFile(package) as archive:
-        manifest = json.loads(archive.read('manifest.json'))
-    control = Path(control_root).resolve(strict=True)
-    preview(control, identity)
-    root = control / identity
-    code = root / 'app' / 'current'
-    with file_lock(control / (identity + '.gate'), blocking=False) as entrance, lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root / 'app'), ExitStack() as held:
-        if not entrance or not acquired:
-            raise InstanceBusy('instance_busy')
-        preview(control, identity)
-        registration = control / (identity + '.json')
-        record = _read_registration(registration)
-        installation = record.get('installation')
-        if installation is None:
-            if io_path(code).exists():
-                raise InstanceInvalid('Refusing existing application contents')
-            app_pin = PinnedEntry(root / 'app')
-            held.callback(app_pin.close)
-            code_pin = PinnedEntry(code, create_parent=app_pin, create_share=3)
-            held.callback(code_pin.close)
-            stat = io_path(code).stat()
-            record['installation'] = {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}
-            try:
-                _write_registration(registration, record)
-            except BaseException:
-                code_pin.delete()
-                raise
-        else:
-            code_pin = PinnedEntry(code)
-            held.callback(code_pin.close)
-            stat = io_path(code).stat()
-            if installation != {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}:
-                raise InstanceInvalid('Different interrupted installation')
-            return {'status': 'blocked', 'reason': 'interrupted_inventory_unavailable'}
-        result = dist.install_package(io_path(code), from_source=package, sha256=digest)
-        if 'code' in result:
-            result['code'] = str(code)
-        if result['status'] != 'ok':
-            return result
-        names = [row['path'] for row in manifest['files']] + ['manifest.json', '.horizon/dist.lock.json', dist.CURRENT_REL.as_posix()]
-        expected_digests = {row['path']: row.get('sha256') for row in manifest['files']}
-        inventory = {}
-        directories = {}
-        for name in names:
-            relative = Path(name)
-            if relative.is_absolute() or '..' in relative.parts or ':' in name:
-                raise InstanceInvalid('Invalid package inventory')
-            path = code / relative
-            with pin_ancestors(path.parent, already_pinned=(code,)), ExitStack() as held:
-                pin = PinnedEntry(path)
-                held.callback(pin.close)
-                stat = io_path(path).stat()
-                expected = expected_digests.get(name)
-                if expected and hashlib.sha256(io_path(path).read_bytes()).hexdigest() != expected:
-                    raise InstanceInvalid('Installed file digest mismatch')
-                inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
-                for directory in (path.parent, *path.parent.parents):
-                    if directory.is_relative_to(code):
-                        stat = io_path(directory).stat()
-                        directories[directory.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
-        for directory in (code / dist.STAGING_REL,):
-            if io_path(directory).exists():
-                with pin_ancestors(directory, already_pinned=(code,)):
-                    stat = io_path(directory).stat()
-                    directories[directory.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
-        record['application_inventory'] = inventory
-        record['application_directories'] = directories
-        record.pop('installation', None)
-        _write_registration(registration, record)
-    return result
+    """Install a verified package with creation-time file identity receipts."""
+    from hostrun.managed_install import install
+    return install(control_root, identity, package, digest)
 
 
 def initialize_layout(control_root, identity):
@@ -339,7 +264,7 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions', 'installation'):
                 record.pop(key, None)
         if not record.get('children') and any(io_path(root).iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
@@ -789,7 +714,7 @@ def instance_lock(home):
             raise ValueError('Missing instance registration')
         preview(root.parent, root.name)
         pending_record = _read_registration(registration)
-        if any(pending_record.get(key) for key in ('upgrade', 'upgrade_operation')):
+        if any(pending_record.get(key) for key in ('upgrade', 'upgrade_operation', 'installation')):
             raise InstanceInvalid('Managed upgrade recovery pending')
     except (ValueError, OSError) as exc:
         raise InstanceInvalid('Invalid instance registration') from exc
@@ -800,7 +725,7 @@ def instance_lock(home):
                 if acquired:
                     preview(root.parent, root.name)
                     pending_record = _read_registration(registration)
-                    if any(pending_record.get(key) for key in ('upgrade', 'upgrade_operation')):
+                    if any(pending_record.get(key) for key in ('upgrade', 'upgrade_operation', 'installation')):
                         raise InstanceInvalid('Managed upgrade recovery pending')
         except (OSError, ValueError) as exc:
             raise InstanceInvalid('Cannot acquire instance lease') from exc
