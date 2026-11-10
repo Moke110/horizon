@@ -11,6 +11,8 @@ from hostrun.managed_upgrade_scope import exclusive_scope, owns_scope
 from hostrun import cleanup, dist
 from hostrun.windows_cleanup import PinnedEntry, pin_ancestors, io_path
 
+_BATCH_SIZE = 32
+
 
 def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=None):
     """Internal code-publication primitive; the coordinator owns data/schema/version."""
@@ -121,46 +123,62 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
 
             base = code / '.horizon/upgrades' / operation
             created = {}
-            for name, payload in payloads.items():
-                path = base / 'new' / name
-                parent = directory(path.parent)
-                pin = PinnedEntry(path, create_parent=parent, create_file=True, writable=True, create_share=3)
-                held.callback(pin.close)
-                stat = io_path(path).stat()
-                inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
-                transaction['after'][name] = [stat.st_dev, stat.st_ino]
+            names = list(payloads)
+            for offset in range(0, len(names), _BATCH_SIZE):
+                batch = names[offset:offset + _BATCH_SIZE]
+                parents = {name: directory((base / 'new' / name).parent) for name in batch}
+                empty = []
                 try:
+                    for name in batch:
+                        path = base / 'new' / name
+                        pin = PinnedEntry(path, create_parent=parents[name], create_file=True, writable=True, create_share=3)
+                        held.callback(pin.close)
+                        empty.append(pin)
+                        stat = io_path(path).stat()
+                        inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
+                        transaction['after'][name] = [stat.st_dev, stat.st_ino]
+                        created[name] = (path, pin)
                     save()
                 except BaseException:
-                    pin.delete()
+                    # Only this still-empty batch can be reclaimed through its creation handles.
+                    for pin in empty:
+                        pin.delete()
                     raise
-                pin.write_bytes(payload)
-                created[name] = (path, pin)
+                for name in batch:
+                    created[name][1].write_bytes(payloads[name])
 
-            def move(source, destination, pin):
-                original = source.relative_to(root).as_posix()
-                target = destination.relative_to(root).as_posix()
-                inventory[target] = inventory[original]
-                save()  # Both names refer only to the already-enrolled identity.
-                pin.rename(destination)
-                inventory.pop(original)
+            def move_batch(moves):
+                for source, destination, pin in moves:
+                    inventory[destination.relative_to(root).as_posix()] = inventory[source.relative_to(root).as_posix()]
+                save()  # Every possible alias is durable before the first rename.
+                for source, destination, pin in moves:
+                    pin.rename(destination)
+                for source, destination, pin in moves:
+                    inventory.pop(source.relative_to(root).as_posix())
                 save()
 
-            for name in old_names:
-                source = code / name
-                destination = base / 'old' / name
-                directory(destination.parent)
-                with pin_ancestors(source.parent):
+            for offset in range(0, len(old_names), _BATCH_SIZE):
+                moves = []
+                for name in old_names[offset:offset + _BATCH_SIZE]:
+                    source, destination = code / name, base / 'old' / name
+                    directory(destination.parent)
+                    held.enter_context(pin_ancestors(source.parent))
                     pin = PinnedEntry(source, delete=True)
                     held.callback(pin.close)
                     stat = io_path(source).stat()
                     if inventory[source.relative_to(root).as_posix()] != [stat.st_dev, stat.st_ino]:
                         raise cleanup.InstanceInvalid('Installed file changed')
-                    move(source, destination, pin)
-            for name, (source, pin) in created.items():
-                destination = code / name
-                directory(destination.parent)
-                move(source, destination, pin)
+                    moves.append((source, destination, pin))
+                move_batch(moves)
+            # Never mix old and new current aliases in a publication batch.
+            for offset in range(0, len(names), _BATCH_SIZE):
+                moves = []
+                for name in names[offset:offset + _BATCH_SIZE]:
+                    source, pin = created[name]
+                    destination = code / name
+                    directory(destination.parent)
+                    moves.append((source, destination, pin))
+                move_batch(moves)
             record.pop('upgrade')
             save()
     return {'status': 'ok', 'version': manifest['version'], 'data_migration': 'not_performed', 'transaction_id': operation}
