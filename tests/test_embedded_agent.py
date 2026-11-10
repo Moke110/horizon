@@ -206,7 +206,8 @@ def test_child_role_exposes_only_bounded_tools(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which('node') or not (ROOT/'agent/dist/main.js').exists(), reason='build Pi first')
-def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_context(tmp_path):
+@pytest.mark.parametrize('history_pipe', [False, True])
+def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_context(tmp_path, history_pipe):
     import os,sys,uuid
     requests=[]
     class Handler(BaseHTTPRequestHandler):
@@ -230,11 +231,15 @@ def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_co
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='recovery-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
         session_id=str(uuid.uuid4()); identities=[]
         args=embedded_agent.argv(tmp_path,'Recovery unique question',kind='agent',code=ROOT,session_id=session_id)+['--turn-id','stable-turn']
+        if history_pipe: args.append('--history-stdin')
         for attempt in range(3):
             proc=subprocess.Popen(args,cwd=ROOT,env={**os.environ,'HORIZON_PYTHON':sys.executable},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+            if history_pipe:
+                proc.stdin.write(json.dumps({'type':'history','messages':[{'role':'You','text':'Prior history marker recovery-key'}]})+'\n');proc.stdin.flush()
             timer=threading.Timer(35,proc.kill);timer.start();ids=[]
             try:
                 for line in proc.stdout:
+                    assert 'recovery-key' not in line
                     event=json.loads(line)
                     if event['type']=='delegate_request':
                         ids.append(event['requestId'])
@@ -253,6 +258,8 @@ def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_co
         assert identities[2] == []  # completed assistant result is handed to owner without planning
         assert len(requests) == 3
         assert json.dumps(requests[0]['messages']).count('Recovery unique question') == 1
+        if history_pipe:
+            assert all(json.dumps(request['messages']).count('Prior history marker') == 1 for request in requests)
         assert 'same bounded input' in json.dumps(requests[1]['messages'])
         assert any(m.get('role') == 'tool' for m in requests[1]['messages'])
     finally:
