@@ -233,6 +233,92 @@ def test_root_filename_alone_never_authorizes_cleanup(tmp_path, name, replaced):
     assert 'data/' + name not in result['removed']
 
 
+def test_managed_diagnostic_events_are_enrolled_before_append(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.diagnostics import record_event
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    record_event(instance['home'], 'desktop_started', pid=123)
+    assert (instance['home'] / 'diagnostics' / 'events.jsonl').is_file()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+    assert 'desktop_started' in (Path(result['report']) / 'events.jsonl').read_text()
+
+
+def test_managed_diagnostic_rotation_keeps_bounded_owned_files(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.diagnostics import record_event
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    for number in range(1700):
+        record_event(instance['home'], 'error', code='x' * 100, pid=number)
+    folder = instance['home'] / 'diagnostics'
+    assert (folder / 'events.jsonl').stat().st_size <= 263168
+    assert (folder / 'events.previous.jsonl').is_file()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('name', ['events.jsonl', 'events.previous.jsonl'])
+def test_diagnostic_writer_and_cleanup_preserve_foreign_replacements(tmp_path, name):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.diagnostics import record_event
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    record_event(instance['home'], 'desktop_started', pid=123)
+    path = instance['home'] / 'diagnostics' / name
+    path.rename(path.with_name(name + '.retained'))
+    path.write_text('USER FILE')
+    record_event(instance['home'], 'desktop_exit', pid=123)
+    assert path.read_text() == 'USER FILE'
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'partial'
+    assert path.read_text() == 'USER FILE'
+
+
+def test_diagnostic_receipt_failure_does_not_write_unowned_events(tmp_path, monkeypatch):
+    import os
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.diagnostics import record_event
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    original = os.replace
+    calls = 0
+    def replace(source, target):
+        nonlocal calls
+        if Path(target) == instance['registration']:
+            calls += 1
+            if calls == 2:
+                raise OSError('receipt failure')
+        return original(source, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'replace', replace)
+        record_event(instance['home'], 'desktop_started', pid=123)
+    folder = instance['home'] / 'diagnostics'
+    assert not list(folder.iterdir())
+    record_event(instance['home'], 'desktop_exit', pid=123)
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_busy_inventory_drops_diagnostic_without_blocking_caller(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from common import file_lock
+    from hostrun.cleanup import initialize_layout
+    from hostrun.diagnostics import record_event
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with file_lock(tmp_path / (instance['instance_id'] + '.inventory.lock')):
+            pending = pool.submit(record_event, instance['home'], 'desktop_started', pid=123)
+            assert pending.result(timeout=0.5) is None
+    assert not (instance['home'] / 'diagnostics').exists()
+
+
 def test_cleanup_failure_reports_files_already_removed(tmp_path):
     import json
     from test_dist_install import _build

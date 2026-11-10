@@ -114,7 +114,7 @@ def preview(control_root, identity, *, mode='full'):
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
-    if not isinstance(data_inventory, dict) or any(name != 'data/agent/model.json'
+    if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
@@ -122,7 +122,7 @@ def preview(control_root, identity, *, mode='full'):
             or set(model_update) != {'temporary', 'backup', 'new', 'previous'}
             or not all(re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', model_update[key]) for key in ('temporary', 'backup'))):
         raise InstanceInvalid('Invalid model update journal')
-    if not isinstance(data_directories, dict) or any(name not in {'data/agent', 'data/agent/pi', 'data/agent/pi/sessions'}
+    if not isinstance(data_directories, dict) or any(name not in {'data/agent', 'data/agent/pi', 'data/agent/pi/sessions', 'data/diagnostics'}
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN, name) for name in data_directories):
         raise InstanceInvalid('Invalid data directory inventory')
     installation = record.pop('installation', None)
@@ -162,7 +162,7 @@ def preview(control_root, identity, *, mode='full'):
     for relative, expected in {**application_directories, **data_directories}.items():
         if (not isinstance(relative, str) or '..' in Path(relative).parts or ':' in relative
                 or not any(relative == prefix or relative.startswith(prefix + '/')
-                           for prefix in ('app/current', 'data/agent'))):
+                           for prefix in ('app/current', 'data/agent', 'data/diagnostics'))):
             raise InstanceInvalid('Invalid enrolled directory path')
         directory = root / relative
         if directory.is_symlink() or directory.is_junction():

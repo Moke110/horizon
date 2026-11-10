@@ -24,12 +24,15 @@ def record_event(home,event,**metadata):
     try:
         row={'schema_version':1,'time':datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),'event':event,**_safe(metadata)}
         with _LOCK:
+            from hostrun.managed_diagnostics import append_managed_event
+            if append_managed_event(home, (json.dumps(row)+'\n').encode('utf-8'), limit=LIMIT):
+                return
             folder=Path(home)/'diagnostics';folder.mkdir(parents=True,exist_ok=True)
             path=folder/'events.jsonl'
             if path.exists() and path.stat().st_size>=LIMIT:
                 path.replace(folder/'events.previous.jsonl')
             with path.open('a',encoding='utf-8') as stream: stream.write(json.dumps(row)+'\n')
-    except OSError:
+    except (OSError, ValueError, RuntimeError):
         pass  # Diagnostics must never prevent application recovery.
 
 def export_report(home,output,*,code=None,tasks=()):
