@@ -16,7 +16,6 @@ class DesktopWorker:
         record_event(self.home, event, **metadata)
 
     def run_agent(self, task, session_id=None, history=None):
-        history_path = None
         completed_text = None
         failure = None
         turn = getattr(self, 'turn', None)
@@ -29,15 +28,15 @@ class DesktopWorker:
                 self.current_snapshots = self.version_provider()
                 self.service.attempt_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'], 'snapshots': self.current_snapshots}, token=self.service_token)
             if session_id is not None and history:
-                history_path = self.home / 'agent' / 'history' / (session_id + '.json')
-                history_path.parent.mkdir(parents=True, exist_ok=True)
-                history_path.write_text(json.dumps(history, ensure_ascii=False), encoding='utf-8')
-                argv.extend(['--history-file', str(history_path)])
+                argv.append('--history-stdin')
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
             self.process = subprocess.Popen(argv, cwd=self.resolved['code'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             self.record_diagnostic('task_started', pid=getattr(self.process, 'pid', None), parent_pid=os.getpid())
             # Drain stderr without exposing provider credentials in UI logs.
             threading.Thread(target=lambda p=self.process: p.stderr.read(), daemon=True).start()
+            if session_id is not None and history:
+                self.process.stdin.write(json.dumps({'type': 'history', 'messages': history}, ensure_ascii=False) + '\n')
+                self.process.stdin.flush()
             if self.cancelled.is_set():
                 self.process.terminate()
             for line in self.process.stdout:
@@ -89,12 +88,8 @@ class DesktopWorker:
                                 process.kill()
                                 process.wait(timeout=10)
                 finally:
-                    try:
-                        if history_path is not None:
-                            history_path.unlink(missing_ok=True)
-                    finally:
-                        self.process = None
-                        self.events.put(('done', {'durable': True} if turn else None))
+                    self.process = None
+                    self.events.put(('done', {'durable': True} if turn else None))
 
     def delegate(self, event):
         request_id = str(event.get('requestId', ''))

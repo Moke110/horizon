@@ -17,6 +17,7 @@ let retryAttempts = 1;
 let delegateFailure = "";
 let failedDelegateCall = "";
 let releaseSessionGuardian: (() => Promise<void>) | undefined;
+let closeOwnerInput: (() => void) | undefined;
 let delegateFailureDetails: Record<string, unknown> | undefined;
 const emit = (event: object) => {
   let line = JSON.stringify(event);
@@ -26,7 +27,7 @@ const emit = (event: object) => {
 const { values } = parseArgs({ options: {
   home: { type: "string" }, kind: { type: "string", default: "agent" },
   "child-role": { type: "string" },
-  task: { type: "string" }, "session-id": { type: "string" }, "history-file": { type: "string" }, "turn-id": { type: "string" }, check: { type: "boolean" },
+  task: { type: "string" }, "session-id": { type: "string" }, "history-file": { type: "string" }, "history-stdin": { type: "boolean" }, "turn-id": { type: "string" }, check: { type: "boolean" },
 } });
 
 async function main() {
@@ -164,16 +165,52 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   ];
   const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void; callId: string }>();
   let inputReader: ReturnType<typeof createInterface> | undefined;
+  let ownerInputClosed = false;
+  let resolveHistory: ((value: unknown) => void) | undefined;
+  const historyInput = values['history-stdin'] ? new Promise<unknown>(resolve => { resolveHistory = resolve; }) : undefined;
+  const ensureInputReader = () => {
+    if (inputReader) return;
+    inputReader = createInterface({ input: process.stdin });
+    closeOwnerInput = () => { inputReader?.close(); process.stdin.pause(); };
+    inputReader.on('line', line => {
+      try {
+        const reply = JSON.parse(line);
+        if (resolveHistory) {
+          resolveHistory(reply.type === 'history' ? reply.messages : undefined);
+          resolveHistory = undefined;
+          return;
+        }
+        const waiter = pending.get(reply.requestId);
+        if (waiter) {
+          pending.delete(reply.requestId);
+          if (reply.result?.status === 'failed') {
+            failedDelegateCall ||= waiter.callId;
+            delegateFailureDetails ??= reply.result.failure;
+            delegateFailure = reply.result.failure?.message || reply.result.error || 'Child failed';
+            waiter.reject(new Error(delegateFailure));
+          } else waiter.resolve(result(JSON.stringify(reply.result)));
+        }
+      } catch {
+        resolveHistory?.(undefined);
+        resolveHistory = undefined;
+      }
+    });
+    inputReader.on('close', () => {
+      ownerInputClosed = true;
+      resolveHistory?.(undefined);
+      resolveHistory = undefined;
+      for (const waiter of pending.values()) waiter.reject(new Error('Delegation owner disconnected'));
+      pending.clear();
+    });
+  };
+  if (historyInput) ensureInputReader();
 
   const delegate = defineTool({ name: "delegate", label: "Delegate development task", description: "Run an independent restricted development_reader or development_summarizer session. These are development test roles, not Voyager or Editor. Return includes stable artifact reference, child session identity and success/failure. Give bounded input only, never credentials or the entire conversation.",
     parameters: Type.Object({ role: Type.Union([Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
     execute: async (_id, p, signal) => {
       if (!values["session-id"]) throw new Error("Delegation requires a persistent parent session");
-      if (!inputReader) {
-        inputReader = createInterface({ input: process.stdin });
-        inputReader.on("line", line => { try { const reply = JSON.parse(line); const waiter = pending.get(reply.requestId); if (waiter) { pending.delete(reply.requestId); if (reply.result?.status === "failed") { failedDelegateCall ||= waiter.callId; delegateFailureDetails ??= reply.result.failure; delegateFailure = reply.result.failure?.message || reply.result.error || "Child failed"; waiter.reject(new Error(delegateFailure)); } else waiter.resolve(result(JSON.stringify(reply.result))); } } catch { /* malformed owner frames cannot resolve requests */ } });
-        inputReader.on("close", () => { for (const waiter of pending.values()) waiter.reject(new Error("Delegation owner disconnected")); pending.clear(); });
-      }
+      ensureInputReader();
+      if (ownerInputClosed) throw new Error('Delegation owner disconnected');
       let requestId = _id;
       if (values["turn-id"]) {
         const entry = [...sessionManager.getBranch()].reverse().find((entry: any) => entry.type === "message" && entry.message.role === "assistant" && entry.message.content.some((part: any) => part.type === "toolCall" && part.id === _id));
@@ -248,8 +285,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   // Sanitize at the public persistence boundary, before any message is flushed.
   const appendMessage = sessionManager.appendMessage.bind(sessionManager);
   sessionManager.appendMessage = message => appendMessage(JSON.parse(JSON.stringify(message).split(JSON.stringify(secret).slice(1, -1)).join("[redacted]")));
-  if (values["history-file"] && sessionManager.getEntries().length === 0) {
-    const history: unknown = JSON.parse(await readFile(values["history-file"], "utf8"));
+  const pipedHistory = historyInput ? await historyInput : undefined;
+  if (historyInput && !Array.isArray(pipedHistory)) throw new Error('Invalid conversation history');
+  if ((values["history-file"] || historyInput) && sessionManager.getEntries().length === 0) {
+    const history: unknown = historyInput ? pipedHistory : JSON.parse(await readFile(values["history-file"]!, "utf8"));
     if (!Array.isArray(history)) throw new Error("Invalid conversation history");
     for (const message of history) {
       if (!message || !["You", "Horizon"].includes(message.role) || typeof message.text !== "string") throw new Error("Invalid conversation history");
@@ -335,4 +374,4 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   } finally { streamText("", true); session.dispose(); inputReader?.close(); }
 }
 main().catch(error => { emit({ type: "error", ...retryDecision(String(error.message || error), 3), attempts: retryAttempts, ...delegateFailureDetails, message: String(error.message || error) }); process.exitCode = 1; })
-  .finally(async () => { await releaseSessionGuardian?.(); });
+  .finally(async () => { closeOwnerInput?.(); await releaseSessionGuardian?.(); });

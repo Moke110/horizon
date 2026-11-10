@@ -413,6 +413,182 @@ def test_activation_receipt_failure_releases_empty_file_and_can_retry(tmp_path, 
     assert result['status'] == 'cleaned'
 
 
+def test_desktop_worker_streams_history_without_temporary_files(tmp_path):
+    import json
+    import queue
+    import threading
+    import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.embedded_agent import configure
+    from hostrun.desktop_worker import DesktopWorker
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            for delta, finish in [({'role': 'assistant', 'content': 'Ready'}, None), ({}, 'stop')]:
+                row = {'id': 'test', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'test-model',
+                       'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
+                self.wfile.write(('data: ' + json.dumps(row) + '\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+        def log_message(self, *args): pass
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        configure(instance['home'], provider='horizon-test', model='test-model', api_key='SECRET',
+                  base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        app = DesktopWorker()
+        app.home = instance['home']
+        app.resolved = {'code': str(Path.cwd())}
+        app.events = queue.Queue()
+        app.cancelled = threading.Event()
+        app.process = None
+        session = str(uuid.uuid4())
+        history = [{'role': 'You', 'text': 'Legacy violet moon'}, {'role': 'Horizon', 'text': 'Legacy response'}]
+        for prompt in ('First question', 'Continue'):
+            app.run_agent(prompt, session, history)
+            events = []
+            while not app.events.empty():
+                events.append(app.events.get())
+            assert any(kind == 'agent' and event.get('type') == 'final' for kind, event in events)
+        assert json.dumps(requests[0]['messages']).count('Legacy violet moon') == 1
+        assert json.dumps(requests[1]['messages']).count('Legacy violet moon') == 1
+        assert 'First question' in json.dumps(requests[1]['messages'])
+        assert not (instance['home'] / 'agent' / 'history').exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('case', ['eof', 'malformed', 'invalid_session'])
+def test_history_pipe_failure_exits_without_hanging_or_echoing_content(tmp_path, case):
+    import os
+    import subprocess
+    import sys
+    import uuid
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure, argv
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='horizon-test', model='test-model', api_key='SECRET',
+              base_url='http://127.0.0.1:9/v1')
+    args = argv(instance['home'], 'hello', kind='agent', code=Path.cwd())
+    args += ['--history-stdin', '--session-id', 'invalid' if case == 'invalid_session' else str(uuid.uuid4())]
+    content = '' if case == 'eof' else '{"type":"history","messages":"PRIVATE-HISTORY-MARKER"}\n'
+    process = subprocess.run(args, input=content, env={**os.environ, 'HORIZON_PYTHON': sys.executable},
+                             capture_output=True, text=True, encoding='utf-8', timeout=10)
+    assert process.returncode != 0
+    assert 'PRIVATE-HISTORY-MARKER' not in process.stdout + process.stderr
+    assert 'SECRET' not in process.stdout + process.stderr
+    assert 'Invalid session identity' in process.stdout if case == 'invalid_session' else 'Invalid conversation history' in process.stdout
+
+
+def test_history_eof_rejects_later_delegate_without_pending_forever(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    import threading
+    import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure, argv
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.end_headers()
+            if len(requests) == 1:
+                delta = {'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'call', 'type': 'function',
+                         'function': {'name': 'delegate', 'arguments': json.dumps({'role': 'development_reader', 'input': 'bounded'})}}]}
+                finish = 'tool_calls'
+            else:
+                delta, finish = {'role': 'assistant', 'content': 'Owner unavailable'}, 'stop'
+            for part, reason in [(delta, None), ({}, finish)]:
+                row = {'id': 'test', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'test-model',
+                       'choices': [{'index': 0, 'delta': part, 'finish_reason': reason}]}
+                self.wfile.write(('data: ' + json.dumps(row) + '\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+        def log_message(self, *args): pass
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        configure(instance['home'], provider='horizon-test', model='test-model', api_key='SECRET',
+                  base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        args = argv(instance['home'], 'hello', kind='agent', code=Path.cwd(), session_id=str(uuid.uuid4())) + ['--history-stdin']
+        process = subprocess.run(args, input='{"type":"history","messages":[]}\n',
+                                 env={**os.environ, 'HORIZON_PYTHON': sys.executable}, capture_output=True,
+                                 text=True, encoding='utf-8', timeout=6)
+        assert 'Delegation owner disconnected' in json.dumps(requests)
+        assert 'SECRET' not in process.stdout + process.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_large_history_pipe_write_is_released_by_stop(tmp_path, monkeypatch):
+    import queue
+    import subprocess
+    import threading
+    import uuid
+    from concurrent.futures import ThreadPoolExecutor
+    from hostrun.cleanup import initialize_layout
+    from hostrun.embedded_agent import configure
+    from hostrun.desktop_worker import DesktopWorker
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    configure(instance['home'], provider='test', model='test', api_key='SECRET')
+    app = DesktopWorker()
+    app.home = instance['home']
+    app.resolved = {'code': str(Path.cwd())}
+    app.events = queue.Queue()
+    app.cancelled = threading.Event()
+    app.process = None
+    original = subprocess.Popen
+    started = threading.Event()
+    children = []
+    def suspended(*args, **kwargs):
+        # Real Windows process/pipe, deliberately not reading. This injects at
+        # CreateProcess, not at the worker or model-service collaborator.
+        create_suspended = 0x00000004
+        kwargs['creationflags'] = kwargs.get('creationflags', 0) | create_suspended
+        child = original(*args, **kwargs)
+        children.append(child)
+        started.set()
+        return child
+    with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as pool:
+        patch.setattr(subprocess, 'Popen', suspended)
+        pending = pool.submit(app.run_agent, 'hello', str(uuid.uuid4()),
+                              [{'role': 'You', 'text': 'PRIVATE-HISTORY-MARKER' * 200000}])
+        try:
+            assert started.wait(5)
+            with pytest.raises(TimeoutError):
+                pending.result(timeout=0.2)
+        finally:
+            app.stop()
+        pending.result(timeout=5)
+    assert children[0].poll() is not None
+    assert not (instance['home'] / 'agent' / 'history').exists()
+    while not app.events.empty():
+        assert 'PRIVATE-HISTORY-MARKER' not in str(app.events.get())
+
+
 @pytest.mark.parametrize('phase, expected', [('before_commit', 1), ('after_commit', 2)])
 def test_managed_sqlite_real_transaction_crash_recovers_without_new_identity(tmp_path, phase, expected):
     import os
