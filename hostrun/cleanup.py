@@ -21,7 +21,7 @@ CONTROL_MARKER = '.horizon-test-control.json'
 CONTROL_SCHEMA = {'schema_version': 1, 'purpose': 'isolated-horizon-test-instances'}
 SESSION_ID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 SESSION_DIRECTORY_PATTERN = r'data/agent/pi/sessions/' + SESSION_ID_PATTERN
-UPGRADE_DATA_PATTERN = r'data/(?:horizon\.sqlite3|agent/model\.json|agent/pi/sessions/' + SESSION_ID_PATTERN + r'/session\.jsonl)'
+UPGRADE_DATA_PATTERN = r'data/(?:version\.json|horizon\.sqlite3|agent/model\.json|agent/pi/sessions/' + SESSION_ID_PATTERN + r'/session\.jsonl)'
 UPGRADE_BACKUP_PATTERN = r'data/upgrade-backups/[0-9a-f]{32}/' + UPGRADE_DATA_PATTERN.removeprefix('data/')
 UPGRADE_DIRECTORY_PATTERN = r'data/upgrade-backups(?:/[0-9a-f]{32}(?:/agent(?:/pi(?:/sessions(?:/' + SESSION_ID_PATTERN + r')?)?)?)?)?'
 
@@ -148,8 +148,15 @@ def preview(control_root, identity, *, mode='full'):
     upgrade = record.pop('upgrade', None)
     if upgrade is not None and (not isinstance(upgrade, str) or not re.fullmatch(r'[0-9a-f]{32}', upgrade)):
         raise InstanceInvalid('Invalid upgrade identity')
+    operation = record.pop('upgrade_operation', None)
+    if operation is not None and (not isinstance(operation, dict)
+            or set(operation) != {'id', 'artifact'}
+            or not isinstance(operation['id'], str) or not re.fullmatch(r'[0-9a-f]{32}', operation['id'])
+            or not isinstance(operation['artifact'], str) or not re.fullmatch(r'[0-9a-f]{64}', operation['artifact'])):
+        raise InstanceInvalid('Invalid overall upgrade operation')
     if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal', 'data/desktop.lock', 'data/desktop.activate'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
+            and not re.fullmatch(r'data/version(?:-[0-9a-f]{32}\.tmp|\.json)', name)
             and not re.fullmatch(UPGRADE_BACKUP_PATTERN, name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
@@ -318,7 +325,7 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'data_backups', 'code_transactions'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions'):
                 record.pop(key, None)
         if not record.get('children') and any(root.iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
@@ -767,7 +774,8 @@ def instance_lock(home):
         if not registration.exists():
             raise ValueError('Missing instance registration')
         preview(root.parent, root.name)
-        if _read_registration(registration).get('upgrade'):
+        pending_record = _read_registration(registration)
+        if any(pending_record.get(key) for key in ('upgrade', 'upgrade_operation')):
             raise InstanceInvalid('Managed upgrade recovery pending')
     except (ValueError, OSError) as exc:
         raise InstanceInvalid('Invalid instance registration') from exc
@@ -777,7 +785,8 @@ def instance_lock(home):
                 acquired = entrance and stack.enter_context(lifecycle_lock(root.parent / (root.name + '.lock')))
                 if acquired:
                     preview(root.parent, root.name)
-                    if _read_registration(registration).get('upgrade'):
+                    pending_record = _read_registration(registration)
+                    if any(pending_record.get(key) for key in ('upgrade', 'upgrade_operation')):
                         raise InstanceInvalid('Managed upgrade recovery pending')
         except (OSError, ValueError) as exc:
             raise InstanceInvalid('Cannot acquire instance lease') from exc

@@ -2,26 +2,31 @@
 from contextlib import ExitStack
 import hashlib
 import json
+import re
 from pathlib import Path
 import uuid
 
-from common import file_lock, now
+from common import now
+from hostrun.managed_upgrade_scope import exclusive_scope, owns_scope
 from hostrun import cleanup, dist
 from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
 
 
-def stage_code_transaction(code, home, *, from_source, sha256):
+def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=None):
     """Experimental internal code transaction, not the public upgrade contract."""
+    if transaction_id is not None and (not isinstance(transaction_id, str) or not re.fullmatch(r'[0-9a-f]{32}', transaction_id)):
+        raise cleanup.InstanceInvalid('Invalid code transaction identity')
     home = cleanup._lexical_home(home)
     root, control = home.parent, home.parent.parent
     if control != cleanup.control_directory():
         raise cleanup.InstanceInvalid('Unexpected managed instance location')
-    with cleanup.instance_lock(home) as available:
-        if not available:
-            return {'status': 'blocked', 'reason': 'instance_busy'}
-    with cleanup.lifecycle_lock(control / (root.name + '.lock'), exclusive=True) as available:
-        if not available:
-            return {'status': 'blocked', 'reason': 'instance_busy'}
+    if not owns_scope(home):
+        with cleanup.instance_lock(home) as available:
+            if not available:
+                return {'status': 'blocked', 'reason': 'instance_busy'}
+        with cleanup.lifecycle_lock(control / (root.name + '.lock'), exclusive=True) as available:
+            if not available:
+                return {'status': 'blocked', 'reason': 'instance_busy'}
     code = cleanup._lexical_home(code)
     if code != root / 'app/current':
         return {'status': 'blocked', 'reason': 'unexpected_managed_code'}
@@ -47,9 +52,8 @@ def stage_code_transaction(code, home, *, from_source, sha256):
         'manifest_sha256': manifest_sha}).encode()
     identity = root.name
     cleanup.preview(control, identity)
-    with file_lock(control / (identity + '.gate'), blocking=False) as gate, \
-            cleanup.lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired:
-        if not gate or not acquired:
+    with exclusive_scope(home) as acquired:
+        if not acquired:
             return {'status': 'blocked', 'reason': 'instance_busy'}
         with pin_ancestors(code), ExitStack() as held:
             cleanup.preview(control, identity)
@@ -81,7 +85,9 @@ def stage_code_transaction(code, home, *, from_source, sha256):
                             pin.close()
                 elif name in old_names:
                     raise cleanup.InstanceInvalid('Missing installed file')
-            operation = uuid.uuid4().hex
+            operation = transaction_id or uuid.uuid4().hex
+            if operation in record.get('code_transactions', {}):
+                raise cleanup.InstanceInvalid('Code transaction already exists')
             transaction = {'before': {name: inventory[(code / name).relative_to(root).as_posix()] for name in old_names},
                            'after': {}, 'digests': old_digests}
             record.setdefault('code_transactions', {})[operation] = transaction
@@ -167,9 +173,8 @@ def rollback_code_transaction(code, home, transaction_id=None):
     if control != cleanup.control_directory() or code != root / 'app/current':
         raise cleanup.InstanceInvalid('Unexpected managed code location')
     cleanup.preview(control, root.name)
-    with file_lock(control / (root.name + '.gate'), blocking=False) as gate, \
-            cleanup.lifecycle_lock(control / (root.name + '.lock'), exclusive=True) as available:
-        if not gate or not available:
+    with exclusive_scope(home) as available:
+        if not available:
             raise cleanup.InstanceBusy('instance_busy')
         with pin_ancestors(code), ExitStack() as held:
             cleanup.preview(control, root.name)
