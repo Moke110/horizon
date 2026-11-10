@@ -180,6 +180,9 @@ def preview(control_root, identity, *, mode='full'):
             and not re.fullmatch(UPGRADE_DIRECTORY_PATTERN, name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN, name) for name in data_directories):
         raise InstanceInvalid('Invalid data directory inventory')
+    shortcut_digest = record.pop('shortcut_digest', None)
+    if shortcut_digest is not None and (not isinstance(shortcut_digest, str) or not re.fullmatch(r'[0-9a-f]{64}', shortcut_digest)):
+        raise InstanceInvalid('Invalid shortcut receipt')
     installation = record.pop('installation', None)
     if not isinstance(application_directories, dict):
         raise InstanceInvalid('Invalid application directory inventory')
@@ -244,6 +247,12 @@ def preview(control_root, identity, *, mode='full'):
             'preserve': [str(p) for p in preserve], 'owned_children': sorted(children)}
 
 
+def create_test_shortcut(control_root, identity):
+    """Create the fixed, instance-owned desktop shortcut."""
+    from hostrun.managed_shortcut import create
+    return create(control_root, identity)
+
+
 def install_test_package(control_root, identity, package, digest):
     """Install a verified package with creation-time file identity receipts."""
     from hostrun.managed_install import install
@@ -264,7 +273,7 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions', 'installation'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions', 'installation', 'shortcut_digest'):
                 record.pop(key, None)
         if not record.get('children') and any(io_path(root).iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')

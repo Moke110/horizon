@@ -14,12 +14,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--code', required=True)
     parser.add_argument('--archive', required=True)
+    parser.add_argument('--managed-home')
     args = parser.parse_args()
-    home = desktop_home()
-    from hostrun.cleanup import InstanceBusy, instance_lock
+    from hostrun.cleanup import InstanceBusy, InstanceInvalid, instance_lock, _lexical_home, control_directory
+    if args.managed_home:
+        try:
+            home = _lexical_home(args.managed_home)
+            if (home.name != 'data' or home.parent.parent != control_directory()
+                    or _lexical_home(args.code) != home.parent / 'app/current'
+                    or _lexical_home(args.archive) != home.parent / 'archive'):
+                raise InstanceInvalid('Invalid explicit managed home')
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise InstanceInvalid('Invalid explicit managed home') from exc
+    else:
+        home = desktop_home()
     with instance_lock(home) as acquired:
         if not acquired:
             raise InstanceBusy('instance_busy')
+        if args.managed_home:
+            os.environ['HORIZON_DATA_HOME'] = str(home)
         _run(args, home)
 
 
