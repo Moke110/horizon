@@ -1110,7 +1110,8 @@ def test_interrupted_package_copy_preserves_unproven_replacement(tmp_path, monke
     original = shutil.copyfile
     def interrupted(source, target, *args, **kwargs):
         value = original(source, target, *args, **kwargs)
-        if Path(target) == code / 'common.py':
+        from hostrun.windows_cleanup import io_path
+        if Path(target) == io_path(code / 'common.py'):
             raise KeyboardInterrupt('controlled abrupt copy interruption')
         return value
     with monkeypatch.context() as patch:
@@ -2523,3 +2524,26 @@ def test_public_upgrade_refuses_external_python_importing_target_tool(tmp_path):
     assert (code / 'manifest.json').read_bytes() == before
     assert not (home / 'version.json').exists()
     assert not (home / 'upgrade-backups').exists()
+
+
+def test_managed_install_supports_deep_package_staging_without_changing_inventory_paths(tmp_path):
+    import json
+    from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package, preview, cleanup_instance
+    from hostrun.windows_cleanup import io_path
+    relative = 'agent/node_modules/' + 'segment-' * 7 + '/deep_module.json'
+    source = _write_tree(tmp_path.parent / 'source', {**PACKAGE_FILES, relative: '{"owned":true}'})
+    package = build(source=source, out=tmp_path.parent / 'package', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    code = instance['code'] / 'current'
+    staged = code / '.horizon/staging' / package['artifact']['sha256'][:16] / relative
+    assert len(str(staged)) > 260
+    result = install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])
+    assert result['status'] == 'ok', result
+    assert json.loads(io_path(code / relative).read_text()) == {'owned': True}
+    plan = preview(tmp_path, instance['instance_id'])
+    assert str(code / relative) in plan['registered_file_candidates']
+    assert all(not path.startswith('\\\\?\\') for path in plan['registered_file_candidates'])
+    assert cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])['status'] == 'cleaned'
