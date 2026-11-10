@@ -178,12 +178,12 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
     env = dict(os.environ, PATH=os.environ['SystemRoot'] + r'\System32',
                LOCALAPPDATA=str(local), PYTHONHOME='invalid-developer-python', PYTHONPATH='invalid-developer-code')
 
-    def run(*args, input_text=None):
+    def run(*args, input_text=None, expected=0):
         result = subprocess.run(['cmd.exe', '/d', '/c', str(output / 'cleanup-tool.cmd'), *args],
                                 cwd=tmp_path, env=env, capture_output=True, text=True,
                                 input=input_text, timeout=30)
-        assert result.returncode == 0, result.stdout + result.stderr
-        return json.loads(result.stdout.splitlines()[-1])
+        assert result.returncode == expected, result.stdout + result.stderr
+        return json.loads(result.stdout.splitlines()[-1]) if result.stdout else None
 
     instance = run('prepare')
     identity = instance['instance_id']
@@ -205,12 +205,32 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
         source = _write_tree(tmp_path / (name + '-source'), {**PACKAGE_FILES, 'hostrun/agent_service.py': module})
         return build(source=source, out=tmp_path / name, version=version, channel='stable', commit='test', compat=_host_compat())
     second = target_package('second', target, '0.2.0')
-    upgrade_script = "import json,sys;from hostrun.desktop_upgrade import upgrade;print(json.dumps(upgrade(sys.argv[1],sys.argv[2],from_source=sys.argv[3],sha256=sys.argv[4])))"
-    assert python(upgrade_script, code, home, second['artifact']['path'], second['artifact']['sha256'])['status'] == 'ok'
+    registration = Path(instance['registration'])
+    unchanged = registration.read_bytes()
+    original_manifest = (code / 'manifest.json').read_bytes()
+    import hashlib
+    def instance_files():
+        return {path.relative_to(Path(instance['root'])).as_posix():
+                (path.stat().st_ino, hashlib.sha256(path.read_bytes()).hexdigest())
+                for path in Path(instance['root']).rglob('*') if path.is_file()}
+    before_files = instance_files()
+    assert run('upgrade', identity, '--package', str(second['artifact']['path']), '--sha256', '0' * 64, expected=2)['status'] == 'blocked'
+    assert run('upgrade', '../foreign', '--package', str(second['artifact']['path']), '--sha256', second['artifact']['sha256'], expected=2)['status'] == 'blocked'
+    assert registration.read_bytes() == unchanged
+    assert instance_files() == before_files
+    assert not (registration.parent.parent / 'foreign').exists()
+    assert (code / 'manifest.json').read_bytes() == original_manifest
+    assert not (home / 'version.json').exists()
+    upgraded = run('upgrade', identity, '--package', str(second['artifact']['path']), '--sha256', second['artifact']['sha256'])
+    assert upgraded['status'] == 'ok' and upgraded['scope_complete'] is False
     before = (home / 'version.json').read_bytes()
     original_id = (code / 'README.md').stat().st_ino
     third = target_package('third', target.replace("db.execute('BEGIN IMMEDIATE')", "__import__('os')._exit(77)", 1), '0.3.0')
-    python(upgrade_script, code, home, third['artifact']['path'], third['artifact']['sha256'], expected=77)
+    run('upgrade', identity, '--package', str(third['artifact']['path']), '--sha256', third['artifact']['sha256'], expected=77)
+    pending = registration.read_bytes()
+    refused = run('upgrade', identity, '--package', str(third['artifact']['path']), '--sha256', third['artifact']['sha256'], expected=2)
+    assert refused['reason'] == 'managed_upgrade_recovery_pending'
+    assert registration.read_bytes() == pending
     assert run('recover', identity, '--sha256', third['artifact']['sha256'])['status'] == 'restored'
     assert (home / 'version.json').read_bytes() == before
     assert (code / 'README.md').stat().st_ino == original_id
