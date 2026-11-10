@@ -1,3 +1,4 @@
+from native_registration import intercept_registration_publish, is_registration_write
 from hostrun.cleanup import prepare_instance
 from pathlib import Path
 import pytest
@@ -575,7 +576,6 @@ def test_diagnostic_receipt_failure_does_not_write_unowned_events(tmp_path, monk
     from hostrun.diagnostics import record_event
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    original = os.replace
     calls = 0
     def replace(source, target):
         nonlocal calls
@@ -583,9 +583,8 @@ def test_diagnostic_receipt_failure_does_not_write_unowned_events(tmp_path, monk
             calls += 1
             if calls == 2:
                 raise OSError('receipt failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(os, 'replace', replace)
+        intercept_registration_publish(replace, patch)
         record_event(instance['home'], 'desktop_started', pid=123)
     folder = instance['home'] / 'diagnostics'
     assert not list(folder.iterdir())
@@ -686,13 +685,11 @@ def test_activation_receipt_failure_releases_empty_file_and_can_retry(tmp_path, 
     from hostrun.managed_desktop import signal_activation, consume_activation
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    original = os.replace
     def replace(source, target):
         if Path(target) == instance['registration']:
             raise OSError('receipt failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(os, 'replace', replace)
+        intercept_registration_publish(replace, patch)
         with pytest.raises(ValueError, match='unavailable'):
             signal_activation(instance['home'])
     assert not (instance['home'] / 'desktop.activate').exists()
@@ -982,7 +979,6 @@ def test_managed_database_receipt_failure_retries_without_adopting_files(tmp_pat
     from hostrun.agent_service import AgentService
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    original = os.replace
     calls = 0
     def replace(source, target):
         nonlocal calls
@@ -990,9 +986,8 @@ def test_managed_database_receipt_failure_retries_without_adopting_files(tmp_pat
             calls += 1
             if calls == 2:
                 raise OSError('journal receipt failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(os, 'replace', replace)
+        intercept_registration_publish(replace, patch)
         with pytest.raises(OSError, match='journal receipt failure'):
             AgentService(instance['home'], token='s')
     assert not (instance['home'] / 'horizon.sqlite3-journal').exists()
@@ -1097,16 +1092,14 @@ def test_layout_pins_root_before_enumeration(tmp_path, monkeypatch):
 def test_layout_resumes_after_final_registration_write_fails(tmp_path, monkeypatch):
     from hostrun.cleanup import initialize_layout, preview
     instance = prepare_instance(tmp_path)
-    original = Path.replace
     writes = []
     def fail_final(source, target):
         if Path(target) == instance['registration']:
             writes.append(1)
             if len(writes) == 2:
                 raise OSError('controlled final write failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, 'replace', fail_final)
+        intercept_registration_publish(fail_final, patch)
         with pytest.raises(OSError):
             initialize_layout(tmp_path, instance['instance_id'])
     initialize_layout(tmp_path, instance['instance_id'])
@@ -1221,13 +1214,11 @@ def test_package_inventory_commit_failure_preserves_unproven_files(tmp_path, mon
     digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    original = Path.replace
     def fail_inventory(source, target):
         if Path(target) == instance['registration'] and (instance['code'] / 'current/.horizon/dist.lock.json').exists() and (instance['code'] / 'current/.horizon/dist.lock.json').stat().st_size:
             raise OSError('controlled inventory commit failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, 'replace', fail_inventory)
+        intercept_registration_publish(fail_inventory, patch)
         with pytest.raises(OSError):
             install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
     installed = instance['code'] / 'current' / 'README.md'
@@ -1276,13 +1267,11 @@ def test_initial_install_journal_failure_leaves_no_unowned_current(tmp_path, mon
     digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
-    original = Path.replace
     def fail_journal(source, target):
         if Path(target) == instance['registration']:
             raise OSError('controlled journal failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, 'replace', fail_journal)
+        intercept_registration_publish(fail_journal, patch)
         with pytest.raises(OSError):
             install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
     assert not (instance['code'] / 'current').exists()
@@ -1446,6 +1435,8 @@ def test_model_update_write_failure_preserves_previous_configuration(tmp_path, m
     kernel = original_dll('kernel32', use_last_error=True)
     def partial_write(handle, buffer, size, written, overlap):
         kernel.WriteFile.argtypes = partial_write.argtypes
+        if is_registration_write(kernel, handle):
+            return kernel.WriteFile(handle, buffer, size, written, overlap)
         kernel.WriteFile(handle, buffer, min(size, 55), written, overlap)
         ctypes.set_last_error(112)
         return 0
@@ -1468,7 +1459,6 @@ def test_model_public_save_recovers_published_config_after_receipt_failure(tmp_p
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     configure(instance['home'], provider='test', model='first', api_key='SECRET')
-    original = os.replace
     writes = 0
     def replace(source, target):
         nonlocal writes
@@ -1476,9 +1466,8 @@ def test_model_public_save_recovers_published_config_after_receipt_failure(tmp_p
             writes += 1
             if writes == 2:
                 raise OSError('injected final receipt failure')
-        return original(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(os, 'replace', replace)
+        intercept_registration_publish(replace, patch)
         with pytest.raises(OSError):
             configure(instance['home'], provider='test', model='second', api_key='SECRET')
     configure(instance['home'], provider='test', model='third', api_key='SECRET')
@@ -1589,6 +1578,8 @@ def test_model_runtime_recovers_real_process_interruption(tmp_path, crash_at, ex
     script = '''
 import ctypes, os, sys
 from pathlib import Path
+sys.path.insert(0,str(Path.cwd()/'tests'))
+from native_registration import is_registration_write
 from hostrun.embedded_agent import configure
 original = ctypes.WinDLL
 kernel = original('kernel32', use_last_error=True)
@@ -1605,7 +1596,7 @@ def set_info(handle, kind, buffer, size):
 def flush(handle):
     kernel.FlushFileBuffers.argtypes = flush.argtypes
     result = kernel.FlushFileBuffers(handle)
-    if result and sys.argv[2] == 'written': os._exit(74)
+    if result and sys.argv[2] == 'written' and not is_registration_write(kernel, handle): os._exit(74)
     return result
 class Proxy:
     def __getattr__(self, name):
@@ -1806,11 +1797,15 @@ def test_pi_interrupted_header_stays_blocked_without_identity_drift(tmp_path, wr
     injection = tmp_path.parent / 'injection'
     injection.mkdir()
     (injection / 'sitecustomize.py').write_text('''
-import ctypes, os
+import ctypes, os, sys
+sys.path.insert(0,os.path.join(os.getcwd(),'tests'))
+from native_registration import is_registration_write
 original = ctypes.WinDLL
 kernel = original('kernel32', use_last_error=True)
 def write(handle, buffer, size, written, overlap):
     kernel.WriteFile.argtypes = write.argtypes
+    if is_registration_write(kernel, handle):
+        return kernel.WriteFile(handle, buffer, size, written, overlap)
     kernel.WriteFile(handle, buffer, int(os.environ['HEADER_BYTES']), written, overlap)
     os._exit(75)
 class Proxy:
@@ -2136,6 +2131,8 @@ def test_data_restore_partial_write_blocks_startup_and_retries_from_snapshot(tmp
     kernel = original('kernel32', use_last_error=True)
     def partial_write(handle, buffer, size, written, overlap):
         kernel.WriteFile.argtypes = partial_write.argtypes
+        if is_registration_write(kernel, handle):
+            return kernel.WriteFile(handle, buffer, size, written, overlap)
         kernel.WriteFile(handle, buffer, min(size, 7), written, overlap)
         ctypes.set_last_error(112)
         return 0
@@ -2447,15 +2444,13 @@ def test_internal_upgrade_recovers_version_publication_receipt_failure(tmp_path,
     before_version_id = version.stat().st_ino if previous_version else None
     before_code = (code / 'README.md').stat().st_ino
     before_manifest = (code / 'manifest.json').read_bytes()
-    original = os.replace
     failed = False
     def replace(source, destination):
         nonlocal failed
         if failure_phase == 'after_publish' and not failed and Path(destination) == tmp_path / (instance['instance_id'] + '.json') and version.exists() and version.stat().st_ino != before_version_id:
             failed = True
             raise PermissionError('VERSION_RECEIPT_FAILURE')
-        return original(source, destination)
-    monkeypatch.setattr(os, 'replace', replace)
+    intercept_registration_publish(replace, monkeypatch)
     if failure_phase == 'before_publish':
         import ctypes
         from ctypes import wintypes as w
@@ -2621,8 +2616,11 @@ def set_info(handle, kind, buffer, size):
             if rename_count == int(position): os._exit(77)
     if kind == 3 and result and (phase == 'code_move' or (is_version and phase == 'version_after')): os._exit(77)
     return result
+sys.path.insert(0,str(Path.cwd()/'tests'))
+from native_registration import is_registration_write
 def write_file(*args):
     kernel.WriteFile.argtypes = write_file.argtypes
+    if is_registration_write(kernel, args[0]): return kernel.WriteFile(*args)
     result = kernel.WriteFile(*args)
     if result and phase == 'backup': os._exit(77)
     return result
@@ -2912,6 +2910,8 @@ def test_interrupted_first_install_cleans_only_creation_enrolled_files(tmp_path,
     initialize_layout(tmp_path, instance['instance_id'])
     script = '''
 import ctypes,os,sys
+sys.path.insert(0,os.path.join(os.getcwd(),'tests'))
+from native_registration import is_registration_write
 from hostrun.cleanup import install_test_package
 native=ctypes.WinDLL
 kernel=native('kernel32',use_last_error=True)
@@ -2919,6 +2919,7 @@ count=0
 def write(*args):
     global count
     kernel.WriteFile.argtypes=write.argtypes
+    if is_registration_write(kernel, args[0]): return kernel.WriteFile(*args)
     count+=1
     if count==int(sys.argv[5]):
         args=list(args);args[2]=max(1,args[2]//2)
@@ -2962,13 +2963,11 @@ def test_first_install_receipt_failure_preserves_pending_and_cleans_owned_files(
     cleanup.initialize_layout(tmp_path, instance['instance_id'])
     code = instance['code'] / 'current'
     target = code / {'directory': 'hostrun', 'file': 'README.md', 'final': '.horizon/dist.lock.json'}[phase]
-    replace = Path.replace
     def fail_receipt(source, destination):
         if Path(destination) == instance['registration'] and target.exists() and (phase != 'final' or target.stat().st_size):
             raise OSError('Injected receipt failure')
-        return replace(source, destination)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, 'replace', fail_receipt)
+        intercept_registration_publish(fail_receipt, patch)
         with pytest.raises(OSError):
             cleanup.install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])
     assert target.exists() == (phase == 'final')
@@ -3025,11 +3024,11 @@ def test_first_install_exit_before_receipt_preserves_unknown_empty_entry(tmp_pat
 import os,sys
 from pathlib import Path
 from hostrun.cleanup import install_test_package
-replace=Path.replace
 def stop(source,destination):
     if Path(destination)==Path(sys.argv[1]) and Path(sys.argv[2]).exists(): os._exit(77)
-    return replace(source,destination)
-Path.replace=stop
+sys.path.insert(0,str(Path.cwd()/'tests'))
+from native_registration import intercept_registration_publish, is_registration_write
+intercept_registration_publish(stop)
 install_test_package(sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6])
 '''
     result = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script, str(instance['registration']), str(target),
