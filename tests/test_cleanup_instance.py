@@ -1031,7 +1031,7 @@ def test_package_inventory_commit_failure_preserves_unproven_files(tmp_path, mon
     initialize_layout(tmp_path, instance['instance_id'])
     original = Path.replace
     def fail_inventory(source, target):
-        if Path(target) == instance['registration'] and (instance['code'] / 'current' / 'README.md').exists():
+        if Path(target) == instance['registration'] and (instance['code'] / 'current/.horizon/dist.lock.json').exists() and (instance['code'] / 'current/.horizon/dist.lock.json').stat().st_size:
             raise OSError('controlled inventory commit failure')
         return original(source, target)
     with monkeypatch.context() as patch:
@@ -1097,35 +1097,32 @@ def test_initial_install_journal_failure_leaves_no_unowned_current(tmp_path, mon
     assert install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)['status'] == 'ok'
 
 
-def test_interrupted_package_copy_preserves_unproven_replacement(tmp_path, monkeypatch):
-    import json
-    import shutil
+def test_legacy_install_journal_preserves_unproven_replacement(tmp_path):
     from test_dist_install import _build
-    from hostrun.cleanup import initialize_layout, install_test_package
+    from hostrun import cleanup, dist
     package = _build(tmp_path.parent / 'fixture')
-    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    digest = package['artifact']['sha256']
     instance = prepare_instance(tmp_path)
-    initialize_layout(tmp_path, instance['instance_id'])
+    cleanup.initialize_layout(tmp_path, instance['instance_id'])
     code = instance['code'] / 'current'
-    original = shutil.copyfile
-    def interrupted(source, target, *args, **kwargs):
-        value = original(source, target, *args, **kwargs)
-        from hostrun.windows_cleanup import io_path
-        if Path(target) == io_path(code / 'common.py'):
-            raise KeyboardInterrupt('controlled abrupt copy interruption')
-        return value
-    with monkeypatch.context() as patch:
-        patch.setattr(shutil, 'copyfile', interrupted)
-        with pytest.raises(KeyboardInterrupt):
-            install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
-    assert (code / '.horizon' / 'dist.pending.json').exists()
-
+    code.mkdir()
+    stat = code.stat()
+    # Fixture produced by the previous two-field protocol, without an inventory.
+    record = cleanup._read_registration(instance['registration'])
+    record['installation'] = {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}
+    cleanup._write_registration(instance['registration'], record)
+    assert dist.install_package(code, from_source=package['artifact']['path'], sha256=digest)['status'] == 'ok'
     (code / 'common.py').rename(code / 'original-partial.py')
     (code / 'common.py').write_text('USER REPLACEMENT MUST SURVIVE')
-    result = install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
-    assert result['status'] == 'blocked'
+    before = instance['registration'].read_bytes()
+    result = cleanup.install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert result == {'status': 'blocked', 'reason': 'interrupted_inventory_unavailable'}
+    assert instance['registration'].read_bytes() == before
     assert (code / 'common.py').read_text() == 'USER REPLACEMENT MUST SURVIVE'
-    assert (code / '.horizon' / 'dist.pending.json').exists()
+    result = cleanup.cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])
+    assert result['status'] == 'partial'
+    assert (code / 'common.py').read_text() == 'USER REPLACEMENT MUST SURVIVE'
+
 
 
 @pytest.mark.parametrize('report_failure', [False, True])
@@ -2701,3 +2698,146 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
     assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.2.0' for i in range(65))
     AgentService(home, token='test')
     assert len(writes) < 100
+
+
+@pytest.mark.parametrize('replacement', [False, True])
+def test_interrupted_first_install_cleans_only_creation_enrolled_files(tmp_path, replacement):
+    import os
+    import subprocess
+    import sys
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, preview, cleanup_instance, install_test_package
+    package = _build(tmp_path.parent / 'package')
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    script = '''
+import ctypes,os,sys
+from hostrun.cleanup import install_test_package
+native=ctypes.WinDLL
+kernel=native('kernel32',use_last_error=True)
+count=0
+def write(*args):
+    global count
+    kernel.WriteFile.argtypes=write.argtypes
+    count+=1
+    if count==2:
+        args=list(args);args[2]=max(1,args[2]//2)
+    result=kernel.WriteFile(*args)
+    if count==2: os._exit(77)
+    return result
+class Proxy:
+    def __getattr__(self,name):
+        return write if name=='WriteFile' else getattr(kernel,name)
+ctypes.WinDLL=lambda name,*a,**kw: Proxy() if name=='kernel32' else native(name,*a,**kw)
+install_test_package(sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4])
+'''
+    stopped = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script, str(tmp_path), instance['instance_id'],
+                              str(package['artifact']['path']), package['artifact']['sha256']],
+                             env=os.environ.copy(), capture_output=True, timeout=15)
+    assert stopped.returncode == 77, stopped.stderr
+    files = [Path(name) for name in preview(tmp_path, instance['instance_id'])['registered_file_candidates']]
+    assert len(files) == 2
+    assert install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])['status'] == 'blocked'
+    if replacement:
+        changed = files[-1]
+        changed.rename(tmp_path.parent / 'original-retained')
+        changed.write_text('USER REPLACEMENT')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report', confirmation=instance['instance_id'])
+    assert result['status'] == ('partial' if replacement else 'cleaned'), result
+    if replacement:
+        assert changed.read_text() == 'USER REPLACEMENT'
+        assert not files[0].exists()
+    else:
+        initialize_layout(tmp_path, instance['instance_id'])
+        assert install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])['status'] == 'ok'
+
+
+@pytest.mark.parametrize('phase', ['directory', 'file', 'final'])
+def test_first_install_receipt_failure_preserves_pending_and_cleans_owned_files(tmp_path, monkeypatch, phase):
+    from test_dist_install import _build
+    from hostrun import cleanup
+    from hostrun.agent_service import AgentService
+    package = _build(tmp_path.parent / 'package')
+    instance = prepare_instance(tmp_path)
+    cleanup.initialize_layout(tmp_path, instance['instance_id'])
+    code = instance['code'] / 'current'
+    target = code / {'directory': 'hostrun', 'file': 'README.md', 'final': '.horizon/dist.lock.json'}[phase]
+    replace = Path.replace
+    def fail_receipt(source, destination):
+        if Path(destination) == instance['registration'] and target.exists() and (phase != 'final' or target.stat().st_size):
+            raise OSError('Injected receipt failure')
+        return replace(source, destination)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'replace', fail_receipt)
+        with pytest.raises(OSError):
+            cleanup.install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], package['artifact']['sha256'])
+    assert target.exists() == (phase == 'final')
+    with pytest.raises(cleanup.InstanceInvalid):
+        AgentService(instance['home'], token='test')
+    assert not (instance['home'] / 'horizon.sqlite3').exists()
+    assert cleanup.cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('invalid', ['manifest', 'payload', 'compat'])
+def test_first_install_rejects_invalid_package_before_instance_writes(tmp_path, invalid):
+    import hashlib
+    import json
+    import zipfile
+    from test_dist_install import _build
+    from hostrun import cleanup
+    package = _build(tmp_path.parent / 'package')
+    altered = tmp_path.parent / 'altered.zip'
+    with zipfile.ZipFile(package['artifact']['path']) as source, zipfile.ZipFile(altered, 'w') as target:
+        for name in source.namelist():
+            content = source.read(name)
+            if name == 'manifest.json' and invalid != 'payload':
+                manifest = json.loads(content)
+                if invalid == 'manifest': manifest['schema_version'] = 999
+                else: manifest['compat']['os'] = 'linux'
+                content = json.dumps(manifest).encode()
+            if name == 'README.md' and invalid == 'payload': content += b'CORRUPTED'
+            target.writestr(name, content)
+    instance = prepare_instance(tmp_path)
+    cleanup.initialize_layout(tmp_path, instance['instance_id'])
+    before = instance['registration'].read_bytes()
+    try:
+        result = cleanup.install_test_package(tmp_path, instance['instance_id'], altered, hashlib.sha256(altered.read_bytes()).hexdigest())
+        assert result['status'] == 'blocked'
+    except cleanup.InstanceInvalid:
+        pass
+    assert instance['registration'].read_bytes() == before
+    assert not list(instance['code'].iterdir())
+
+
+@pytest.mark.parametrize('phase', ['current', 'directory', 'file'])
+def test_first_install_exit_before_receipt_preserves_unknown_empty_entry(tmp_path, phase):
+    import os
+    import subprocess
+    import sys
+    from test_dist_install import _build
+    from hostrun import cleanup
+    package = _build(tmp_path.parent / 'package')
+    instance = prepare_instance(tmp_path)
+    cleanup.initialize_layout(tmp_path, instance['instance_id'])
+    code = instance['code'] / 'current'
+    target = code / {'current': '.', 'directory': 'hostrun', 'file': 'README.md'}[phase]
+    script = '''
+import os,sys
+from pathlib import Path
+from hostrun.cleanup import install_test_package
+replace=Path.replace
+def stop(source,destination):
+    if Path(destination)==Path(sys.argv[1]) and Path(sys.argv[2]).exists(): os._exit(77)
+    return replace(source,destination)
+Path.replace=stop
+install_test_package(sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6])
+'''
+    result = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script, str(instance['registration']), str(target),
+                             str(tmp_path), instance['instance_id'], str(package['artifact']['path']), package['artifact']['sha256']],
+                            env=os.environ.copy(), capture_output=True, timeout=15)
+    assert result.returncode == 77, result.stderr
+    identity = target.stat().st_ino
+    result = cleanup.cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])
+    assert result['status'] == 'partial', result
+    assert target.stat().st_ino == identity
+    assert not list(target.iterdir()) if target.is_dir() else target.read_bytes() == b''
