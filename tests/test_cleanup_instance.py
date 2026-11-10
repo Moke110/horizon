@@ -2180,7 +2180,8 @@ def test_target_package_schema_entry_runs_verified_target_code(tmp_path, mode):
     assert not (code / 'hostrun/__pycache__').exists()
 
 
-def test_internal_upgrade_coordinates_schema_and_enrolled_version(tmp_path):
+@pytest.mark.parametrize('schema_failure', [False, True])
+def test_internal_upgrade_coordinates_schema_and_enrolled_version(tmp_path, schema_failure):
     import json
     from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
@@ -2196,10 +2197,23 @@ def test_internal_upgrade_coordinates_schema_and_enrolled_version(tmp_path):
         {'schema_version': 1, 'operation_id': 'before', 'title': 'preserved'}, token='test')
     original = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
     target = original.replace("db.execute('BEGIN IMMEDIATE')", "db.execute('CREATE TABLE target_schema_evidence(value TEXT)')\n        db.execute('BEGIN IMMEDIATE')", 1)
+    if schema_failure:
+        target = target.replace("db.execute('BEGIN IMMEDIATE')", "raise RuntimeError('TARGET_SCHEMA_FAILURE')", 1)
     source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, 'hostrun/agent_service.py': target})
     second = build(source=source, out=tmp_path.parent / 'second', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    old_id = (instance['code'] / 'current/README.md').stat().st_ino
     result = run_upgrade(instance['code'] / 'current', home,
                          from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    if schema_failure:
+        assert result == {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
+        assert not (home / 'version.json').exists()
+        assert (instance['code'] / 'current/README.md').stat().st_ino == old_id
+        assert json.loads((instance['code'] / 'current/manifest.json').read_text())['version'] == '0.1.0'
+        assert AgentService(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
+        from hostrun.managed_database import database_connection
+        with database_connection(home) as db:
+            assert not db.execute("SELECT name FROM sqlite_master WHERE name='target_schema_evidence'").fetchone()
+        return
     assert result['status'] == 'ok'
     assert json.loads((home / 'version.json').read_text())['version'] == '0.2.0'
     assert AgentService(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
@@ -2209,3 +2223,75 @@ def test_internal_upgrade_coordinates_schema_and_enrolled_version(tmp_path):
     cleaned = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'joint-report', confirmation=instance['instance_id'])
     assert cleaned['status'] == 'cleaned'
     assert not home.exists()
+
+
+@pytest.mark.parametrize('previous_version', [False, True])
+@pytest.mark.parametrize('failure_phase', ['before_publish', 'after_publish'])
+def test_internal_upgrade_recovers_version_publication_receipt_failure(tmp_path, monkeypatch, previous_version, failure_phase):
+    import json
+    import os
+    from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    from hostrun.agent_service import AgentService
+    from hostrun.managed_upgrade_operation import run_upgrade
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    home, code = instance['home'], instance['code'] / 'current'
+    AgentService(home, token='test')
+    target = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, 'hostrun/agent_service.py': target})
+    second = build(source=source, out=tmp_path.parent / 'second', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    if previous_version:
+        assert run_upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])['status'] == 'ok'
+    version = home / 'version.json'
+    before_version = version.read_bytes() if previous_version else None
+    before_version_id = version.stat().st_ino if previous_version else None
+    before_code = (code / 'README.md').stat().st_ino
+    before_manifest = (code / 'manifest.json').read_bytes()
+    original = os.replace
+    failed = False
+    def replace(source, destination):
+        nonlocal failed
+        if failure_phase == 'after_publish' and not failed and Path(destination) == tmp_path / (instance['instance_id'] + '.json') and version.exists() and version.stat().st_ino != before_version_id:
+            failed = True
+            raise PermissionError('VERSION_RECEIPT_FAILURE')
+        return original(source, destination)
+    monkeypatch.setattr(os, 'replace', replace)
+    if failure_phase == 'before_publish':
+        import ctypes
+        from ctypes import wintypes as w
+        native = ctypes.WinDLL
+        kernel = native('kernel32', use_last_error=True)
+        class RenameInfo(ctypes.Structure):
+            _fields_ = [('ReplaceIfExists', w.BOOL), ('RootDirectory', w.HANDLE),
+                        ('FileNameLength', w.DWORD), ('FileName', w.WCHAR * 1)]
+        def set_info(handle, kind, buffer, size):
+            nonlocal failed
+            kernel.SetFileInformationByHandle.argtypes = set_info.argtypes
+            if kind == 3:
+                info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
+                destination = ctypes.wstring_at(ctypes.addressof(info) + RenameInfo.FileName.offset, info.FileNameLength // 2)
+                if not failed and Path(destination) == version:
+                    failed = True
+                    ctypes.set_last_error(5)
+                    return 0
+            return kernel.SetFileInformationByHandle(handle, kind, buffer, size)
+        class Proxy:
+            def __getattr__(self, name):
+                return set_info if name == 'SetFileInformationByHandle' else getattr(kernel, name)
+        monkeypatch.setattr(ctypes, 'WinDLL', lambda name, *a, **kw: Proxy() if name == 'kernel32' else native(name, *a, **kw))
+    result = run_upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    assert failed
+    assert result == {'status': 'blocked', 'reason': 'upgrade_commit_failed', 'recovery': 'restored'}
+    assert (code / 'README.md').stat().st_ino == before_code
+    assert (code / 'manifest.json').read_bytes() == before_manifest
+    if previous_version:
+        assert version.read_bytes() == before_version
+        assert version.stat().st_ino == before_version_id
+    else:
+        assert not version.exists()
+    AgentService(home, token='test')
+    assert run_upgrade(code, home, from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])['status'] == 'ok'
