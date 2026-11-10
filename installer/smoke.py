@@ -12,7 +12,7 @@ def check(package: Path) -> dict:
            if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP"}}
     env["PATH"] = ""
     commands = [
-        [str(package / "runtime/python.exe"), "-X", "utf8", "-c", "import yaml, fitz, hostrun.cli; print('business runtime ready')"],
+        [str(package / "runtime/python.exe"), "-B", "-X", "utf8", "-c", "import yaml, fitz, hostrun.cli; print('business runtime ready')"],
         [str(package / "runtime/node.exe"), str(package / "agent/dist/main.js"), "--check"],
         [str(package / "agent/node_modules/@larksuite/cli/bin/lark-cli.exe"), "--version"],
     ]

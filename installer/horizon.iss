@@ -31,7 +31,7 @@ UninstallFilesDir={app}\.horizon\installer
 Source: "{#PackageDir}\*"; DestDir: "{tmp}\horizon-bootstrap"; Flags: dontcopy recursesubdirs createallsubdirs
 Source: "{#PackageArchive}"; DestDir: "{tmp}"; DestName: "horizon-package.zip"; Flags: dontcopy
 [Icons]
-Name: "{app}\Horizon"; Filename: "{app}\runtime\pythonw.exe"; Parameters: "-X utf8 -m hostrun.desktop --code ""{app}"" --archive ""{app}\horizon-archive"""; WorkingDir: "{app}"
+Name: "{app}\Horizon"; Filename: "{app}\runtime\pythonw.exe"; Parameters: "-B -X utf8 -m hostrun.desktop --code ""{app}"" --archive ""{app}\horizon-archive"""; WorkingDir: "{app}"
 
 [Code]
 function GetFileAttributesW(FileName: String): LongWord;
@@ -81,7 +81,7 @@ begin
     Result := '';
     ExtractTemporaryFiles('*');
     if not Exec(ExpandConstant('{tmp}\horizon-bootstrap\runtime\pythonw.exe'),
-      '-X utf8 -m hostrun.desktop_upgrade --code "' + ExpandConstant('{app}') +
+      '-B -X utf8 -m hostrun.desktop_upgrade --code "' + ExpandConstant('{app}') +
       '" --package "' + ExpandConstant('{tmp}\horizon-package.zip') + '" --sha256 {#PackageDigest}',
       ExpandConstant('{tmp}\horizon-bootstrap'), SW_HIDE, ewWaitUntilTerminated, ExitCode) then
       Result := 'Could not start the bundled upgrade runtime.';
