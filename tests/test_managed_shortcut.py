@@ -1,3 +1,4 @@
+from native_registration import intercept_registration_publish, is_registration_write
 import json
 import os
 from pathlib import Path
@@ -139,13 +140,11 @@ def test_keep_data_reinitialize_receipt_failure_removes_only_new_empty_app(insta
     identity = instance['instance_id']
     assert cleanup.cleanup_instance(control, identity, tmp_path / 'report', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
     old = instance['registration'].read_bytes()
-    original = Path.replace
     def fail_receipt(path, target):
         if Path(target) == instance['registration']:
             raise OSError('receipt write failure')
-        return original(path, target)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, 'replace', fail_receipt)
+        intercept_registration_publish(fail_receipt, patch)
         with pytest.raises(OSError, match='receipt write failure'):
             cleanup.initialize_layout(control, identity)
     assert not instance['code'].exists()
@@ -163,12 +162,12 @@ def test_keep_data_app_creation_crash_does_not_adopt_unknown_container(installed
 import os,sys
 from pathlib import Path
 from hostrun import cleanup
-original=Path.replace
 def interrupted(path,target):
     if Path(target)==Path(sys.argv[1])/(sys.argv[2]+'.json'):
         os._exit(77)
-    return original(path,target)
-Path.replace=interrupted
+sys.path.insert(0,str(Path.cwd()/'tests'))
+from native_registration import intercept_registration_publish, is_registration_write
+intercept_registration_publish(interrupted)
 cleanup.initialize_layout(sys.argv[1],sys.argv[2])
 '''
     process = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script, str(control), identity], capture_output=True, timeout=15)
@@ -295,18 +294,21 @@ def test_shortcut_crash_preserves_unknown_and_cleans_only_receipted_file(install
     link = instance['code'] / 'current/.horizon/test-launch.lnk'
     script = '''
 import ctypes,os,sys
+sys.path.insert(0,os.path.join(os.getcwd(),'tests'))
+from native_registration import is_registration_write
 from pathlib import Path
 from hostrun.cleanup import create_test_shortcut
 phase=sys.argv[3]
-replace=Path.replace
 def replace_receipt(source,target):
     if phase=='before_receipt' and Path(sys.argv[4]).exists(): os._exit(77)
-    return replace(source,target)
-Path.replace=replace_receipt
+sys.path.insert(0,str(Path.cwd()/'tests'))
+from native_registration import intercept_registration_publish, is_registration_write
+intercept_registration_publish(replace_receipt)
 native=ctypes.WinDLL
 kernel=native('kernel32',use_last_error=True)
 def write(*args):
     kernel.WriteFile.argtypes=write.argtypes
+    if is_registration_write(kernel, args[0]): return kernel.WriteFile(*args)
     if phase=='after_receipt': os._exit(77)
     if phase=='partial_write':
         args=list(args);args[2]=args[2]//2
@@ -329,13 +331,11 @@ create_test_shortcut(sys.argv[1],sys.argv[2])
 def test_shortcut_receipt_exception_reclaims_empty_file_and_retries(installed, monkeypatch):
     control, instance = installed
     link = instance['code'] / 'current/.horizon/test-launch.lnk'
-    replace = Path.replace
     def fail(source, target):
         if Path(target) == instance['registration'] and link.exists():
             raise OSError('Injected shortcut receipt failure')
-        return replace(source, target)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, 'replace', fail)
+        intercept_registration_publish(fail, patch)
         with pytest.raises(OSError): cleanup.create_test_shortcut(control, instance['instance_id'])
     assert not link.exists()
     assert cleanup.create_test_shortcut(control, instance['instance_id'])['status'] == 'created'

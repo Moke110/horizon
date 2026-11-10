@@ -183,11 +183,11 @@ def test_migration_moves_runtime_state_and_keeps_materials_in_the_archive(tmp_pa
     assert config["agent_run"]["dsh_args"] == ["--patch", "account.yml"]
     assert console.is_file()
     text = console.read_text(encoding="utf-8")
-    # The shared generator must produce exactly the pre-#95 bytes.
+    # Migration uses the shared launcher, including explicit bytecode suppression.
     assert text == (
         "title horizon-console\n"
         f'cd /d "{code}"\n'
-        f'"{result["environment"]["python"]}" -m hostrun.cli --code "{code}" '
+        f'"{result["environment"]["python"]}" -B -m hostrun.cli --code "{code}" '
         f'--archive "{legacy}" console %*\n'
     )
     assert text.splitlines()[0] == "title horizon-console"

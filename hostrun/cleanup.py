@@ -42,8 +42,9 @@ def control_directory():
 
 def _read_registration(registration):
     from hostrun.windows_protection import protect
+    from hostrun.windows_cleanup import read_shared_snapshot
     try:
-        envelope = json.loads(registration.read_text(encoding='utf-8'))
+        envelope = json.loads(read_shared_snapshot(registration).decode('utf-8'))
         if set(envelope) != {'protected'}:
             raise ValueError('Unrecognized registration')
         sealed = base64.b64decode(envelope['protected'], validate=True)
@@ -54,13 +55,9 @@ def _read_registration(registration):
 
 def _write_registration(registration, record):
     from hostrun.windows_protection import protect
+    from hostrun.windows_cleanup import publish_registration_snapshot
     sealed = protect(json.dumps(record).encode('utf-8'), str(registration).encode('utf-8'))
-    temporary = registration.with_name(registration.name + '.' + uuid.uuid4().hex + '.tmp')
-    with temporary.open('x', encoding='utf-8') as stream:
-        json.dump({'protected': base64.b64encode(sealed).decode('ascii')}, stream)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(registration)
+    publish_registration_snapshot(registration, json.dumps({'protected': base64.b64encode(sealed).decode('ascii')}).encode('utf-8'))
 
 
 def prepare_instance(control_root, *, protected_roots=()):

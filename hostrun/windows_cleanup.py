@@ -2,6 +2,7 @@
 import ctypes
 import os
 import sys
+import uuid
 from ctypes import wintypes as w
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -18,6 +19,73 @@ def io_path(path):
     if value.startswith('\\\\'):
         return Path('\\\\?\\UNC\\' + value[2:])
     return Path('\\\\?\\' + value)
+
+
+def read_shared_snapshot(path):
+    """Read one immutable, atomically published file without blocking replacement."""
+    api = ctypes.WinDLL('kernel32', use_last_error=True)
+    api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
+                               w.DWORD, w.DWORD, w.HANDLE]
+    api.CreateFileW.restype = w.HANDLE
+    api.CloseHandle.argtypes = [w.HANDLE]
+    api.GetFileInformationByHandleEx.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
+    api.GetFileSizeEx.argtypes = [w.HANDLE, ctypes.POINTER(ctypes.c_longlong)]
+    api.ReadFile.argtypes = [w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), ctypes.c_void_p]
+    api.ReadFile.restype = w.BOOL
+    generic_read, share_read_write_delete, open_existing = 0x80000000, 7, 3
+    open_reparse_point = 0x00200000
+    handle = api.CreateFileW(str(io_path(path)), generic_read, share_read_write_delete,
+                             None, open_existing, open_reparse_point, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        attributes = (w.DWORD * 2)()
+        if not api.GetFileInformationByHandleEx(handle, 9, attributes, ctypes.sizeof(attributes)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if attributes[0] & (0x400 | 0x10):
+            raise ValueError('Registration snapshot requires a regular file')
+        size = ctypes.c_longlong()
+        if not api.GetFileSizeEx(handle, ctypes.byref(size)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        remaining, chunks = size.value, []
+        buffer = ctypes.create_string_buffer(65536)
+        while remaining:
+            received = w.DWORD()
+            if not api.ReadFile(handle, buffer, min(remaining, len(buffer)), ctypes.byref(received), None):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not received.value:
+                raise ValueError('Registration snapshot was truncated')
+            chunks.append(buffer.raw[:received.value])
+            remaining -= received.value
+        return b''.join(chunks)
+    finally:
+        api.CloseHandle(handle)
+
+
+def publish_registration_snapshot(path, payload):
+    """Publish one protected registration; never use POSIX replace for owned files."""
+    path = Path(path)
+    with pin_ancestors(path.parent), ExitStack() as held:
+        parent = PinnedEntry(path.parent)
+        held.callback(parent.close)
+        temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+        source = PinnedEntry(temporary, create_parent=parent, create_file=True, writable=True)
+        held.callback(source.close)
+        source.write_bytes(payload)
+        # A single namespace operation keeps pre-existing shared readers on the
+        # old file. Unsupported filesystems/OS versions fail without a fallback.
+        class RenameInfoEx(ctypes.Structure):
+            _fields_ = [('Flags', w.DWORD), ('RootDirectory', w.HANDLE),
+                        ('FileNameLength', w.DWORD), ('FileName', w.WCHAR * 1)]
+        name = str(io_path(path)).encode('utf-16-le')
+        buffer = ctypes.create_string_buffer(max(ctypes.sizeof(RenameInfoEx), RenameInfoEx.FileName.offset + len(name) + 2))
+        info = RenameInfoEx.from_buffer(buffer)
+        replace_if_exists, posix_semantics, file_rename_info_ex = 1, 2, 22
+        info.Flags = replace_if_exists | posix_semantics
+        info.FileNameLength = len(name)
+        ctypes.memmove(ctypes.addressof(buffer) + RenameInfoEx.FileName.offset, name, len(name))
+        if not source.api.SetFileInformationByHandle(source.handle, file_rename_info_ex, buffer, len(buffer)):
+            raise ctypes.WinError(ctypes.get_last_error())
 
 
 class PinnedEntry:
