@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 class PinnedEntry:
-    def __init__(self, path, *, delete=False, create_parent=None):
+    def __init__(self, path, *, delete=False, create_parent=None, create_share=1, create_delete=True):
         self.path = Path(path)
         self.api = ctypes.WinDLL('kernel32', use_last_error=True)
         self.api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
@@ -19,7 +19,7 @@ class PinnedEntry:
         self.api.SetFileInformationByHandle.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
         # No delete sharing: this entry cannot be renamed or replaced while pinned.
         if create_parent is not None:
-            self.handle = _create_directory(create_parent.handle, self.path.name)
+            self.handle = _create_directory(create_parent.handle, self.path.name, create_share, create_delete)
         else:
             self.handle = self.api.CreateFileW(str(self.path), 0x81 | (0x10000 if delete else 0),
                                               3, None, 3, 0x02200000, None)
@@ -59,7 +59,7 @@ class PinnedEntry:
             raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _create_directory(parent_handle, name):
+def _create_directory(parent_handle, name, share, delete):
     """FILE_CREATE returns the newly created directory handle atomically."""
     if os.name != 'nt' or sys.getwindowsversion().major < 10:
         raise OSError('Standalone test cleanup requires Windows 10 or later')
@@ -83,8 +83,9 @@ def _create_directory(parent_handle, name):
     api.NtCreateFile.argtypes = [ctypes.POINTER(w.HANDLE), w.DWORD, ctypes.POINTER(Attributes),
         ctypes.POINTER(IoStatus), ctypes.c_void_p, w.DWORD, w.DWORD, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD]
     api.NtCreateFile.restype = w.LONG
-    status = api.NtCreateFile(ctypes.byref(handle), 0x110081, ctypes.byref(attrs), ctypes.byref(io),
-                              None, 0x10, 1, 2, 0x21, None, 0)
+    access = 0x100081 | (0x10000 if delete else 0)
+    status = api.NtCreateFile(ctypes.byref(handle), access, ctypes.byref(attrs), ctypes.byref(io),
+                              None, 0x10, share, 2, 0x21, None, 0)
     if status < 0:
         api.RtlNtStatusToDosError.argtypes = [w.LONG]
         api.RtlNtStatusToDosError.restype = w.ULONG
@@ -93,15 +94,17 @@ def _create_directory(parent_handle, name):
 
 
 @contextmanager
-def pin_ancestors(root):
+def pin_ancestors(root, *, already_pinned=()):
     with ExitStack() as stack:
         for directory in reversed([Path(root), *Path(root).parents]):
+            if directory in already_pinned:
+                continue
             pin = PinnedEntry(directory)
             stack.callback(pin.close)
         yield
 
 
-def remove_owned_files(root, relative_paths, validate, *, removed=None):
+def remove_owned_files(root, relative_paths, validate, *, removed=None, identities=None):
     """Pin every ancestor before validation; preserve unknown directory contents."""
     root = Path(root)
     if removed is None:
@@ -128,7 +131,50 @@ def remove_owned_files(root, relative_paths, validate, *, removed=None):
                 entry_stack.callback(entry.close)
                 if entry.directory:
                     raise ValueError('Only inventoried files may be deleted')
+                if identities and relative in identities:
+                    stat = target.stat()
+                    if identities[relative] != [stat.st_dev, stat.st_ino]:
+                        raise ValueError('Inventoried file identity changed')
                 validate()
                 entry.delete()
                 removed.append(relative)
     return removed
+
+
+def remove_empty_children(root, names, validate, removed):
+    root = Path(root)
+    with pin_ancestors(root):
+        validate()
+        for name in names:
+            if name not in ('app', 'data', 'archive'):
+                raise ValueError('Unknown owned directory')
+            path = root / name
+            if not path.exists():
+                continue
+            with ExitStack() as held:
+                pin = PinnedEntry(path, delete=True)
+                held.callback(pin.close)
+                validate()
+                if pin.directory and not any(path.iterdir()):
+                    pin.delete()
+                    removed.append(name + '/')
+
+
+def remove_empty_inventory(root, inventory, validate, removed):
+    root = Path(root)
+    for relative in sorted(inventory, key=lambda name: len(Path(name).parts), reverse=True):
+        path = root / relative
+        if not relative.startswith('app/current') or '..' in Path(relative).parts or ':' in relative:
+            raise ValueError('Invalid directory inventory')
+        if not path.exists():
+            continue
+        with pin_ancestors(path.parent), ExitStack() as held:
+            pin = PinnedEntry(path, delete=True)
+            held.callback(pin.close)
+            validate()
+            stat = path.stat()
+            if inventory[relative] != [stat.st_dev, stat.st_ino]:
+                raise ValueError('Directory inventory identity changed')
+            if pin.directory and not any(path.iterdir()):
+                pin.delete()
+                removed.append(relative + '/')
