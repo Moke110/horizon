@@ -114,7 +114,7 @@ def preview(control_root, identity, *, mode='full'):
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
-    if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal'}
+    if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal', 'data/desktop.lock', 'data/desktop.activate'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')

@@ -179,15 +179,15 @@ def serve(resolved):
     state()
     threading.Thread(target=commands, daemon=True).start()
     emit('console_done', None)
-    activation = app.home / 'desktop.activate'
+    from hostrun.managed_desktop import consume_activation
     exit_code = 0
     try:
         while child.poll() is None:
             if not exiting.is_set() and not app.busy and ui_ready.is_set():
                 pending_turns = service.recoverable_turns(token=token)
                 if pending_turns: start_turn(pending_turns[0]); state()
-            if activation.exists():
-                activation.unlink(missing_ok=True); emit('activate')
+            if consume_activation(app.home):
+                emit('activate')
             try: kind, data = app.events.get(timeout=.1)
             except queue.Empty: continue
             if kind == 'children':

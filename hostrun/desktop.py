@@ -4,7 +4,7 @@ import ctypes
 import os
 import sys
 from pathlib import Path
-from common import file_lock
+from hostrun.managed_desktop import desktop_lock, signal_activation
 from hostrun import console, desktop_processes, layout
 from hostrun.desktop_bridge import serve
 from hostrun.agent_service import desktop_home
@@ -24,12 +24,11 @@ def main():
 
 
 def _run(args, home):
-    home.mkdir(parents=True, exist_ok=True)
     resolved = {'code': str(Path(args.code).resolve()), 'runtime': str(home)}
     desktop_processes.install()
-    with file_lock(home / 'desktop.lock', blocking=False) as acquired:
+    with desktop_lock(home) as acquired:
         if not acquired:
-            (home / 'desktop.activate').touch()
+            signal_activation(home)
             return
         if (home / 'upgrade.pending.json').exists():
             raise RuntimeError('An interrupted upgrade needs recovery. Run the Horizon installer again before opening the desktop.')
