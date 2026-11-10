@@ -57,7 +57,7 @@ def export_report(home,output,*,code=None,tasks=()):
     database=Path(home)/'horizon.sqlite3'
     if database.is_file():
         try:
-            with closing(sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            with closing(sqlite3.connect(database.resolve().as_uri()+'?mode=ro',uri=True,timeout=0.25)) as db:
                 snapshot.update(available=True,error=None)
                 for table, destination in [('agent_tasks','tasks'),('agent_turns','turns'),('agent_children','children')]:
                     try:
@@ -70,6 +70,8 @@ def export_report(home,output,*,code=None,tasks=()):
                             snapshot[destination].append(safe)
                     except (sqlite3.Error,ValueError,TypeError,AttributeError) as exc:
                         snapshot.update(available=False,error=type(exc).__name__)
+                        if isinstance(exc, sqlite3.Error):
+                            break  # A busy/hot/unreadable snapshot is incomplete; do not retry each table.
         except sqlite3.Error as exc: snapshot.update(available=False,error=type(exc).__name__)
     (folder/'tasks.json').write_text(json.dumps(snapshot,indent=2),encoding='utf-8')
     build={'schema_version':1,'components':{}}

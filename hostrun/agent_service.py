@@ -2,7 +2,6 @@
 import hmac
 import json
 import os
-import sqlite3
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,7 +32,6 @@ class AgentService:
         self._token = token
         self._transaction_observer = transaction_observer or (lambda phase: None)
         self.home = Path(home)
-        self.home.mkdir(parents=True, exist_ok=True)
         self._database = self.home / 'horizon.sqlite3'
         with self._connect() as db:
             db.executescript('''
@@ -58,12 +56,10 @@ class AgentService:
 
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self._database)
-        try:
+        from hostrun.managed_database import database_connection
+        with database_connection(self.home) as db:
             with db:
                 yield db
-        finally:
-            db.close()
 
     def _authorize(self, token):
         if not isinstance(token, str) or not hmac.compare_digest(token, self._token):
