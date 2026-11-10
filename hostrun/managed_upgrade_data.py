@@ -6,7 +6,7 @@ import re
 import sqlite3
 import uuid
 
-from common import file_lock
+from hostrun.managed_upgrade_scope import exclusive_scope
 from hostrun import cleanup
 from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
 
@@ -75,17 +75,18 @@ def _transaction(home):
     if control != cleanup.control_directory() or home.name != 'data':
         raise cleanup.InstanceInvalid('Unexpected managed home')
     cleanup.preview(control, identity)
-    with file_lock(control / (identity + '.gate'), blocking=False) as gate, \
-            cleanup.lifecycle_lock(control / (identity + '.lock'), exclusive=True) as available:
-        if not gate or not available:
+    with exclusive_scope(home) as available:
+        if not available:
             raise cleanup.InstanceBusy('instance_busy')
         with pin_ancestors(home), ExitStack() as held:
             cleanup.preview(control, identity)
             yield _DataTransaction(home, held)
 
 
-def backup_owned_data(home):
+def backup_owned_data(home, *, snapshot_id=None):
     """Snapshot only registered business files; never discover ownership by scanning."""
+    if snapshot_id is not None and (not isinstance(snapshot_id, str) or not re.fullmatch(r'[0-9a-f]{32}', snapshot_id)):
+        raise cleanup.InstanceInvalid('Invalid snapshot identity')
     with _transaction(home) as tx:
         if tx.record.get('upgrade') or tx.record.get('model_update'):
             raise cleanup.InstanceInvalid('Pending transaction prevents data backup')
@@ -101,7 +102,9 @@ def backup_owned_data(home):
             tx.pin(database + '-journal')
             if any((tx.home / ('horizon.sqlite3' + suffix)).exists() for suffix in ('-wal', '-shm')):
                 raise cleanup.InstanceInvalid('Unenrolled SQLite sidecar')
-        identity = uuid.uuid4().hex
+        identity = snapshot_id or uuid.uuid4().hex
+        if identity in tx.record.get('data_backups', {}):
+            raise cleanup.InstanceInvalid('Data snapshot already exists')
         snapshot = {'complete': False, 'files': {}}
         tx.record.setdefault('data_backups', {})[identity] = snapshot
         tx.save()

@@ -2178,3 +2178,34 @@ def test_target_package_schema_entry_runs_verified_target_code(tmp_path, mode):
     assert tasks[0]['task_id'] == task['task_id']
     assert tasks[0]['session_id'] == '11111111-1111-4111-8111-111111111111'
     assert not (code / 'hostrun/__pycache__').exists()
+
+
+def test_internal_upgrade_coordinates_schema_and_enrolled_version(tmp_path):
+    import json
+    from test_dist_install import _build, _write_tree, PACKAGE_FILES, _host_compat
+    from hostrun.distribution import build
+    from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
+    from hostrun.agent_service import AgentService
+    from hostrun.managed_upgrade_operation import run_upgrade
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    first = _build(tmp_path.parent / 'first')
+    install_test_package(tmp_path, instance['instance_id'], first['artifact']['path'], first['artifact']['sha256'])
+    home = instance['home']
+    task = AgentService(home, token='test').create_task(
+        {'schema_version': 1, 'operation_id': 'before', 'title': 'preserved'}, token='test')
+    original = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
+    target = original.replace("db.execute('BEGIN IMMEDIATE')", "db.execute('CREATE TABLE target_schema_evidence(value TEXT)')\n        db.execute('BEGIN IMMEDIATE')", 1)
+    source = _write_tree(tmp_path.parent / 'target-source', {**PACKAGE_FILES, 'hostrun/agent_service.py': target})
+    second = build(source=source, out=tmp_path.parent / 'second', version='0.2.0', channel='stable', commit='test', compat=_host_compat())
+    result = run_upgrade(instance['code'] / 'current', home,
+                         from_source=second['artifact']['path'], sha256=second['artifact']['sha256'])
+    assert result['status'] == 'ok'
+    assert json.loads((home / 'version.json').read_text())['version'] == '0.2.0'
+    assert AgentService(home, token='test').list_tasks(token='test')[0]['task_id'] == task['task_id']
+    from hostrun.managed_database import database_connection
+    with database_connection(home) as db:
+        assert db.execute("SELECT name FROM sqlite_master WHERE name='target_schema_evidence'").fetchone()
+    cleaned = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'joint-report', confirmation=instance['instance_id'])
+    assert cleaned['status'] == 'cleaned'
+    assert not home.exists()
