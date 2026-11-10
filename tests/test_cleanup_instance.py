@@ -308,7 +308,8 @@ def test_ordinary_desktop_report_default_location_is_unchanged(tmp_path):
     assert (report / 'summary.md').exists()
 
 
-def test_managed_report_final_directory_cannot_be_replaced_before_write(tmp_path, monkeypatch):
+@pytest.mark.parametrize('entry', ['desktop', 'independent', 'cleanup'])
+def test_managed_report_final_directory_cannot_be_replaced_before_write(tmp_path, monkeypatch, entry):
     import _winapi
     from hostrun.cleanup import initialize_layout
     from hostrun.diagnostics import export_report
@@ -319,7 +320,8 @@ def test_managed_report_final_directory_cannot_be_replaced_before_write(tmp_path
     original = Path.open
     attempted = []
     def open_file(path, *args, **kwargs):
-        if path.name == 'events.jsonl' and path.parent.name.startswith('horizon-report-') and not attempted:
+        target = 'cleanup.json' if entry == 'cleanup' else 'events.jsonl'
+        if path.name == target and path.parent.name.startswith('horizon-report-') and not attempted:
             folder = path.parent
             try:
                 folder.rename(folder.with_name(folder.name + '.moved'))
@@ -331,7 +333,16 @@ def test_managed_report_final_directory_cannot_be_replaced_before_write(tmp_path
         return original(path, *args, **kwargs)
     with monkeypatch.context() as patch:
         patch.setattr(Path, 'open', open_file)
-        report = export_report(instance['home'])
+        if entry == 'desktop':
+            report = export_report(instance['home'])
+        elif entry == 'independent':
+            from hostrun.cleanup import collect_instance_report
+            report = collect_instance_report(tmp_path, instance['instance_id'], tmp_path.parent / 'reports')
+        else:
+            from hostrun.cleanup import cleanup_instance
+            result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports',
+                                      confirmation=instance['instance_id'])
+            report = Path(result['report'])
     assert attempted == ['blocked']
     assert not list(external.iterdir())
     assert (report / 'summary.md').is_file()

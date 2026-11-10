@@ -8,7 +8,7 @@ import platform
 import sqlite3
 import hashlib
 from collections import Counter
-from contextlib import closing
+from contextlib import closing, contextmanager, ExitStack
 import threading
 import uuid
 
@@ -62,6 +62,26 @@ def _desktop_report(home, *, code, tasks):
 
 def _report_name():
     return 'horizon-report-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]
+
+
+@contextmanager
+def pinned_report_directory(output):
+    """Create a fresh report and hold its entire path until all metadata is written."""
+    from hostrun.windows_cleanup import PinnedEntry
+    output = Path(os.path.abspath(output))
+    with ExitStack() as held:
+        parent = None
+        for path in reversed([output, *output.parents]):
+            if path.exists():
+                pin = PinnedEntry(path)
+            else:
+                pin = PinnedEntry(path, create_parent=parent, create_share=3, create_delete=False)
+            held.callback(pin.close)
+            parent = pin
+        folder = output / _report_name()
+        pin = PinnedEntry(folder, create_parent=parent)
+        held.callback(pin.close)
+        yield folder
 
 
 def export_report(home,output=None,*,code=None,tasks=()):
