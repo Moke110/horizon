@@ -320,6 +320,173 @@ def test_resumed_layout_removes_its_empty_staging_directory(tmp_path, monkeypatc
     assert not list(tmp_path.glob(instance['instance_id'] + '.stage-*'))
 
 
+def test_clean_instance_can_be_cleaned_twice_and_initialized_again(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    for _ in range(2):
+        result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                                  confirmation=instance['instance_id'])
+        assert result['status'] == 'cleaned'
+        assert not instance['home'].exists()
+    initialize_layout(tmp_path, instance['instance_id'])
+    assert instance['home'].is_dir()
+
+
+def test_keep_data_uninstall_preserves_session_and_reports_success(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    session = instance['home'] / 'horizon.sqlite3'
+    session.write_bytes(b'original session')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'], mode='keep-data')
+    assert result['status'] == 'uninstalled'
+    assert session.read_bytes() == b'original session'
+    assert not instance['code'].exists()
+
+
+def test_installed_package_inventory_excludes_unknown_user_files(tmp_path):
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text(encoding='utf-8'))['artifact']['sha256']
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    result = install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert result['status'] == 'ok'
+    code = instance['code'] / 'current'
+    assert (code / 'README.md').exists()
+    unknown = code / 'personal.txt'
+    unknown.write_text('original user document')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'], mode='keep-data')
+    assert result['status'] == 'partial'
+    assert not (code / 'README.md').exists()
+    assert unknown.read_text() == 'original user document'
+
+
+def test_package_uninstall_removes_registered_empty_directory_skeleton(tmp_path):
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package, cleanup_instance
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'], mode='keep-data')
+    assert result['status'] == 'uninstalled'
+    assert not instance['code'].exists()
+
+
+@pytest.mark.parametrize('replacement', ['# fixture horizon\n', 'USER REPLACEMENT'])
+def test_package_inventory_commit_failure_preserves_unproven_files(tmp_path, monkeypatch, replacement):
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    original = Path.replace
+    def fail_inventory(source, target):
+        if Path(target) == instance['registration'] and (instance['code'] / 'current' / 'README.md').exists():
+            raise OSError('controlled inventory commit failure')
+        return original(source, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'replace', fail_inventory)
+        with pytest.raises(OSError):
+            install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    installed = instance['code'] / 'current' / 'README.md'
+    installed.rename(installed.with_name('original-readme.md'))
+    installed.write_text(replacement)
+    original_id = installed.stat().st_ino
+    result = install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert result['status'] == 'blocked'
+    assert installed.read_text() == replacement
+    assert installed.stat().st_ino == original_id
+
+
+def test_package_install_refuses_current_junction_inserted_after_absence_check(tmp_path, monkeypatch):
+    import json
+    import _winapi
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    code = instance['code'] / 'current'
+    external = tmp_path.parent / 'external'
+    external.mkdir()
+    original = Path.exists
+    inserted = []
+    def race(path):
+        present = original(path)
+        if path == code and not present and not inserted:
+            _winapi.CreateJunction(str(external), str(code))
+            inserted.append(True)
+        return present
+    monkeypatch.setattr(Path, 'exists', race)
+    with pytest.raises((OSError, ValueError)):
+        install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert inserted == [True]
+    assert not list(external.iterdir())
+
+
+def test_initial_install_journal_failure_leaves_no_unowned_current(tmp_path, monkeypatch):
+    import json
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    original = Path.replace
+    def fail_journal(source, target):
+        if Path(target) == instance['registration']:
+            raise OSError('controlled journal failure')
+        return original(source, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'replace', fail_journal)
+        with pytest.raises(OSError):
+            install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert not (instance['code'] / 'current').exists()
+    assert install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)['status'] == 'ok'
+
+
+def test_interrupted_package_copy_preserves_unproven_replacement(tmp_path, monkeypatch):
+    import json
+    import shutil
+    from test_dist_install import _build
+    from hostrun.cleanup import initialize_layout, install_test_package
+    package = _build(tmp_path.parent / 'fixture')
+    digest = json.loads(Path(package['digest']).read_text())['artifact']['sha256']
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    code = instance['code'] / 'current'
+    original = shutil.copyfile
+    def interrupted(source, target, *args, **kwargs):
+        value = original(source, target, *args, **kwargs)
+        if Path(target) == code / 'common.py':
+            raise KeyboardInterrupt('controlled abrupt copy interruption')
+        return value
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil, 'copyfile', interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert (code / '.horizon' / 'dist.pending.json').exists()
+    (code / 'common.py').rename(code / 'original-partial.py')
+    (code / 'common.py').write_text('USER REPLACEMENT MUST SURVIVE')
+    result = install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'], digest)
+    assert result['status'] == 'blocked'
+    assert (code / 'common.py').read_text() == 'USER REPLACEMENT MUST SURVIVE'
+    assert (code / '.horizon' / 'dist.pending.json').exists()
+
+
 @pytest.mark.parametrize('damage', ['missing', 'tampered', 'lock_directory', 'junction'])
 def test_invalid_instance_real_desktop_never_writes_home(tmp_path, damage):
     import os

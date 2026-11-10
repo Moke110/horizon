@@ -105,6 +105,18 @@ def preview(control_root, identity, *, mode='full'):
     children = record.pop('children', {})
     staging = record.pop('staging', None)
     staging_identity = record.pop('staging_identity', None)
+    inventory = record.pop('application_inventory', {})
+    application_directories = record.pop('application_directories', {})
+    installation = record.pop('installation', None)
+    if not isinstance(application_directories, dict):
+        raise InstanceInvalid('Invalid application directory inventory')
+    if installation is not None and (not isinstance(installation, dict) or set(installation) != {'digest', 'identity'}):
+        raise InstanceInvalid('Invalid installation journal')
+    if not isinstance(inventory, dict) or any(
+        not isinstance(name, str) or not name.startswith('app/current/')
+        or '\\' in name or '..' in Path(name).parts or ':' in name
+        for name in inventory):
+        raise InstanceInvalid('Invalid application inventory')
     if staging is not None and (not isinstance(staging, str) or uuid.UUID(staging).hex != staging):
         raise InstanceInvalid('Invalid staging identity')
     if staging:
@@ -138,6 +150,85 @@ def preview(control_root, identity, *, mode='full'):
             'preserve': [str(p) for p in preserve], 'owned_children': sorted(children)}
 
 
+def install_test_package(control_root, identity, package, digest):
+    """Install a verified local package into a fresh enrolled app container."""
+    import hashlib
+    import zipfile
+    from hostrun import dist
+    from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
+    package = Path(package)
+    if hashlib.sha256(package.read_bytes()).hexdigest() != digest:
+        raise InstanceInvalid('Package digest mismatch')
+    with zipfile.ZipFile(package) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+    control = Path(control_root).resolve(strict=True)
+    preview(control, identity)
+    root = control / identity
+    code = root / 'app' / 'current'
+    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root / 'app'), ExitStack() as held:
+        if not acquired:
+            raise InstanceBusy('instance_busy')
+        preview(control, identity)
+        registration = control / (identity + '.json')
+        record = _read_registration(registration)
+        installation = record.get('installation')
+        if installation is None:
+            if code.exists():
+                raise InstanceInvalid('Refusing existing application contents')
+            app_pin = PinnedEntry(root / 'app')
+            held.callback(app_pin.close)
+            code_pin = PinnedEntry(code, create_parent=app_pin, create_share=3)
+            held.callback(code_pin.close)
+            stat = code.stat()
+            record['installation'] = {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}
+            try:
+                _write_registration(registration, record)
+            except BaseException:
+                code_pin.delete()
+                raise
+        else:
+            code_pin = PinnedEntry(code)
+            held.callback(code_pin.close)
+            stat = code.stat()
+            if installation != {'digest': digest, 'identity': [stat.st_dev, stat.st_ino]}:
+                raise InstanceInvalid('Different interrupted installation')
+            return {'status': 'blocked', 'reason': 'interrupted_inventory_unavailable'}
+        result = dist.install_package(code, from_source=package, sha256=digest)
+        if result['status'] != 'ok':
+            return result
+        names = [row['path'] for row in manifest['files']] + ['manifest.json', '.horizon/dist.lock.json', dist.CURRENT_REL.as_posix()]
+        expected_digests = {row['path']: row.get('sha256') for row in manifest['files']}
+        inventory = {}
+        directories = {}
+        for name in names:
+            relative = Path(name)
+            if relative.is_absolute() or '..' in relative.parts or ':' in name:
+                raise InstanceInvalid('Invalid package inventory')
+            path = code / relative
+            with pin_ancestors(path.parent, already_pinned=(code,)), ExitStack() as held:
+                pin = PinnedEntry(path)
+                held.callback(pin.close)
+                stat = path.stat()
+                expected = expected_digests.get(name)
+                if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                    raise InstanceInvalid('Installed file digest mismatch')
+                inventory[path.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
+                for directory in (path.parent, *path.parent.parents):
+                    if directory.is_relative_to(code):
+                        stat = directory.stat()
+                        directories[directory.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
+        for directory in (code / dist.STAGING_REL,):
+            if directory.exists():
+                with pin_ancestors(directory, already_pinned=(code,)):
+                    stat = directory.stat()
+                    directories[directory.relative_to(root).as_posix()] = [stat.st_dev, stat.st_ino]
+        record['application_inventory'] = inventory
+        record['application_directories'] = directories
+        record.pop('installation', None)
+        _write_registration(registration, record)
+    return result
+
+
 def initialize_layout(control_root, identity):
     """Create and enroll fresh child directories; never adopt user contents."""
     preview(control_root, identity)
@@ -150,6 +241,8 @@ def initialize_layout(control_root, identity):
         preview(control, identity)
         registration = control / (identity + '.json')
         record = _read_registration(registration)
+        if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
+            record.pop('children')
         if not record.get('children') and any(root.iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
         if not record.get('children'):
@@ -252,16 +345,30 @@ def cleanup_instance(control_root, identity, output, *, confirmation=None, mode=
         else:
             plan = preview(control, identity, mode=mode)
             targets = []
+            record = _read_registration(control / (identity + '.json'))
+            for name, expected in record.get('application_inventory', {}).items():
+                path = root / name
+                if path.exists():
+                    stat = path.stat()
+                    if expected == [stat.st_dev, stat.st_ino]:
+                        targets.append(name)
             if mode == 'full' and 'data' in plan['owned_children']:
                 for name in ('model-config.json', 'horizon.sqlite3', 'horizon.sqlite3-wal',
                              'horizon.sqlite3-shm', 'version.json'):
                     if (root / 'data' / name).exists():
                         targets.append('data/' + name)
-            from hostrun.windows_cleanup import remove_owned_files
+            from hostrun.windows_cleanup import remove_owned_files, remove_empty_children, remove_empty_inventory
             try:
-                remove_owned_files(root, targets, lambda: preview(control, identity), removed=result['removed'])
+                remove_owned_files(root, targets, lambda: preview(control, identity),
+                                   removed=result['removed'], identities=record.get('application_inventory'))
+                remove_empty_inventory(root, record.get('application_directories', {}),
+                                       lambda: preview(control, identity), result['removed'])
+                directories = [name for name in plan['owned_children'] if mode == 'full' or name == 'app']
+                remove_empty_children(root, directories, lambda: preview(control, identity), result['removed'])
                 result['preserved'] = [child.name for child in root.iterdir()]
-                result['status'] = 'partial' if result['preserved'] else 'cleaned'
+                expected_preserved = {'data', 'archive'} if mode == 'keep-data' else set()
+                unexpected = set(result['preserved']) - expected_preserved
+                result['status'] = 'partial' if unexpected else ('uninstalled' if mode == 'keep-data' else 'cleaned')
             except (OSError, ValueError) as exc:
                 result.update(status='partial', reason=type(exc).__name__)
     (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
