@@ -26,6 +26,12 @@ UPGRADE_BACKUP_PATTERN = r'data/upgrade-backups/[0-9a-f]{32}/' + UPGRADE_DATA_PA
 UPGRADE_DIRECTORY_PATTERN = r'data/upgrade-backups(?:/[0-9a-f]{32}(?:/agent(?:/pi(?:/sessions(?:/' + SESSION_ID_PATTERN + r')?)?)?)?)?'
 
 
+def _code_transaction_name(name):
+    return (isinstance(name, str) and name and not Path(name).is_absolute()
+            and '\\' not in name and ':' not in name and '..' not in Path(name).parts
+            and (not name.startswith('.horizon/') or name in {'.horizon/current', '.horizon/dist.lock.json'}))
+
+
 def control_directory():
     base = os.environ.get('LOCALAPPDATA')
     if not base or not Path(base).is_absolute():
@@ -118,6 +124,19 @@ def preview(control_root, identity, *, mode='full'):
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
     snapshots = record.pop('data_backups', {})
+    transactions = record.pop('code_transactions', {})
+    if not isinstance(transactions, dict) or any(
+            not re.fullmatch(r'[0-9a-f]{32}', name) or not isinstance(transaction, dict)
+            or set(transaction) != {'before', 'after', 'digests'}
+            or any(not isinstance(transaction[key], dict) for key in ('before', 'after', 'digests'))
+            or set(transaction['digests']) != set(transaction['before'])
+            or any(not _code_transaction_name(path) or not isinstance(value, list) or len(value) != 2
+                   or any(type(number) is not int for number in value)
+                   for group in ('before', 'after') for path, value in transaction[group].items())
+            or any(not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                   for digest in transaction['digests'].values())
+            for name, transaction in transactions.items()):
+        raise InstanceInvalid('Invalid code transaction')
     if not isinstance(snapshots, dict) or any(
             not re.fullmatch(r'[0-9a-f]{32}', name) or not isinstance(snapshot, dict)
             or set(snapshot) != {'complete', 'files'} or type(snapshot['complete']) is not bool
@@ -299,7 +318,7 @@ def initialize_layout(control_root, identity):
         record = _read_registration(registration)
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'data_backups'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'data_backups', 'code_transactions'):
                 record.pop(key, None)
         if not record.get('children') and any(root.iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
