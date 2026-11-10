@@ -38,6 +38,8 @@ def install(control_root, identity, package, digest):
     cleanup.preview(control, identity)
     root, registration = control / identity, control / (identity + '.json')
     code = root / 'app/current'
+    if not io_path(root / 'app').exists():
+        cleanup.initialize_layout(control, identity)
     with file_lock(control / (identity + '.gate'), blocking=False) as entrance, cleanup.lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root / 'app'), ExitStack() as held:
         if not entrance or not acquired:
             raise cleanup.InstanceBusy('instance_busy')

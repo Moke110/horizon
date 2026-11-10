@@ -66,6 +66,29 @@ def test_shortcut_full_cleanup_reinitialize_reinstall_has_no_stale_receipt(insta
     assert cleanup.create_test_shortcut(control, identity)['status'] == 'created'
 
 
+def test_keep_data_reinstall_preserves_tasks_credentials_and_file_identities(installed, tmp_path):
+    import hashlib
+    from hostrun.agent_service import AgentService
+    from hostrun.embedded_agent import configure, load_model_config
+    control, instance = installed
+    identity, home = instance['instance_id'], instance['home']
+    configure(home, provider='test', model='test-model', api_key='TEST-RETAINED-SECRET')
+    service = AgentService(home, token='test')
+    service.create_task({'schema_version': 1, 'operation_id': 'retained', 'title': 'retained task'}, token='test')
+    files = [home / 'agent/model.json', home / 'horizon.sqlite3', home / 'horizon.sqlite3-journal']
+    identities = [path.stat().st_ino for path in files]
+    cleanup.create_test_shortcut(control, identity)
+    assert cleanup.cleanup_instance(control, identity, tmp_path / 'reports', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
+    assert not instance['code'].exists()
+    cleanup.initialize_layout(control, identity)
+    package = next((tmp_path / 'package').glob('*.zip'))
+    assert cleanup.install_test_package(control, identity, package, hashlib.sha256(package.read_bytes()).hexdigest())['status'] == 'ok'
+    assert cleanup.create_test_shortcut(control, identity)['status'] == 'created'
+    assert [path.stat().st_ino for path in files] == identities
+    assert load_model_config(home)['apiKey'] == 'TEST-RETAINED-SECRET'
+    assert AgentService(home, token='test').list_tasks(token='test')[0]['title'] == 'retained task'
+
+
 def test_shortcut_survives_public_upgrade_with_same_identity(installed, tmp_path):
     from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
@@ -86,6 +109,88 @@ def test_shortcut_survives_public_upgrade_with_same_identity(installed, tmp_path
     assert result['status'] == 'ok', result
     assert (link.stat().st_ino, link.read_bytes()) == before
     assert cleanup.create_test_shortcut(control, instance['instance_id'])['status'] == 'already_created'
+
+
+@pytest.mark.parametrize('replacement', ['directory', 'junction'])
+def test_keep_data_reinitialize_refuses_replacement_app(installed, tmp_path, replacement):
+    control, instance = installed
+    identity = instance['instance_id']
+    assert cleanup.cleanup_instance(control, identity, tmp_path / 'report', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
+    app = instance['code']
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    (foreign / 'personal.txt').write_text('preserved')
+    if replacement == 'junction':
+        result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(app), str(foreign)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+    else:
+        app.mkdir()
+        (app / 'personal.txt').write_text('preserved')
+    receipt = instance['registration'].read_bytes()
+    with pytest.raises(cleanup.InstanceInvalid):
+        cleanup.initialize_layout(control, identity)
+    assert instance['registration'].read_bytes() == receipt
+    assert (foreign / 'personal.txt').read_text() == 'preserved'
+    assert (app / 'personal.txt').read_text() == 'preserved'
+
+
+def test_keep_data_reinitialize_receipt_failure_removes_only_new_empty_app(installed, tmp_path, monkeypatch):
+    control, instance = installed
+    identity = instance['instance_id']
+    assert cleanup.cleanup_instance(control, identity, tmp_path / 'report', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
+    old = instance['registration'].read_bytes()
+    original = Path.replace
+    def fail_receipt(path, target):
+        if Path(target) == instance['registration']:
+            raise OSError('receipt write failure')
+        return original(path, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'replace', fail_receipt)
+        with pytest.raises(OSError, match='receipt write failure'):
+            cleanup.initialize_layout(control, identity)
+    assert not instance['code'].exists()
+    assert instance['registration'].read_bytes() == old
+    cleanup.initialize_layout(control, identity)
+    assert instance['code'].is_dir()
+
+
+def test_keep_data_app_creation_crash_does_not_adopt_unknown_container(installed, tmp_path):
+    control, instance = installed
+    identity = instance['instance_id']
+    assert cleanup.cleanup_instance(control, identity, tmp_path / 'report', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
+    receipt = instance['registration'].read_bytes()
+    script = '''
+import os,sys
+from pathlib import Path
+from hostrun import cleanup
+original=Path.replace
+def interrupted(path,target):
+    if Path(target)==Path(sys.argv[1])/(sys.argv[2]+'.json'):
+        os._exit(77)
+    return original(path,target)
+Path.replace=interrupted
+cleanup.initialize_layout(sys.argv[1],sys.argv[2])
+'''
+    process = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', script, str(control), identity], capture_output=True, timeout=15)
+    assert process.returncode == 77
+    assert instance['code'].is_dir() and not list(instance['code'].iterdir())
+    assert instance['registration'].read_bytes() == receipt
+    with pytest.raises(cleanup.InstanceInvalid):
+        cleanup.initialize_layout(control, identity)
+    assert instance['code'].is_dir()
+
+
+def test_invalid_package_does_not_recreate_app_after_keep_data_cleanup(installed, tmp_path):
+    import hashlib
+    control, instance = installed
+    identity = instance['instance_id']
+    assert cleanup.cleanup_instance(control, identity, tmp_path / 'report', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
+    receipt = instance['registration'].read_bytes()
+    invalid = tmp_path / 'invalid.zip'
+    invalid.write_bytes(b'not a package')
+    assert cleanup.install_test_package(control, identity, invalid, hashlib.sha256(invalid.read_bytes()).hexdigest())['status'] == 'blocked'
+    assert not instance['code'].exists()
+    assert instance['registration'].read_bytes() == receipt
 
 
 @pytest.mark.parametrize('refusal', [None, 'foreign', 'code', 'pending'])
@@ -138,6 +243,16 @@ def test_shortcut_cli_uses_fixed_instance_location(installed, tmp_path, embedded
         shutil.copytree(repository / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
         shutil.copyfile(repository / 'common.py', tool / 'common.py')
         python = sys.executable
+    if embedded:
+        import hashlib
+        identity = instance['instance_id']
+        cleanup.create_test_shortcut(control, identity)
+        assert cleanup.cleanup_instance(control, identity, tmp_path / 'report', confirmation=identity, mode='keep-data')['status'] == 'uninstalled'
+        package = next((tmp_path / 'package').glob('*.zip'))
+        reinstall = subprocess.run([python, '-B', '-X', 'utf8', '-m', 'hostrun.cleanup_cli',
+                                    'install', identity, '--package', str(package), '--sha256', hashlib.sha256(package.read_bytes()).hexdigest()],
+                                   cwd=tool, capture_output=True, text=True, timeout=15)
+        assert reinstall.returncode == 0, reinstall.stdout + reinstall.stderr
     result = subprocess.run([python, '-B', '-X', 'utf8', '-m', 'hostrun.cleanup_cli',
                              'shortcut', instance['instance_id']], cwd=tool,
                             env={**os.environ, **({'PATH': os.environ['SystemRoot'] + '/System32',
