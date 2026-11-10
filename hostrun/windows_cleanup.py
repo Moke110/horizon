@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 class PinnedEntry:
-    def __init__(self, path, *, delete=False, create_parent=None, create_share=1, create_delete=True):
+    def __init__(self, path, *, delete=False, create_parent=None, create_share=1, create_delete=True, writable=False, create_file=False):
         self.path = Path(path)
         self.api = ctypes.WinDLL('kernel32', use_last_error=True)
         self.api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
@@ -19,9 +19,10 @@ class PinnedEntry:
         self.api.SetFileInformationByHandle.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
         # No delete sharing: this entry cannot be renamed or replaced while pinned.
         if create_parent is not None:
-            self.handle = _create_directory(create_parent.handle, self.path.name, create_share, create_delete)
+            self.handle = _create_entry(create_parent.handle, self.path.name, create_share, create_delete,
+                                            directory=not create_file, writable=writable)
         else:
-            self.handle = self.api.CreateFileW(str(self.path), 0x81 | (0x10000 if delete else 0),
+            self.handle = self.api.CreateFileW(str(self.path), 0x81 | (2 if writable else 0) | (0x10000 if delete else 0),
                                               3, None, 3, 0x02200000, None)
         if self.handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -47,6 +48,20 @@ class PinnedEntry:
             raise ctypes.WinError(ctypes.get_last_error())
         self.close()
 
+    def write_bytes(self, payload):
+        self.api.SetFilePointerEx.argtypes = [w.HANDLE, ctypes.c_longlong, ctypes.c_void_p, w.DWORD]
+        self.api.WriteFile.argtypes = [w.HANDLE, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), ctypes.c_void_p]
+        self.api.SetEndOfFile.argtypes = [w.HANDLE]
+        self.api.FlushFileBuffers.argtypes = [w.HANDLE]
+        if not self.api.SetFilePointerEx(self.handle, 0, None, 0):
+            raise ctypes.WinError(ctypes.get_last_error())
+        buffer = ctypes.create_string_buffer(payload)
+        written = w.DWORD()
+        if not self.api.WriteFile(self.handle, buffer, len(payload), ctypes.byref(written), None) or written.value != len(payload):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not self.api.SetEndOfFile(self.handle) or not self.api.FlushFileBuffers(self.handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
     def rename(self, destination):
         value = str(destination)
         class RenameInfo(ctypes.Structure):
@@ -59,12 +74,12 @@ class PinnedEntry:
             raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _create_directory(parent_handle, name, share, delete):
-    """FILE_CREATE returns the newly created directory handle atomically."""
+def _create_entry(parent_handle, name, share, delete, *, directory=True, writable=False):
+    """FILE_CREATE atomically returns a new file/directory under the pinned parent."""
     if os.name != 'nt' or sys.getwindowsversion().major < 10:
         raise OSError('Standalone test cleanup requires Windows 10 or later')
     if not name or name in ('.', '..') or any(c in name for c in '/\\:'):
-        raise ValueError('Directory name must be one component')
+        raise ValueError('Entry name must be one component')
     class UnicodeString(ctypes.Structure):
         _fields_ = [('Length', w.USHORT), ('MaximumLength', w.USHORT), ('Buffer', w.LPWSTR)]
     class Attributes(ctypes.Structure):
@@ -83,9 +98,9 @@ def _create_directory(parent_handle, name, share, delete):
     api.NtCreateFile.argtypes = [ctypes.POINTER(w.HANDLE), w.DWORD, ctypes.POINTER(Attributes),
         ctypes.POINTER(IoStatus), ctypes.c_void_p, w.DWORD, w.DWORD, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD]
     api.NtCreateFile.restype = w.LONG
-    access = 0x100081 | (0x10000 if delete else 0)
+    access = 0x100081 | (0x10000 if delete else 0) | (2 if writable else 0)
     status = api.NtCreateFile(ctypes.byref(handle), access, ctypes.byref(attrs), ctypes.byref(io),
-                              None, 0x10, share, 2, 0x21, None, 0)
+                              None, 0x10 if directory else 0x80, share, 2, 0x21 if directory else 0x60, None, 0)
     if status < 0:
         api.RtlNtStatusToDosError.argtypes = [w.LONG]
         api.RtlNtStatusToDosError.restype = w.ULONG
@@ -164,7 +179,7 @@ def remove_empty_inventory(root, inventory, validate, removed):
     root = Path(root)
     for relative in sorted(inventory, key=lambda name: len(Path(name).parts), reverse=True):
         path = root / relative
-        if not relative.startswith('app/current') or '..' in Path(relative).parts or ':' in relative:
+        if not any(relative == prefix or relative.startswith(prefix + '/') for prefix in ('app/current', 'data/agent')) or '..' in Path(relative).parts or ':' in relative:
             raise ValueError('Invalid directory inventory')
         if not path.exists():
             continue

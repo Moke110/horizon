@@ -31,12 +31,32 @@ async function main() {
   if (values.check) { emit({ type: "status", runtime: "horizon-pi", version: "1.5.0" }); return; }
   if (!values.home || !values.task) throw new Error("--home and --task are required");
   const home = resolve(values.home), code = process.cwd();
-  const config = JSON.parse(await readFile(join(home, "agent", "model.json"), "utf8"));
-  secret = String(config.apiKey || "");
-  if (!secret) throw new Error("Configure a model API key in Horizon first");
   const install = JSON.parse(await readFile(join(home, "install", "config.json"), "utf8").catch(() => "{}"));
   const python = process.env.HORIZON_PYTHON || install.paths?.python;
   if (!python) throw new Error("Horizon Python runtime is missing");
+  const config = await new Promise<Record<string, any>>((resolveConfig, reject) => {
+    const reader = spawn(python, ["-X", "utf8", "-m", "hostrun.model_config", home],
+      { cwd: code, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "", error = "";
+    reader.stdout.setEncoding("utf8");
+    reader.stderr.setEncoding("utf8");
+    reader.stdout.on("data", (chunk: string) => {
+      output += chunk;
+      if (output.length > 1024 * 1024) {
+        reader.kill();
+        reject(new Error("Model configuration is too large"));
+      }
+    });
+    reader.stderr.on("data", (chunk: string) => { error = (error + chunk).slice(0, 4096); });
+    reader.on("error", reject);
+    reader.on("close", (status) => {
+      if (status !== 0) { reject(new Error(error.trim() || "Model configuration could not be read")); return; }
+      try { resolveConfig(JSON.parse(output)); }
+      catch { reject(new Error("Model configuration could not be decoded")); }
+    });
+  });
+  secret = String(config.apiKey || "");
+  if (!secret) throw new Error("Configure a model API key in Horizon first");
   const settings = SettingsManager.inMemory({ retry: { enabled: false }, packages: [] });
   const agentDir = join(home, "agent", "pi");
   await mkdir(agentDir, { recursive: true });
