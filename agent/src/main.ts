@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
   createAgentSession, DefaultResourceLoader, ModelRuntime, defineTool,
   SessionManager, SettingsManager, type ToolDefinition,
@@ -15,6 +16,7 @@ let secret = "";
 let retryAttempts = 1;
 let delegateFailure = "";
 let failedDelegateCall = "";
+let releaseSessionGuardian: (() => Promise<void>) | undefined;
 let delegateFailureDetails: Record<string, unknown> | undefined;
 const emit = (event: object) => {
   let line = JSON.stringify(event);
@@ -34,7 +36,7 @@ async function main() {
   const install = JSON.parse(await readFile(join(home, "install", "config.json"), "utf8").catch(() => "{}"));
   const python = process.env.HORIZON_PYTHON || install.paths?.python;
   if (!python) throw new Error("Horizon Python runtime is missing");
-  const config = await new Promise<Record<string, any>>((resolveConfig, reject) => {
+  const configuration = await new Promise<Record<string, any>>((resolveConfig, reject) => {
     const reader = spawn(python, ["-X", "utf8", "-m", "hostrun.model_config", home],
       { cwd: code, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "", error = "";
@@ -55,12 +57,15 @@ async function main() {
       catch { reject(new Error("Model configuration could not be decoded")); }
     });
   });
+  const config = configuration.config;
+  const managed = configuration.managed === true;
   secret = String(config.apiKey || "");
   if (!secret) throw new Error("Configure a model API key in Horizon first");
   const settings = SettingsManager.inMemory({ retry: { enabled: false }, packages: [] });
   const agentDir = join(home, "agent", "pi");
-  await mkdir(agentDir, { recursive: true });
-  const models = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"),
+  if (!managed) await mkdir(agentDir, { recursive: true });
+  const models = await ModelRuntime.create({ ...(managed ? { credentials: new InMemoryCredentialStore() }
+    : { authPath: join(agentDir, "auth.json") }),
     modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
   if (config.baseUrl) {
     models.registerProvider(config.provider, { baseUrl: config.baseUrl,
@@ -191,11 +196,53 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   if (sessionId) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) throw new Error("Invalid session identity");
     const sessionDir = join(agentDir, "sessions", sessionId);
-    await mkdir(sessionDir, { recursive: true });
-    const files = (await readdir(sessionDir)).filter(name => name.endsWith(".jsonl"));
-    if (files.length > 1) throw new Error("Ambiguous persisted session");
-    sessionManager = files.length ? SessionManager.open(join(sessionDir, files[0]), sessionDir, code)
-      : SessionManager.create(code, sessionDir, { id: sessionId });
+    if (managed) {
+      const header = SessionManager.inMemory(code, { id: sessionId }).getHeader();
+      const sessionFile = await new Promise<string>((ready, reject) => {
+        const guardian = spawn(python, ["-X", "utf8", "-m", "hostrun.pi_session", home, sessionId],
+          { cwd: code, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+        let closing = false, acknowledged = false, output = "";
+        const timeout = setTimeout(() => { guardian.kill(); reject(new Error("Managed Pi session unavailable")); }, 10000);
+        guardian.stdout.setEncoding("utf8");
+        guardian.stdout.on("data", (chunk: string) => {
+          output += chunk;
+          if (output.length > 65536) { guardian.kill(); return; }
+          if (!acknowledged && output.includes("\n")) {
+            try {
+              const response = JSON.parse(output);
+              if (typeof response.path !== "string") throw new Error();
+              acknowledged = true;
+              clearTimeout(timeout);
+              releaseSessionGuardian = () => new Promise<void>(resolveRelease => {
+                closing = true;
+                const stop = setTimeout(() => guardian.kill(), 5000);
+                guardian.once("close", () => { clearTimeout(stop); resolveRelease(); });
+                guardian.stdin.end();
+              });
+              ready(response.path);
+            } catch { guardian.kill(); }
+          }
+        });
+        guardian.on("error", () => reject(new Error("Managed Pi session unavailable")));
+        guardian.stdin.on("error", () => reject(new Error("Managed Pi session unavailable")));
+        guardian.on("close", () => {
+          clearTimeout(timeout);
+          if (!acknowledged) reject(new Error("Managed Pi session unavailable"));
+          else if (!closing) {
+            emit({ type: "error", message: "Managed Pi session protection ended" });
+            process.exit(1);
+          }
+        });
+        guardian.stdin.write(JSON.stringify(header) + "\n");
+      });
+      sessionManager = SessionManager.open(sessionFile, sessionDir, code);
+    } else {
+      await mkdir(sessionDir, { recursive: true });
+      const files = (await readdir(sessionDir)).filter(name => name.endsWith(".jsonl"));
+      if (files.length > 1) throw new Error("Ambiguous persisted session");
+      sessionManager = files.length ? SessionManager.open(join(sessionDir, files[0]), sessionDir, code)
+        : SessionManager.create(code, sessionDir, { id: sessionId });
+    }
     if (sessionManager.getSessionId() !== sessionId) throw new Error("Persisted session identity mismatch");
   }
   // Sanitize at the public persistence boundary, before any message is flushed.
@@ -287,4 +334,5 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     emit({ type: "status", phase: "turn_end", reason: "completed" });
   } finally { streamText("", true); session.dispose(); inputReader?.close(); }
 }
-main().catch(error => { emit({ type: "error", ...retryDecision(String(error.message || error), 3), attempts: retryAttempts, ...delegateFailureDetails, message: String(error.message || error) }); process.exitCode = 1; });
+main().catch(error => { emit({ type: "error", ...retryDecision(String(error.message || error), 3), attempts: retryAttempts, ...delegateFailureDetails, message: String(error.message || error) }); process.exitCode = 1; })
+  .finally(async () => { await releaseSessionGuardian?.(); });
