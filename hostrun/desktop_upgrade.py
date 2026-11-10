@@ -125,10 +125,14 @@ def _upgrade(code, home, *, from_source, sha256):
 
 
 def upgrade(code, home, *, from_source, sha256):
-    from hostrun.cleanup import instance_lock
+    from hostrun.cleanup import instance_lock, _lexical_home, control_directory
     with instance_lock(home) as acquired:
         if not acquired:
             return {'status': 'blocked', 'reason': 'instance_busy'}
+        if os.name == 'nt' and _lexical_home(home).parent.parent == control_directory():
+            # The legacy backup/restore path replaces file identities. Managed
+            # upgrades wait for their own inventory transaction implementation.
+            return {'status': 'blocked', 'reason': 'managed_upgrade_inventory_pending'}
         return _recorded_upgrade(code, home, from_source=from_source, sha256=sha256)
 
 

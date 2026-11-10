@@ -118,7 +118,7 @@ def test_missing_registration_cannot_bypass_upgrade_cleanup_lock(tmp_path):
     assert not instance['home'].exists()
 
 
-def test_running_desktop_still_uses_desktop_lock_with_instance_lease(tmp_path):
+def test_managed_upgrade_inventory_guard_applies_with_shared_desktop_lease(tmp_path):
     from hostrun.cleanup import instance_lock
     from hostrun.desktop_upgrade import upgrade
     from common import file_lock
@@ -126,7 +126,7 @@ def test_running_desktop_still_uses_desktop_lock_with_instance_lease(tmp_path):
     with instance_lock(instance['home']), file_lock(instance['home'] / 'desktop.lock'):
         result = upgrade(instance['code'], instance['home'],
                          from_source='missing.zip', sha256='0' * 64)
-    assert result['reason'] == 'desktop_running'
+    assert result['reason'] == 'managed_upgrade_inventory_pending'
 
 
 def test_existing_uuid_shaped_home_is_not_claimed(tmp_path):
@@ -317,6 +317,173 @@ def test_busy_inventory_drops_diagnostic_without_blocking_caller(tmp_path):
             pending = pool.submit(record_event, instance['home'], 'desktop_started', pid=123)
             assert pending.result(timeout=0.5) is None
     assert not (instance['home'] / 'diagnostics').exists()
+
+
+def test_managed_agent_database_reopens_and_is_cleaned(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    service = AgentService(instance['home'], token='secret')
+    task = service.create_task({'schema_version': 1, 'operation_id': 'create', 'title': 'TEST TITLE'}, token='secret')
+    reopened = AgentService(instance['home'], token='secret')
+    assert reopened.list_tasks(token='secret')[0]['task_id'] == task['task_id']
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+    assert 'TEST TITLE' not in '\n'.join(p.read_text(encoding='utf-8') for p in Path(result['report']).iterdir() if p.is_file())
+
+
+@pytest.mark.parametrize('phase, expected', [('before_commit', 1), ('after_commit', 2)])
+def test_managed_sqlite_real_transaction_crash_recovers_without_new_identity(tmp_path, phase, expected):
+    import os
+    import subprocess
+    import sys
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    service = AgentService(instance['home'], token='s')
+    service.create_task({'schema_version': 1, 'operation_id': 'original', 'title': 'original'}, token='s')
+    paths = [instance['home'] / name for name in ('horizon.sqlite3', 'horizon.sqlite3-journal')]
+    identities = [path.stat().st_ino for path in paths]
+    script = '''
+import os, sys
+from hostrun.agent_service import AgentService
+service = AgentService(sys.argv[1], token='s', transaction_observer=lambda phase: os._exit(71) if phase == sys.argv[2] else None)
+service.create_task({'schema_version': 1, 'operation_id': 'interrupted', 'title': 'x' * (3 * 1024 * 1024)}, token='s')
+'''
+    child = subprocess.run([sys.executable, '-X', 'utf8', '-c', script, str(instance['home']), phase],
+                           env=os.environ.copy(), capture_output=True, timeout=15)
+    assert child.returncode == 71, child.stderr
+    from hostrun.desktop_upgrade import upgrade
+    before_upgrade = [path.read_bytes() for path in paths]
+    if phase == 'before_commit':
+        refused = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'hot-report',
+                                   confirmation=instance['instance_id'])
+        assert refused['status'] == 'blocked'
+        assert refused['reason'] == 'diagnostics_incomplete'
+        assert [path.read_bytes() for path in paths] == before_upgrade
+    upgrade_result = upgrade(instance['code'], instance['home'], from_source='absent.zip', sha256='0' * 64)
+    assert upgrade_result == {'status': 'blocked', 'reason': 'managed_upgrade_inventory_pending'}
+    assert [path.read_bytes() for path in paths] == before_upgrade
+    reopened = AgentService(instance['home'], token='s')
+    assert len(reopened.list_tasks(token='s')) == expected
+    assert [path.stat().st_ino for path in paths] == identities
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+@pytest.mark.parametrize('name', ['horizon.sqlite3', 'horizon.sqlite3-journal', 'horizon.sqlite3-wal', 'horizon.sqlite3-shm'])
+def test_managed_sqlite_rejects_replacements_and_unenrolled_sidecars(tmp_path, name):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    AgentService(instance['home'], token='s')
+    path = instance['home'] / name
+    if path.exists():
+        path.rename(path.with_name(name + '.retained'))
+    path.write_text('USER FILE')
+    with pytest.raises(ValueError):
+        AgentService(instance['home'], token='s')
+    assert path.read_text() == 'USER FILE'
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == ('blocked' if name == 'horizon.sqlite3-journal' else 'partial')
+    assert path.read_text() == 'USER FILE'
+
+
+def test_agent_service_does_not_recreate_cleaned_home_while_cleanup_owns_lease(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance, lifecycle_lock
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report', confirmation=instance['instance_id'])
+    with lifecycle_lock(tmp_path / (instance['instance_id'] + '.lock'), exclusive=True) as acquired:
+        assert acquired
+        with pytest.raises((ValueError, RuntimeError)):
+            AgentService(instance['home'], token='s')
+        assert not instance['home'].exists()
+
+
+def test_managed_database_exception_rolls_back_and_releases_connection(tmp_path):
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    def interrupt(phase):
+        if phase == 'before_commit':
+            raise RuntimeError('controlled transaction failure')
+    service = AgentService(instance['home'], token='s', transaction_observer=interrupt)
+    with pytest.raises(RuntimeError, match='controlled transaction'):
+        service.create_task({'schema_version': 1, 'operation_id': 'failed', 'title': 'failed'}, token='s')
+    reopened = AgentService(instance['home'], token='s')
+    assert reopened.list_tasks(token='s') == []
+    reopened.create_task({'schema_version': 1, 'operation_id': 'success', 'title': 'success'}, token='s')
+    for name in ('horizon.sqlite3', 'horizon.sqlite3-journal'):
+        path = instance['home'] / name
+        path.rename(path.with_name(name + '.moved'))
+        path.with_name(name + '.moved').rename(path)
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_managed_database_receipt_failure_retries_without_adopting_files(tmp_path, monkeypatch):
+    import os
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.agent_service import AgentService
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    original = os.replace
+    calls = 0
+    def replace(source, target):
+        nonlocal calls
+        if Path(target) == instance['registration']:
+            calls += 1
+            if calls == 2:
+                raise OSError('journal receipt failure')
+        return original(source, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'replace', replace)
+        with pytest.raises(OSError, match='journal receipt failure'):
+            AgentService(instance['home'], token='s')
+    assert not (instance['home'] / 'horizon.sqlite3-journal').exists()
+    assert (instance['home'] / 'horizon.sqlite3').stat().st_size == 0
+    AgentService(instance['home'], token='s')
+    result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                              confirmation=instance['instance_id'])
+    assert result['status'] == 'cleaned'
+
+
+def test_busy_database_snapshot_blocks_cleanup_before_deletion(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from hostrun.cleanup import initialize_layout, cleanup_instance
+    from hostrun.agent_service import AgentService
+    entered, release = threading.Event(), threading.Event()
+    def pause(phase):
+        if phase == 'before_commit':
+            entered.set()
+            assert release.wait(30)
+    instance = prepare_instance(tmp_path)
+    initialize_layout(tmp_path, instance['instance_id'])
+    service = AgentService(instance['home'], token='s', transaction_observer=pause)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        task = pool.submit(service.create_task, {'schema_version': 1, 'operation_id': 'held', 'title': 'x' * (3 * 1024 * 1024)}, token='s')
+        try:
+            assert entered.wait(5)
+            result = cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'report',
+                                      confirmation=instance['instance_id'])
+            assert result['status'] == 'blocked'
+            assert result['reason'] == 'diagnostics_incomplete'
+            assert (instance['home'] / 'horizon.sqlite3').exists()
+            assert (instance['home'] / 'horizon.sqlite3-journal').exists()
+        finally:
+            release.set()
+        task.result(timeout=5)
 
 
 def test_cleanup_failure_reports_files_already_removed(tmp_path):

@@ -114,7 +114,7 @@ def preview(control_root, identity, *, mode='full'):
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
     model_update = record.pop('model_update', None)
-    if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl'}
+    if not isinstance(data_inventory, dict) or any(name not in {'data/agent/model.json', 'data/diagnostics/events.jsonl', 'data/diagnostics/events.previous.jsonl', 'data/horizon.sqlite3', 'data/horizon.sqlite3-journal'}
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
@@ -353,12 +353,22 @@ def collect_instance_report(control_root, identity, output):
     from hostrun.diagnostics import export_report
     root = control / identity
     report = export_report(root / 'data', output, code=root / 'app')
+    record = _read_registration(control / (identity + '.json'))
+    database = root / 'data/horizon.sqlite3'
+    expected = record.get('data_inventory', {}).get('data/horizon.sqlite3')
+    required = False
+    if expected is not None and database.exists():
+        stat = database.stat()
+        required = expected == [stat.st_dev, stat.st_ino]
+    snapshot = json.loads((report / 'tasks.json').read_text(encoding='utf-8'))
+    missing = ['database_snapshot'] if required and not snapshot.get('available') else []
     import hashlib
     residuals = [hashlib.sha256(p.name.encode('utf-8')).hexdigest()
                  for p in control.glob(identity + '.stage-*')]
     (report / 'instance.json').write_text(json.dumps({
         'schema_version': 1, 'instance_id': identity,
-        'status': 'collected', 'application_present': (root / 'app').is_dir(),
+        'status': 'incomplete' if missing else 'collected', 'missing': missing,
+        'application_present': (root / 'app').is_dir(),
         'preserved_staging_residuals': residuals}), encoding='utf-8')
     return report
 
@@ -368,6 +378,10 @@ def cleanup_instance(control_root, identity, output, *, confirmation=None, mode=
     if confirmation != identity:
         return plan
     report = collect_instance_report(control_root, identity, output)
+    if json.loads((report / 'instance.json').read_text(encoding='utf-8'))['status'] == 'incomplete':
+        result = {'status': 'blocked', 'reason': 'diagnostics_incomplete', 'report': str(report)}
+        (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
+        return result
     control = Path(control_root).resolve(strict=True)
     with file_lock(control / (identity + '.gate'), blocking=False) as acquired:
         if not acquired:
