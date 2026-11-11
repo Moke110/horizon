@@ -26,8 +26,15 @@ Tool policies:
 
 `horizon_cli` spawns an allowlisted business module with argv, without a shell.
 The Python validators and user-review gates remain authoritative. File tools
-reject credential directories and writes outside runtime/archive directories.
+reject credential directories and writes outside the home/outbox directory.
 This is an application tool boundary, not an operating-system sandbox.
+
+For managed Windows test homes, `write_file` sends the request through stdin to
+the fixed Python `-B` artifact bridge, which registers newly created outbox
+identities before writing. Unknown or replaced entries are refused. Existing
+owned writes are in-place and may be partial on failure; success requires a full
+write and flush. Ordinary homes retain their existing writer. See the
+[cleanup contract](windows-test-cleanup.md) for identity and report boundaries.
 
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,

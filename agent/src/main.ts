@@ -126,7 +126,29 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     defineTool({ name: "read_file", label: "Read artifact", description: "Read a Horizon task, artifact or workflow reference as UTF-8.",
       parameters: Type.Object({ path: Type.String() }), execute: async (_id, p) => result(await readFile(await filePath(p.path, false), "utf8")) }),
     defineTool({ name: "write_file", label: "Write artifact", description: "Write a task/result artifact inside Horizon home/outbox only. Run its business validator afterwards.",
-      parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id, p) => {
+      parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id, p, signal) => {
+        if (managed) {
+          try {
+            const path = await filePath(p.path, true);
+            await new Promise<void>((done, fail) => {
+              const child = spawn(python, ["-B", "-X", "utf8", "-m", "hostrun.managed_artifact"],
+                { cwd: code, windowsHide: true, shell: false, signal });
+              const unavailable = () => fail(new Error("Managed artifact unavailable"));
+              let acknowledgement = "";
+              child.stdout.setEncoding("utf8");
+              child.stdout.on("data", (data: string) => {
+                acknowledgement += data;
+                if (acknowledgement.length > 64) { child.kill(); unavailable(); }
+              });
+              child.stderr.resume(); // Bridge errors are fixed categories, never tool content.
+              child.on("error", unavailable);
+              child.stdin.on("error", unavailable);
+              child.on("close", (exit) => exit === 0 && acknowledgement.trim() === "Written" ? done() : unavailable());
+              child.stdin.end(JSON.stringify({ home, relative: relative(join(home, "outbox"), path).replaceAll("\\", "/"), content: p.content }));
+            });
+            return result("Written");
+          } catch { throw new Error("Managed artifact unavailable"); }
+        }
         const path = await filePath(p.path, true); await mkdir(dirname(path), { recursive: true }); await writeFile(path, p.content, "utf8"); return result("Written"); } }),
     defineTool({ name: "horizon_cli", label: "Horizon business operation", description: "Run a Horizon Python business CLI. Supply module and argv tokens, without python/-m or shell syntax. Returns exit code and output; nonzero is failure.",
       parameters: Type.Object({ module: Type.String(), args: Type.Array(Type.String()) }),

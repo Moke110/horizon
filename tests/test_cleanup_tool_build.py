@@ -197,6 +197,11 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
         assert result.returncode == expected, result.stdout + result.stderr
         return json.loads(result.stdout) if result.stdout else None
     home, code = Path(instance['home']), Path(instance['code']) / 'current'
+    artifact = subprocess.run([str(output / 'runtime/python.exe'), '-B', '-X', 'utf8', '-m', 'hostrun.managed_artifact'],
+                              cwd=tmp_path, env=env, input=json.dumps({'home': str(home), 'relative': 'PRIVATE-ARTIFACT.txt',
+                              'content': 'PRIVATE-ARTIFACT-BODY'}), capture_output=True, text=True, timeout=30)
+    assert artifact.returncode == 0 and artifact.stdout.strip() == 'Written', artifact.stderr
+    assert (home / 'outbox/PRIVATE-ARTIFACT.txt').read_text() == 'PRIVATE-ARTIFACT-BODY'
     python("import sys;from hostrun.agent_service import AgentService;AgentService(sys.argv[1],token='test').create_task({'schema_version':1,'operation_id':'seed','title':'preserved'},token='test')", home)
     from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
@@ -243,5 +248,7 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
     args = ('cleanup', identity, '--output', str(tmp_path / 'reports'), '--interactive')
     assert run(*args, input_text='cancel\n')['status'] == 'cancelled'
     assert Path(instance['home']).is_dir()
-    assert run(*args, input_text=identity + '\n')['status'] == 'cleaned'
+    cleaned = run(*args, input_text=identity + '\n')
+    assert cleaned['status'] == 'cleaned'
+    assert 'PRIVATE-ARTIFACT' not in json.dumps(cleaned)
     assert Path(report['report']).is_dir()
