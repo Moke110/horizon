@@ -202,6 +202,11 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
                               'content': 'PRIVATE-ARTIFACT-BODY'}), capture_output=True, text=True, timeout=30)
     assert artifact.returncode == 0 and artifact.stdout.strip() == 'Written', artifact.stderr
     assert (home / 'outbox/PRIVATE-ARTIFACT.txt').read_text() == 'PRIVATE-ARTIFACT-BODY'
+    source = tmp_path / 'PRIVATE-MATERIAL-SOURCE'
+    source.mkdir()
+    (source / 'PRIVATE-MATERIAL.txt').write_text('PRIVATE-MATERIAL-BODY')
+    assert python("import json,sys;from hostrun.update_kb import import_files;r=import_files(sys.argv[1],sys.argv[2],sys.argv[3]);print(json.dumps({'copied':len(r['copied'])}))",
+                  home, instance['archive'], source) == {'copied': 1}
     python("import sys;from hostrun.agent_service import AgentService;AgentService(sys.argv[1],token='test').create_task({'schema_version':1,'operation_id':'seed','title':'preserved'},token='test')", home)
     from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
@@ -251,4 +256,5 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
     cleaned = run(*args, input_text=identity + '\n')
     assert cleaned['status'] == 'cleaned'
     assert 'PRIVATE-ARTIFACT' not in json.dumps(cleaned)
+    assert 'PRIVATE-MATERIAL' not in json.dumps(cleaned)
     assert Path(report['report']).is_dir()

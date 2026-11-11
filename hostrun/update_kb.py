@@ -211,6 +211,26 @@ def import_files(
     upload=None,
     emit=None,
 ) -> dict:
+    """Import with the managed lifecycle lease, without locking upload callbacks."""
+    from hostrun.managed_import import managed_paths
+    paths = managed_paths(home, archive)
+    if paths is None:
+        return _import_files(home, archive, source, upload=upload, emit=emit)
+    from hostrun.cleanup import instance_lock, InstanceBusy
+    with instance_lock(paths[0]) as acquired:
+        if not acquired:
+            raise InstanceBusy('instance_busy')
+        return _import_files(paths[0], paths[1], source, upload=upload, emit=emit)
+
+
+def _import_files(
+    home: str | Path,
+    archive: str | Path,
+    source: str | Path,
+    *,
+    upload=None,
+    emit=None,
+) -> dict:
     """Copy every not-yet-registered source file into ``originals/``.
 
     The archive keeps ``originals/<business id>/<file name>``.  Existing bytes
@@ -218,8 +238,15 @@ def import_files(
     unread conflict instead.  PDFs are then uploaded through the library seam,
     and the final local ledger registration makes a repeat run incremental.
     """
-    home = Path(home)
-    archive = Path(archive).expanduser().resolve()
+    from hostrun.managed_import import managed_paths
+    managed = managed_paths(home, archive)
+    home = Path(home) if managed is None else managed[0]
+    if managed is not None:
+        # Validate lexical containers before resolving either path.
+        from hostrun.managed_import import store
+        with store(home, archive) as state:
+            state.pin('archive', directory=True)
+    archive = Path(archive).expanduser().resolve() if managed is None else managed[1]
     source = Path(source).expanduser().resolve()
     ledger = archive_index.load(home)
     known = {str(row.get("md5") or ""): row for row in ledger if row.get("md5")}
@@ -252,6 +279,9 @@ def import_files(
             "md5": digest,
             "size": size,
         }
+        if managed is not None:
+            from hostrun.managed_import import validate_copy
+            existing_digest = validate_copy(home, target)
         if digest in known:
             skipped.append({**entry, "registered": True})
             continue
@@ -259,8 +289,8 @@ def import_files(
             duplicates.append({**entry, "reason": "内容与本次已选文件重复"})
             continue
         seen.add(digest)
-        if target.exists():
-            if target.is_file() and _md5(target) == digest:
+        if (target.exists() if managed is None else existing_digest is not None):
+            if (target.is_file() and _md5(target) == digest) if managed is None else existing_digest == digest:
                 copied.append({**entry, "existing": True})
             else:
                 conflicts.append(
@@ -271,9 +301,13 @@ def import_files(
                 )
             continue
         try:
-            _copy_verified(path, target, digest)
+            if managed is None:
+                _copy_verified(path, target, digest)
+            else:
+                from hostrun.managed_import import copy_verified
+                copy_verified(home, path, target, digest)
         except OSError as exc:
-            conflicts.append({**entry, "reason": f"未读取：复制失败：{exc}"})
+            conflicts.append({**entry, "reason": f"未读取：复制失败：{exc}" if managed is None else 'material_copy_failed'})
             continue
         copied.append({**entry, "existing": False})
         if path.suffix.lower() == ".pdf" and upload is not None:

@@ -47,7 +47,17 @@ def _display_owned_name(name):
     stripped = name.rstrip('/')
     if stripped.startswith('data/outbox/'):
         return 'data/outbox/sha256:' + hashlib.sha256(stripped.encode('utf-8')).hexdigest()
+    if stripped.startswith('archive/originals/'):
+        return 'archive/originals/sha256:' + hashlib.sha256(stripped.encode('utf-8')).hexdigest()
     return name
+
+
+def material_name(name, *, directory=False):
+    if not isinstance(name, str):
+        return False
+    if name == 'archive/originals':
+        return directory
+    return name.startswith('archive/originals/') and outbox_name('data/outbox/' + name.removeprefix('archive/originals/'), directory=directory)
 
 
 def _code_transaction_name(name):
@@ -143,6 +153,21 @@ def preview(control_root, identity, *, mode='full'):
     application_directories = record.pop('application_directories', {})
     data_inventory = record.pop('data_inventory', {})
     data_directories = record.pop('data_directories', {})
+    archive_inventory = record.pop('archive_inventory', {})
+    archive_directories = record.pop('archive_directories', {})
+    material_update = record.pop('material_update', None)
+    if (not isinstance(archive_inventory, dict) or any(not material_name(name) for name in archive_inventory)
+            or not isinstance(archive_directories, dict) or any(not material_name(name, directory=True) for name in archive_directories)):
+        raise InstanceInvalid('Invalid material inventory')
+    if material_update is not None and (not isinstance(material_update, dict)
+            or set(material_update) != {'target', 'temporary', 'backup', 'new', 'previous', 'digest'}
+            or not (material_name(material_update['target']) or material_update['target'] == 'data/archive-index/index.jsonl')
+            or any(not isinstance(material_update[key], str) or Path(material_update[key]).parent != Path(material_update['target']).parent
+                or not re.fullmatch(r'\.horizon-copy-[0-9a-f]{32}\.tmp', Path(material_update[key]).name) for key in ('temporary', 'backup'))
+            or material_update['temporary'] == material_update['backup']
+            or not isinstance(material_update['digest'], str) or not re.fullmatch(r'[0-9a-f]{32}', material_update['digest'])
+            or any(value is not None and (not isinstance(value, list) or len(value) != 2 or any(type(part) is not int for part in value)) for value in (material_update['new'], material_update['previous']))):
+        raise InstanceInvalid('Invalid material publication')
     model_update = record.pop('model_update', None)
     snapshots = record.pop('data_backups', {})
     transactions = record.pop('code_transactions', {})
@@ -191,6 +216,7 @@ def preview(control_root, identity, *, mode='full'):
             and not re.fullmatch(r'data/version(?:-[0-9a-f]{32}\.tmp|\.json)', name)
             and not re.fullmatch(UPGRADE_BACKUP_PATTERN, name)
             and not outbox_name(name)
+            and not re.fullmatch(r'data/archive-index/(?:index\.jsonl|\.horizon-copy-[0-9a-f]{32}\.tmp)', name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
     if model_update is not None and (not isinstance(model_update, dict)
@@ -200,6 +226,7 @@ def preview(control_root, identity, *, mode='full'):
     if not isinstance(data_directories, dict) or any(name not in {'data/agent', 'data/agent/pi', 'data/agent/pi/sessions', 'data/diagnostics'}
             and not re.fullmatch(UPGRADE_DIRECTORY_PATTERN, name)
             and not outbox_name(name, directory=True)
+            and name != 'data/archive-index'
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN, name) for name in data_directories):
         raise InstanceInvalid('Invalid data directory inventory')
     shortcut_digest = record.pop('shortcut_digest', None)
@@ -239,10 +266,10 @@ def preview(control_root, identity, *, mode='full'):
             child_stat = io_path(child).stat()
             if expected != [child_stat.st_dev, child_stat.st_ino]:
                 raise InstanceInvalid('Child directory identity changed')
-    for relative, expected in {**application_directories, **data_directories}.items():
+    for relative, expected in {**application_directories, **data_directories, **archive_directories}.items():
         if (not isinstance(relative, str) or '..' in Path(relative).parts or ':' in relative
                 or not any(relative == prefix or relative.startswith(prefix + '/')
-                           for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups', 'data/outbox'))):
+                           for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups', 'data/outbox', 'data/archive-index', 'archive/originals'))):
             raise InstanceInvalid('Invalid enrolled directory path')
         directory = root / relative
         if io_path(directory).is_symlink() or io_path(directory).is_junction():
@@ -260,12 +287,21 @@ def preview(control_root, identity, *, mode='full'):
     if mode == 'full':
         candidates.update(data_inventory)
         directories.update(data_directories)
+        candidates.update(archive_inventory)
+        directories.update(archive_directories)
+        if material_update:
+            candidates.update(material_update[key] for key in ('target', 'temporary', 'backup'))
         if model_update:
             candidates.update((model_update['temporary'], model_update['backup']))
     return {'status': 'confirmation_required', 'instance_id': identity,
             'mode': mode, 'delete': [str(p) for p in delete],
-            'registered_file_candidates': [str(root / name) for name in sorted(candidates) if not outbox_name(name)],
-            'empty_directory_candidates': sorted({str(root / name) for name in directories if not outbox_name(name, directory=True)} | {str(p) for p in delete if p.name in children}),
+            'registered_file_candidates': [str(root / name) for name in sorted(candidates) if not outbox_name(name) and not material_name(name)],
+            'empty_directory_candidates': sorted({str(root / name) for name in directories if not outbox_name(name, directory=True) and not material_name(name, directory=True)} | {str(p) for p in delete if p.name in children}),
+            'material_candidates': {'root': str(root / 'archive/originals'),
+                'file_count': sum(material_name(name) for name in candidates),
+                'directory_count': sum(material_name(name, directory=True) for name in directories),
+                'files': [_display_owned_name(name) for name in sorted(candidates) if material_name(name)],
+                'directories': [_display_owned_name(name) for name in sorted(directories) if material_name(name, directory=True)]},
             'outbox_candidates': {'root': str(root / 'data/outbox'),
                 'file_count': sum(outbox_name(name) for name in candidates),
                 'directory_count': sum(outbox_name(name, directory=True) for name in directories),
@@ -322,7 +358,7 @@ def initialize_layout(control_root, identity):
                 raise
         if record.get('children') and not record.get('staging') and not any((root / name).exists() for name in record['children']):
             record.pop('children')
-            for key in ('data_inventory', 'data_directories', 'model_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions', 'installation', 'shortcut_digest'):
+            for key in ('data_inventory', 'data_directories', 'model_update', 'archive_inventory', 'archive_directories', 'material_update', 'application_inventory', 'application_directories', 'upgrade', 'upgrade_operation', 'data_backups', 'code_transactions', 'installation', 'shortcut_digest'):
                 record.pop(key, None)
         if not record.get('children') and any(io_path(root).iterdir()):
             raise InstanceInvalid('Refusing existing instance contents')
@@ -723,6 +759,18 @@ def _cleanup_confirmed(control, identity, report, mode):
             if mode == 'full':
                 identities.update(record.get('data_inventory', {}))
                 directory_inventory.update(record.get('data_directories', {}))
+                identities.update(record.get('archive_inventory', {}))
+                directory_inventory.update(record.get('archive_directories', {}))
+                material = record.get('material_update')
+                if material:
+                    for name, allowed in ((material['target'], (material['new'], material['previous'])),
+                                          (material['temporary'], (material['new'],)), (material['backup'], (material['previous'],))):
+                        path = io_path(root / name)
+                        if path.exists() and not path.is_symlink() and not path.is_junction():
+                            stat = path.stat()
+                            actual = [stat.st_dev, stat.st_ino]
+                            if actual in allowed:
+                                identities[name] = actual
                 update = record.get('model_update')
                 if update and (root / 'data/agent/model.json').exists():
                     stat = (root / 'data/agent/model.json').stat()

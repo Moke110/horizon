@@ -48,6 +48,9 @@ def file_md5(path: str | Path, *, chunk: int = 1 << 20) -> str:
 
 
 def load(runtime: str | Path) -> list[dict]:
+    from hostrun.managed_import import managed_paths, load_ledger
+    if managed_paths(runtime) is not None:
+        return load_ledger(runtime)
     return read_jsonl(index_path(runtime))
 
 
@@ -81,6 +84,9 @@ def register(runtime: str | Path, archive: str | Path, *, dry_run: bool = False)
     A file whose bytes already appear in the ledger is reported as a duplicate and
     not added again, which is what makes a repeated migration a no-op.
     """
+    from hostrun.managed_import import managed_paths, register_ledger
+    if managed_paths(runtime, archive) is not None:
+        return register_ledger(runtime, archive, dry_run=dry_run)
     target = index_path(runtime)
     existing = load(runtime)
     known = {row.get("md5") for row in existing if row.get("md5")}

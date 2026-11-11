@@ -260,7 +260,7 @@ def remove_empty_inventory(root, inventory, validate, removed):
     root = Path(root)
     for relative in sorted(inventory, key=lambda name: len(Path(name).parts), reverse=True):
         path = root / relative
-        if not any(relative == prefix or relative.startswith(prefix + '/') for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups', 'data/outbox')) or '..' in Path(relative).parts or ':' in relative:
+        if not any(relative == prefix or relative.startswith(prefix + '/') for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups', 'data/outbox', 'data/archive-index', 'archive/originals')) or '..' in Path(relative).parts or ':' in relative:
             raise ValueError('Invalid directory inventory')
         if not io_path(path).exists():
             continue
