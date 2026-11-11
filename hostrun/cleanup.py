@@ -27,6 +27,29 @@ UPGRADE_BACKUP_PATTERN = r'data/upgrade-backups/[0-9a-f]{32}/' + UPGRADE_DATA_PA
 UPGRADE_DIRECTORY_PATTERN = r'data/upgrade-backups(?:/[0-9a-f]{32}(?:/agent(?:/pi(?:/sessions(?:/' + SESSION_ID_PATTERN + r')?)?)?)?)?'
 
 
+def outbox_name(name, *, directory=False):
+    """Accept only canonical Windows components below the fixed outbox root."""
+    if not isinstance(name, str):
+        return False
+    if name == 'data/outbox':
+        return directory
+    if not name.startswith('data/outbox/'):
+        return False
+    parts = name.removeprefix('data/outbox/').split('/')
+    return all(part and part not in ('.', '..') and not part.endswith((' ', '.'))
+               and not any(ord(c) < 32 or c in '\\:<>"|?*' for c in part)
+               and not re.fullmatch(r'(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', part, re.I)
+               for part in parts)
+
+
+def _display_owned_name(name):
+    import hashlib
+    stripped = name.rstrip('/')
+    if stripped.startswith('data/outbox/'):
+        return 'data/outbox/sha256:' + hashlib.sha256(stripped.encode('utf-8')).hexdigest()
+    return name
+
+
 def _code_transaction_name(name):
     return (isinstance(name, str) and name and not Path(name).is_absolute()
             and '\\' not in name and ':' not in name and '..' not in Path(name).parts
@@ -167,6 +190,7 @@ def preview(control_root, identity, *, mode='full'):
             and not re.fullmatch(r'data/agent/model-[0-9a-f]{32}\.tmp', name)
             and not re.fullmatch(r'data/version(?:-[0-9a-f]{32}\.tmp|\.json)', name)
             and not re.fullmatch(UPGRADE_BACKUP_PATTERN, name)
+            and not outbox_name(name)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN + r'/session\.jsonl', name) for name in data_inventory):
         raise InstanceInvalid('Invalid data inventory')
     if model_update is not None and (not isinstance(model_update, dict)
@@ -175,6 +199,7 @@ def preview(control_root, identity, *, mode='full'):
         raise InstanceInvalid('Invalid model update journal')
     if not isinstance(data_directories, dict) or any(name not in {'data/agent', 'data/agent/pi', 'data/agent/pi/sessions', 'data/diagnostics'}
             and not re.fullmatch(UPGRADE_DIRECTORY_PATTERN, name)
+            and not outbox_name(name, directory=True)
             and not re.fullmatch(SESSION_DIRECTORY_PATTERN, name) for name in data_directories):
         raise InstanceInvalid('Invalid data directory inventory')
     shortcut_digest = record.pop('shortcut_digest', None)
@@ -217,7 +242,7 @@ def preview(control_root, identity, *, mode='full'):
     for relative, expected in {**application_directories, **data_directories}.items():
         if (not isinstance(relative, str) or '..' in Path(relative).parts or ':' in relative
                 or not any(relative == prefix or relative.startswith(prefix + '/')
-                           for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups'))):
+                           for prefix in ('app/current', 'data/agent', 'data/diagnostics', 'data/upgrade-backups', 'data/outbox'))):
             raise InstanceInvalid('Invalid enrolled directory path')
         directory = root / relative
         if io_path(directory).is_symlink() or io_path(directory).is_junction():
@@ -239,8 +264,13 @@ def preview(control_root, identity, *, mode='full'):
             candidates.update((model_update['temporary'], model_update['backup']))
     return {'status': 'confirmation_required', 'instance_id': identity,
             'mode': mode, 'delete': [str(p) for p in delete],
-            'registered_file_candidates': [str(root / name) for name in sorted(candidates)],
-            'empty_directory_candidates': sorted({str(root / name) for name in directories} | {str(p) for p in delete if p.name in children}),
+            'registered_file_candidates': [str(root / name) for name in sorted(candidates) if not outbox_name(name)],
+            'empty_directory_candidates': sorted({str(root / name) for name in directories if not outbox_name(name, directory=True)} | {str(p) for p in delete if p.name in children}),
+            'outbox_candidates': {'root': str(root / 'data/outbox'),
+                'file_count': sum(outbox_name(name) for name in candidates),
+                'directory_count': sum(outbox_name(name, directory=True) for name in directories),
+                'files': [_display_owned_name(name) for name in sorted(candidates) if outbox_name(name)],
+                'directories': [_display_owned_name(name) for name in sorted(directories) if outbox_name(name, directory=True)]},
             'preserve': [str(p) for p in preserve], 'owned_children': sorted(children)}
 
 
@@ -722,6 +752,7 @@ def _cleanup_confirmed(control, identity, report, mode):
                           if mode == 'full' or name == 'app'}
             with ExitStack() as retained:
                 _verify_cleanup_result(root, result, identities, {**directory_inventory, **containers}, mode, record['children'], retained)
+                result['removed'] = [_display_owned_name(name) for name in result['removed']]
                 (report / 'cleanup.json').write_text(json.dumps(result), encoding='utf-8')
     return result
 
@@ -732,7 +763,7 @@ def _verify_cleanup_result(root, result, files, directories, mode, children, ret
     from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
     removed = set(result['removed'])
     for name, expected in sorted({**files, **directories}.items()):
-        row = {'path': name, 'kind': 'directory' if name in directories else 'file'}
+        row = {'path': _display_owned_name(name), 'kind': 'directory' if name in directories else 'file'}
         try:
             path = io_path(root / name)
             if not path.exists() and not path.is_symlink() and not path.is_junction():
