@@ -207,3 +207,8 @@ A4 first complete candidate at `4c294ca` rebuilt identically (artifact SHA-256 `
 
 
 The first admission-lock placement produced a deterministic pending-upgrade interleaving regression (197 passed, 1 failed). Moving process-local coordination after lock-handle opening restored the pre-admission interleaving while still guarding native acquisition through release. Both review axes cleared the revision; the final cleanup/process group passed **198 tests** in 178.04 seconds. External exclusivity, pending-operation refusal and the outer desktop lifetime lease remain checked. New package verification is still pending.
+
+
+A second actual managed-runtime attempt exposed cross-process admission contention: completed main/child tool work was retained, but scheduled model configuration returned instance busy and cursors stayed unchanged. The process-local fix was therefore insufficient. Runtime admission now uses a shared native gate while cleanup/upgrade retain exclusive gates and all callers retain their lifecycle leases and post-acquisition checks; the superseded process lock and common lock API extension were removed. Native cross-process/shared-exclusive interoperability tests and both review axes passed; the broad native rerun and new installed candidate remain pending.
+
+The frozen test run at `9396111` passed **1,406 tests, 3 skipped** in 448.31 seconds. Its predecessor had 1 failed / 1,404 passed / 3 skipped: the retained model URL used Fetch-forbidden port 10080, reproduced locally as bad port. Controlled model fixtures now use high dynamic ports and assert the intended crash cutpoint, with structured failure diagnostics. This is a test-fixture correction, not a runtime recovery change.

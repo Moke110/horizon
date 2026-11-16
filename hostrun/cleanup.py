@@ -5,10 +5,20 @@ import uuid
 import os
 import base64
 import re
-import threading
 from contextlib import contextmanager, ExitStack, closing
 from common import file_lock
 from hostrun.windows_cleanup import io_path
+
+
+if os.name == 'nt':
+    import ctypes as _ctypes
+    from ctypes import wintypes as _windows_types
+
+    class _LeaseOverlapped(_ctypes.Structure):
+        """One stable OVERLAPPED ABI type shared by nested native leases."""
+        _fields_ = [('Internal', _ctypes.c_size_t), ('InternalHigh', _ctypes.c_size_t),
+                    ('Offset', _windows_types.DWORD), ('OffsetHigh', _windows_types.DWORD),
+                    ('Event', _windows_types.HANDLE)]
 
 
 class InstanceBusy(RuntimeError):
@@ -877,17 +887,6 @@ def _lexical_home(home):
     return Path(os.path.abspath(os.path.normpath(spelling)))
 
 
-_instance_entrances = {}
-_instance_entrances_guard = threading.Lock()
-
-
-def _instance_entrance(home):
-    # Serialize only this process's brief admission sections. The outer desktop
-    # shared lifecycle lease must remain concurrently usable by its workers.
-    with _instance_entrances_guard:
-        return _instance_entrances.setdefault(os.path.normcase(str(home)), threading.RLock())
-
-
 @contextmanager
 def instance_lock(home):
     """Serialize registered test instances using a lock outside removable data."""
@@ -922,7 +921,7 @@ def instance_lock(home):
         raise InstanceInvalid('Invalid instance registration') from exc
     with ExitStack() as stack:
         try:
-            with file_lock(root.parent / (root.name + '.gate'), blocking=False, admission=_instance_entrance(home)) as entrance:
+            with lifecycle_lock(root.parent / (root.name + '.gate')) as entrance:
                 acquired = entrance and stack.enter_context(lifecycle_lock(root.parent / (root.name + '.lock')))
                 if acquired:
                     preview(root.parent, root.name)
@@ -953,14 +952,11 @@ def lifecycle_lock(path, *, exclusive=False):
         import ctypes
         from ctypes import wintypes as w
         import msvcrt
-        class Overlapped(ctypes.Structure):
-            _fields_ = [('Internal', ctypes.c_size_t), ('InternalHigh', ctypes.c_size_t),
-                        ('Offset', w.DWORD), ('OffsetHigh', w.DWORD), ('Event', w.HANDLE)]
         api = ctypes.WinDLL('kernel32', use_last_error=True)
-        api.LockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(Overlapped)]
-        api.UnlockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(Overlapped)]
+        api.LockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(_LeaseOverlapped)]
+        api.UnlockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(_LeaseOverlapped)]
         handle = msvcrt.get_osfhandle(stream.fileno())
-        overlap = Overlapped()
+        overlap = _LeaseOverlapped()
         acquired = bool(api.LockFileEx(handle, 1 | (2 if exclusive else 0), 0, 1, 0, ctypes.byref(overlap)))
         if not acquired and ctypes.get_last_error() != 33:
             raise ctypes.WinError(ctypes.get_last_error())

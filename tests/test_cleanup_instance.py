@@ -3111,3 +3111,75 @@ def test_managed_database_threads_serialize_shared_lease_entrance(tmp_path,monke
         first.join(5);second.join(5)
     assert not first.is_alive() and not second.is_alive()
     assert not errors,[repr(error) for error in errors]
+
+def test_runtime_admission_readers_coexist_across_process_with_desktop_lease(tmp_path):
+    import subprocess,sys,threading,time,json
+    from hostrun import cleanup
+    from hostrun.agent_service import AgentService
+    instance=prepare_instance(tmp_path);cleanup.initialize_layout(tmp_path,instance['instance_id'])
+    service=AgentService(instance['home'],token='s');errors=[]
+    program='''
+import sys,json
+from pathlib import Path
+from contextlib import contextmanager
+from hostrun import cleanup
+original=cleanup.lifecycle_lock
+@contextmanager
+def pause(path,*,exclusive=False):
+ with original(path,exclusive=exclusive) as acquired:
+  if str(path).endswith('.lock'):
+   print('HELD',flush=True);sys.stdin.readline()
+  yield acquired
+cleanup.lifecycle_lock=pause
+with cleanup.instance_lock(Path(sys.argv[1])) as acquired:print(json.dumps({'available':bool(acquired)}),flush=True)
+'''
+    with cleanup.instance_lock(instance['home']) as outer:
+        assert outer
+        child=subprocess.Popen([sys.executable,'-X','utf8','-c',program,str(instance['home'])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+        try:
+            assert child.stdout.readline().strip()=='HELD'
+            def query():
+                try:assert service.list_tasks(token='s')==[]
+                except BaseException as error:errors.append(error)
+            thread=threading.Thread(target=query);thread.start();time.sleep(.15)
+            child.stdin.write('\n');child.stdin.flush()
+            thread.join(5);assert not thread.is_alive()
+            output,error=child.communicate(timeout=5)
+            assert child.returncode==0,error
+            assert json.loads(output)['available']
+            assert not errors,[repr(error) for error in errors]
+        finally:
+            if child.poll() is None:child.kill();child.wait()
+
+@pytest.mark.parametrize('empty',[False,True])
+def test_shared_runtime_gate_refuses_exclusive_native_peer(tmp_path,empty):
+    import subprocess,sys,json
+    from hostrun.cleanup import lifecycle_lock
+    from common import file_lock
+    gate=tmp_path/'native-peer.gate';gate.write_bytes(b'' if empty else b'\0')
+    program='''
+import sys,json
+from pathlib import Path
+from common import file_lock
+try:
+ with file_lock(Path(sys.argv[1]),blocking=False) as available:result={'available':bool(available)}
+except OSError:result={'available':False}
+print(json.dumps(result))
+'''
+    with lifecycle_lock(gate) as shared:
+        assert shared
+        result=subprocess.run([sys.executable,'-X','utf8','-c',program,str(gate)],capture_output=True,text=True,timeout=10)
+        assert result.returncode==0,result.stderr
+        assert json.loads(result.stdout)=={'available':False}
+    with file_lock(gate,blocking=False) as exclusive:
+        assert exclusive
+        with lifecycle_lock(gate) as shared:assert not shared
+
+def test_nested_native_leases_share_stable_overlapped_binding(tmp_path,monkeypatch):
+    import ctypes
+    from hostrun.cleanup import lifecycle_lock
+    native=ctypes.WinDLL;kernel=native('kernel32',use_last_error=True)
+    monkeypatch.setattr(ctypes,'WinDLL',lambda name,*a,**kw:kernel if name=='kernel32' else native(name,*a,**kw))
+    with lifecycle_lock(tmp_path/'outer.lock') as outer:
+        assert outer
+        with lifecycle_lock(tmp_path/'inner.lock') as inner:assert inner

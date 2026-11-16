@@ -13,7 +13,7 @@ import re
 import tempfile
 import time
 import unicodedata
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -129,7 +129,7 @@ def _release(handle) -> None:
 
 
 @contextmanager
-def file_lock(path: Path, *, blocking: bool = True, admission=None) -> Iterator[bool]:
+def file_lock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
     """Exclusive advisory lock on `path`, portable across POSIX and Windows.
 
     `fcntl` does not exist on Windows, so the POSIX and msvcrt flavours are
@@ -139,23 +139,18 @@ def file_lock(path: Path, *, blocking: bool = True, admission=None) -> Iterator[
     path = Path(path)
     ensure_dir(path.parent)
     handle = path.open("a+b")
+    acquired = False
     try:
-        # Opening/preparing the handle is not lock admission. Optional local
-        # coordination begins only at native acquisition and ends at release.
-        with admission if admission is not None else nullcontext():
-            acquired = False
-            try:
-                try:
-                    _acquire(handle, blocking)
-                    acquired = True
-                except OSError:
-                    if blocking:
-                        raise
-                yield acquired
-            finally:
-                if acquired:
-                    _release(handle)
+        try:
+            _acquire(handle, blocking)
+            acquired = True
+        except OSError:
+            if blocking:
+                raise
+        yield acquired
     finally:
+        if acquired:
+            _release(handle)
         handle.close()
 
 
