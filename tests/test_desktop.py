@@ -405,3 +405,14 @@ def test_missing_model_configuration_persists_failure_for_trace(tmp_path):
     saved = AgentService(tmp_path, token='s').list_turns(app.task_id,token='s')[-1]
     assert saved['status'] == 'recovery_required'
     assert saved['failure'] == {'category':'configuration','retryable':False,'attempts':0,'message':'请在 Horizon 初始化流程中配置模型 API Key'}
+
+def test_selected_conversation_survives_background_schedule_insertion(tmp_path):
+    from hostrun.agent_service import AgentService
+    from hostrun.desktop_bridge import task_snapshot
+    service=AgentService(tmp_path,token='s')
+    old=service.create_task({'schema_version':1,'operation_id':'old','title':'Old run'},token='s')
+    service.append_message({'schema_version':1,'operation_id':'result','task_id':old['task_id'],'expected_version':old['version'],'role':'Horizon','text':'old result'},token='s')
+    service.create_task({'schema_version':1,'operation_id':'new','title':'New run'},token='s')
+    chats,current=task_snapshot(service,old['task_id'],token='s')
+    assert chats[current]['task_id']==old['task_id']
+    assert chats[current]['messages'][-1]['text']=='old result'
