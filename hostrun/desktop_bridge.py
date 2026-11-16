@@ -12,6 +12,8 @@ import uuid
 from contextlib import ExitStack
 from hostrun.diagnostics import record_event, export_report
 from hostrun.agent_delivery import DeliveryService
+from hostrun.voyager_materials import MaterialsService
+from hostrun.voyager_service import VoyagerService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -29,6 +31,28 @@ def task_snapshot(service, selected_task_id, *, token):
     tasks=service.list_tasks(token=token)
     current=next((i for i,t in enumerate(tasks) if t['task_id']==selected_task_id),0)
     return tasks,current
+
+
+def material_command(materials, command, *, token):
+    """Route authenticated desktop material actions through Voyager's public API."""
+    if command.get('action') == 'materials_register':
+        value=materials.register_text({k:v for k,v in command.items() if k!='action'},token=token)
+        return materials.get_package(value['material_id'],token=token)
+    if command.get('action') == 'materials_open':
+        return materials.get_package(command.get('material_id'),token=token)
+    raise CommandError('invalid_command','Unknown materials action')
+
+
+def voyager_command(voyager, command, *, token):
+    """Route desktop scope commands through Voyager's authenticated public seam."""
+    action=command.get('action')
+    if action=='voyager_page':return 'voyager_page',voyager.recent(token=token,before=command.get('before'))
+    if action=='voyager_history':return 'voyager_history',voyager.query_history(command.get('request_id'),command.get('query_id'),token=token,offset=command.get('offset',0))
+    if action=='voyager_open':return 'voyager_view',voyager.view(command.get('request_id'),token=token)
+    methods={'voyager_create':voyager.create,'voyager_execute':voyager.execute,'voyager_cancel':voyager.cancel}
+    if action not in methods:raise CommandError('invalid_command','Unknown Voyager action')
+    value=methods[action]({k:v for k,v in command.items() if k!='action'},token=token)
+    return 'voyager_view',voyager.view(value['request_id'],token=token)
 
 
 def serve(resolved):
@@ -82,6 +106,10 @@ def serve(resolved):
     app.home = service.home
     app.service, app.service_token = service, token
     deliveries = DeliveryService(service)
+    materials = MaterialsService(service.home,token=token)
+    voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
+    voyager_current = None
+    voyager_busy = set()
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
     from hostrun.schedule_runtime import ScheduleRuntime
@@ -123,7 +151,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'materials':materials.list_materials(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -157,8 +185,21 @@ def serve(resolved):
         finally:
             state()
 
+    def execute_voyager(command):
+        try:
+            kind,data=voyager_command(voyager,command,token=token)
+            with dispatch_lock:
+                if voyager_current==command.get('request_id'):emit(kind,data)
+        except CommandError as exc:
+            emit('command_error',{'schema_version':1,'operation_id':command.get('operation_id'),'code':exc.code,'message':str(exc)})
+        except Exception:emit('notice','检索未能完成，已保留执行预算与缺口，请核实后继续。')
+        finally:
+            with dispatch_lock:
+                voyager_busy.discard(command.get('request_id'));state()
+                if voyager_current==command.get('request_id'):emit('voyager_view',voyager.view(voyager_current,token=token))
+
     def commands():
-        nonlocal current, response
+        nonlocal current, response, voyager_current
         for line in incoming:
             with dispatch_lock:
                 try:
@@ -169,6 +210,19 @@ def serve(resolved):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action=='voyager_execute':
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if cmd.get('request_id') in voyager_busy:raise CommandError('execution_busy','Retrieval request is already running')
+                        voyager_current=cmd.get('request_id');voyager_busy.add(voyager_current)
+                        threading.Thread(target=execute_voyager,args=(dict(cmd),),daemon=True).start()
+                    elif action in ('voyager_create','voyager_open','voyager_cancel','voyager_history','voyager_page'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=voyager_command(voyager,cmd,token=token)
+                        if kind=='voyager_view':voyager_current=data['request_id']
+                        emit(kind,data)
+                    elif action in ('materials_register','materials_open'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        emit('material_package',material_command(materials,cmd,token=token))
                     elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
                     elif action == 'ready': ui_ready.set()
@@ -248,6 +302,11 @@ def serve(resolved):
                 emit('activate')
             try: kind, data = app.events.get(timeout=.1)
             except queue.Empty: continue
+            if kind == 'voyager_changed':
+                with dispatch_lock:
+                    state()
+                    if voyager_current==data:emit('voyager_view',voyager.view(data,token=token))
+                continue
             if kind == 'children':
                 state()
             if kind == 'agent':

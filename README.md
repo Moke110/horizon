@@ -169,6 +169,8 @@ Open Automatic tasks to create, edit, pause or resume a plan. Supply an explicit
 
 The Trace view records generation and delivery separately. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
 
+Open **Materials** to paste text, give it a title and source label, and register it offline without model credentials. Select a saved material to read its exact original text and source identity, receipt time, SHA-256 and extraction version. Generated summaries appear separately; registration does not generate one or contact a remote service. Originals remain available independently of conversations.
+
 ### Desktop development
 
 Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
@@ -188,3 +190,7 @@ Closing the window keeps Horizon running in the tray. Choose Exit and pause to s
 Temporary model failures use bounded retries. Trace shows authentication, configuration, quota or other error categories and retains completed results. After correcting the problem, Continue retries unfinished work in the same task.
 
 Use **Export diagnostics** in the desktop header to create a local report folder. It contains bounded lifecycle/task/error metadata, versions and task-state summaries. It excludes API keys, configuration files, conversation and document text, databases and Pi transcripts; nothing is uploaded automatically. Reports are stored under the data home’s `diagnostics/reports/` directory. If the GUI cannot start, the installed runtime can export with `runtime/python.exe -m hostrun.diagnostics --code <installation> --output <report-directory>`.
+
+### Explicit retrieval scopes
+
+Open **范围检索** to preserve an original research scope, bilingual alternative queries, required/excluded terms and source restrictions. Choose an initial foundation/recent search or an incremental overlapping window, with publication or discovery time as the basis. Defaults are 900 seconds, 20 queries, 100 candidates and 20 full texts per execution segment; reaching any limit retains partial results and gaps. Continue grants a new segment while preserving cumulative use and uncertain prior work. Successful query cursors are shown separately from gaps. Temporary scopes do not create Frontiers. Source adapters are configured separately; an unavailable source remains unconfigured and cannot produce complete coverage.
