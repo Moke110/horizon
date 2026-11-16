@@ -97,6 +97,11 @@ class DesktopWorker:
                     self.events.put(('done', {'durable': True} if turn else None))
 
     def delegate(self, event):
+        from hostrun.agent_capacity import child_slot
+        with child_slot(self.service, self.service_token, self.cancelled):
+            return self._delegate(event)
+
+    def _delegate(self, event):
         request_id = str(event.get('requestId', ''))
         if not request_id or len(request_id) > 256:
             raise ValueError('Invalid delegation request')

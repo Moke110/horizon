@@ -52,6 +52,9 @@ class AgentService:
                     operation_id TEXT UNIQUE NOT NULL, event TEXT NOT NULL);
             ''')
 
+        from hostrun.agent_scheduling import initialize as initialize_scheduling
+        initialize_scheduling(db)
+
         db.execute('BEGIN IMMEDIATE')
         for task_id, encoded in db.execute('SELECT task_id,result FROM agent_tasks').fetchall():
             task = json.loads(encoded)
@@ -101,6 +104,14 @@ class AgentService:
             self._transaction_observer('before_commit')
         self._transaction_observer('after_commit')
         return result
+
+    def schedule_command(self, command, *, token):
+        from hostrun.agent_scheduling import command as execute
+        return execute(self, command, token=token)
+
+    def list_schedules(self, *, token):
+        from hostrun.agent_scheduling import list_schedules
+        return list_schedules(self, token=token)
 
     def list_tasks(self, *, token):
         self._authorize(token)

@@ -165,6 +165,10 @@ Double-click the `Horizon.lnk` shortcut for everyday startup. The extension star
 
 On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horizon/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the window keeps the application running in the tray. Use Exit and pause to stop its workers.
 
+Open Automatic tasks to create, edit, pause or resume a plan. Supply an explicit task scope and interval; these development scopes are separate from Knowledge Base Frontiers. The default execution limits are two main tasks and four child agents, adjustable in the same panel. Work from one plan runs serially, and paused work blocks that plan until continued or abandoned. Missed triggers merge into one run; declared execution coverage is retained across restarts. It is not proof of source retrieval. Missing or invalid coverage declarations hold the run for review; abandon that run to pause the plan without advancing its covered range.
+
+The Trace view records generation and delivery separately. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
+
 ### Desktop development
 
 Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.

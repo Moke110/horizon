@@ -11,6 +11,7 @@ import secrets
 import uuid
 from contextlib import ExitStack
 from hostrun.diagnostics import record_event, export_report
+from hostrun.agent_delivery import DeliveryService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -21,6 +22,13 @@ def authenticate(incoming, token):
     supplied = incoming.readline(129).rstrip('\r\n')
     if not hmac.compare_digest(supplied, token):
         raise PermissionError('Desktop bridge authentication failed')
+
+
+def task_snapshot(service, selected_task_id, *, token):
+    """Keep selection attached to entity identity when background tasks arrive."""
+    tasks=service.list_tasks(token=token)
+    current=next((i for i,t in enumerate(tasks) if t['task_id']==selected_task_id),0)
+    return tasks,current
 
 
 def serve(resolved):
@@ -73,11 +81,16 @@ def serve(resolved):
     service = AgentService(desktop_home(), token=token)
     app.home = service.home
     app.service, app.service_token = service, token
+    deliveries = DeliveryService(service)
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
+    from hostrun.schedule_runtime import ScheduleRuntime
+    from hostrun import agent_scheduling
+    scheduler = ScheduleRuntime(service, token, resolved, app.version_provider)
     chats = service.list_tasks(token=token)
     current, response = 0, ''
     lock = threading.Lock()
+    dispatch_lock = threading.RLock()
     ui_ready = threading.Event()
     exiting = threading.Event()
     configuring = threading.Event()
@@ -88,25 +101,33 @@ def serve(resolved):
                 outgoing.flush()
             except (OSError, ValueError):
                 pass
+    def refresh_chats():
+        nonlocal current
+        with dispatch_lock:
+            selected=chats[current]['task_id'] if chats and 0<=current<len(chats) else None
+            snapshot,current=task_snapshot(service,selected,token=token)
+            chats[:]=snapshot
+
     def create(operation=None):
         nonlocal current
         result = service.create_task({'schema_version': 1, 'operation_id': operation or str(uuid.uuid4()),
                              'title': '新会话'}, token=token)
-        chats[:] = service.list_tasks(token=token)
+        refresh_chats()
         current = next(index for index, task in enumerate(chats) if task['task_id'] == result['task_id'])
     def message(role, text, operation=None, expected_version=None):
         previous_version = chats[current]['version']
         result = service.append_message({'schema_version': 1, 'operation_id': operation or str(uuid.uuid4()),
                                 'task_id': chats[current]['task_id'], 'expected_version': previous_version if expected_version is None else expected_version, 'role': role, 'text': text}, token=token)
-        chats[:] = service.list_tasks(token=token)
+        refresh_chats()
         return result['version'] > previous_version
     def state():
-        facts = embedded_agent.runtime(app.home, code=code)
-        emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
-                       'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
+        with dispatch_lock:
+            facts = embedded_agent.runtime(app.home, code=code)
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,
+                           'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
-        chats[:] = service.list_tasks(token=token)
+        refresh_chats()
         current = next(i for i,t in enumerate(chats) if t['task_id'] == turn['task_id'])
         chat = chats[current]
         response = ''; app.busy = True; app.cancelled.clear()
@@ -126,67 +147,89 @@ def serve(resolved):
             configuring.clear()
             state()
 
+    def delivery_command(command):
+        try:
+            deliveries.handle(command,token=token)
+        except CommandError as exc:
+            emit('command_error',{'schema_version':1,'operation_id':command.get('operation_id'),'code':exc.code,'message':str(exc)})
+        except Exception:
+            emit('notice','投递操作未能完成，请核实投递状态。')
+        finally:
+            state()
+
     def commands():
         nonlocal current, response
         for line in incoming:
-            try:
-                cmd = json.loads(line)
-                action = cmd.get('action')
-                if configuring.is_set() and action in ('configure', 'refresh_models', 'select_model', 'send'):
-                    raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
-                if action == 'ready': ui_ready.set()
-                elif action == 'export_diagnostics':
-                    report = export_report(service.home, code=code, tasks=service.list_turns(token=token))
-                    emit('notice', '诊断报告已导出：' + str(report))
-                elif action == 'exit':
-                    exiting.set()
-                    for turn in service.recoverable_turns(token=token):
-                        while turn['status'] == 'running':
-                            try:
-                                service.transition_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'],'expected_version':turn['version'],'action':'pause'},token=token)
-                                break
-                            except CommandError as exc:
-                                if exc.code != 'version_conflict': raise
-                                turn = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn['turn_id'])
-                    app.stop()
-                    emit('exit_ready')
-                    break
-                elif action in ('stop','resume_turn','cancel_turn'):
-                    turn_id = cmd.get('turn_id') or getattr(app,'turn',{}).get('turn_id')
-                    target = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn_id)
-                    service.transition_turn({'schema_version':1,'operation_id':cmd.get('operation_id') or str(uuid.uuid4()),'turn_id':turn_id,'expected_version':target['version'],'action':'resume' if action == 'resume_turn' else 'cancel'},token=token)
-                    record_event(service.home, 'task_transition', turn_id=turn_id, status='running' if action == 'resume_turn' else 'cancelled')
-                    if action != 'resume_turn' and (getattr(app,'turn',None) or {}).get('turn_id') == turn_id: app.stop()
-                elif action == 'console': app.answers.put(str(cmd['text']))
-                elif not app.busy:
-                    if action == 'new':
-                        create(cmd.get('operation_id'))
-                    elif action == 'select':
-                        index = int(cmd['index'])
-                        if not 0 <= index < len(chats): raise ValueError('Invalid session')
-                        current = index
-                    elif action in ('configure', 'refresh_models'):
-                        configuring.set()
-                        threading.Thread(target=discover_models, args=(dict(cmd),), daemon=True).start()
-                    elif action == 'select_model':
-                        embedded_agent.select_model(app.home, cmd['model'])
-                    elif action == 'send':
-                        if not isinstance(cmd.get('operation_id'), str) or not cmd['operation_id'].strip() or type(cmd.get('expected_version')) is not int:
-                            raise CommandError('invalid_command', 'operation_id and expected_version are required')
-                        text = str(cmd['text']).strip()
-                        if not text: continue
-                        if not chats: create()
-                        turn = service.begin_turn({'schema_version':1,'operation_id':cmd['operation_id'],'task_id':chats[current]['task_id'],'expected_version':cmd['expected_version'],'text':text},token=token)
-                        latest = next(t for t in service.list_turns(turn['task_id'],token=token) if t['turn_id'] == turn['turn_id'])
-                        if latest['status'] == 'running': start_turn(latest)
-                state()
-            except CommandError as exc:
-                chats[:] = service.list_tasks(token=token)
-                state()
-                emit('command_error', {'schema_version': 1, 'operation_id': cmd.get('operation_id'), 'code': exc.code, 'message': str(exc)})
-                emit('notice', str(exc))
-            except Exception as exc:
-                emit('notice', str(exc))
+            with dispatch_lock:
+                try:
+                    cmd = json.loads(line)
+                    action = cmd.get('action')
+                    if configuring.is_set() and action in ('configure', 'refresh_models', 'select_model', 'send'):
+                        raise CommandError('configuration_busy', '正在查询模型，请稍后重试')
+                    if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
+                        if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
+                        threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
+                    elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
+                    elif action == 'ready': ui_ready.set()
+                    elif action == 'export_diagnostics':
+                        report = export_report(service.home, code=code, tasks=service.list_turns(token=token))
+                        emit('notice', '诊断报告已导出：' + str(report))
+                    elif action == 'exit':
+                        exiting.set()
+                        scheduler.stopped=True
+                        for turn in service.recoverable_turns(token=token):
+                            while turn['status'] == 'running':
+                                try:
+                                    service.transition_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'],'expected_version':turn['version'],'action':'pause'},token=token)
+                                    break
+                                except CommandError as exc:
+                                    if exc.code != 'version_conflict': raise
+                                    turn = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn['turn_id'])
+                        app.stop()
+                        emit('exit_ready')
+                        break
+                    elif action in ('stop','resume_turn','cancel_turn'):
+                        turn_id = cmd.get('turn_id') or getattr(app,'turn',{}).get('turn_id')
+                        target = next(t for t in service.list_turns(token=token) if t['turn_id'] == turn_id)
+                        service.transition_turn({'schema_version':1,'operation_id':cmd.get('operation_id') or str(uuid.uuid4()),'turn_id':turn_id,'expected_version':target['version'],'action':'resume' if action == 'resume_turn' else 'cancel'},token=token)
+                        record_event(service.home, 'task_transition', turn_id=turn_id, status='running' if action == 'resume_turn' else 'cancelled')
+                        if action != 'resume_turn':
+                            for scheduled_worker, scheduled_thread in list(scheduler.workers.values()):
+                                if scheduled_worker.turn['turn_id']==turn_id:scheduled_worker.stop()
+                            if (getattr(app,'turn',None) or {}).get('turn_id') == turn_id: app.stop()
+                    elif action == 'console': app.answers.put(str(cmd['text']))
+                    elif not app.busy:
+                        if action == 'new':
+                            create(cmd.get('operation_id'))
+                        elif action == 'select':
+                            index = next((i for i,t in enumerate(chats) if t['task_id']==cmd['task_id']),-1) if 'task_id' in cmd else int(cmd['index'])
+                            if not 0 <= index < len(chats): raise ValueError('Invalid session')
+                            current = index
+                        elif action in ('configure', 'refresh_models'):
+                            configuring.set()
+                            threading.Thread(target=discover_models, args=(dict(cmd),), daemon=True).start()
+                        elif action == 'select_model':
+                            embedded_agent.select_model(app.home, cmd['model'])
+                        elif action == 'send':
+                            if len(scheduler.workers)>=agent_scheduling.get_limits(service,token=token)['main']:
+                                raise CommandError('capacity_busy','执行位已满，请稍后发送')
+                            if not isinstance(cmd.get('operation_id'), str) or not cmd['operation_id'].strip() or type(cmd.get('expected_version')) is not int:
+                                raise CommandError('invalid_command', 'operation_id and expected_version are required')
+                            text = str(cmd['text']).strip()
+                            if not text: continue
+                            if not chats: create()
+                            turn = service.begin_turn({'schema_version':1,'operation_id':cmd['operation_id'],'task_id':chats[current]['task_id'],'expected_version':cmd['expected_version'],'text':text},token=token)
+                            latest = next(t for t in service.list_turns(turn['task_id'],token=token) if t['turn_id'] == turn['turn_id'])
+                            if latest['status'] == 'running': start_turn(latest)
+                    state()
+                except CommandError as exc:
+                    refresh_chats()
+                    state()
+                    emit('command_error', {'schema_version': 1, 'operation_id': cmd.get('operation_id'), 'code': exc.code, 'message': str(exc)})
+                    emit('notice', str(exc))
+                except Exception as exc:
+                    emit('notice', str(exc))
     state()
     threading.Thread(target=commands, daemon=True).start()
     emit('console_done', None)
@@ -194,9 +237,13 @@ def serve(resolved):
     exit_code = 0
     try:
         while child.poll() is None:
-            if not exiting.is_set() and not app.busy and ui_ready.is_set():
-                pending_turns = service.recoverable_turns(token=token)
-                if pending_turns: start_turn(pending_turns[0]); state()
+            with dispatch_lock:
+                if not exiting.is_set() and not app.busy and ui_ready.is_set():
+                    pending_turns = [t for t in service.recoverable_turns(token=token) if t['task_id'] not in scheduler.task_ids()]
+                    if pending_turns and len(scheduler.workers)<agent_scheduling.get_limits(service,token=token)['main']:
+                        start_turn(pending_turns[0]); state()
+                if ui_ready.is_set() and scheduler.step(foreground_busy=app.busy):
+                    refresh_chats();state()
             if consume_activation(app.home):
                 emit('activate')
             try: kind, data = app.events.get(timeout=.1)
@@ -212,7 +259,7 @@ def serve(resolved):
                         turn = app.turn
                         service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(turn['task_id']),turn['turn_id']+':complete')),'turn_id':turn['turn_id'],'expected_version':turn['version'],'status':'completed','result':response,'error':''},token=token)
                     else: message('Horizon', response)
-                chats[:] = service.list_tasks(token=token)
+                refresh_chats()
                 app.busy = False; state()
             emit(kind, data)
         exit_code = child.returncode
@@ -220,6 +267,7 @@ def serve(resolved):
         outgoing.close()
         incoming.close()
         connection.close()
+        scheduler.stop()
         app.closed = True; app.stop(); app.answers.put(None)
         if exit_code:
             record_event(service.home, 'error', code='renderer_exit', exit_code=exit_code)
