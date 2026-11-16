@@ -330,3 +330,33 @@ def test_real_pi_http_retry_budget(tmp_path,status,body,expected):
         assert events[-1]['attempts']==expected
     finally:
         server.shutdown();server.server_close();thread.join()
+
+def test_real_pi_failed_model_turn_can_continue_after_restart(tmp_path):
+    import os, sys, uuid
+    requests=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            if len(requests)==1:
+                self.send_response(401);self.send_header('Content-Type','application/json');self.end_headers()
+                self.wfile.write(b'{"error":{"message":"invalid key","type":"authentication"}}');return
+            self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
+            for delta,finish in [({'role':'assistant','content':'Recovered result'},None),({},'stop')]:
+                event={'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':delta,'finish_reason':finish}]}
+                self.wfile.write(('data: '+json.dumps(event)+'\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='retry-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
+        args=embedded_agent.argv(tmp_path,'one question',kind='agent',code=ROOT,session_id=str(uuid.uuid4()))+['--turn-id','failed-model-turn']
+        def run():
+            return subprocess.run(args,cwd=ROOT,env={**os.environ,'HORIZON_PYTHON':sys.executable},capture_output=True,text=True,encoding='utf-8',timeout=20)
+        first=run();assert first.returncode==1
+        second=run();assert second.returncode==0,second.stdout
+        assert len(requests)==2
+        assert json.dumps(requests[-1]['messages']).count('one question') == 1
+        assert 'Recovered result' in second.stdout
+    finally:
+        server.shutdown();server.server_close();thread.join()
