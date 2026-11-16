@@ -258,3 +258,12 @@ def test_bundled_tool_runs_offline_with_minimal_path(tmp_path):
     assert 'PRIVATE-ARTIFACT' not in json.dumps(cleaned)
     assert 'PRIVATE-MATERIAL' not in json.dumps(cleaned)
     assert Path(report['report']).is_dir()
+
+@pytest.mark.skipif(os.name != 'nt' or not os.environ.get('HORIZON_CLEANUP_TEST_INPUTS'),reason='requires pinned offline Windows runtime inputs')
+def test_independent_tool_initializes_current_agent_schema(tmp_path):
+    output=tmp_path/'tool'
+    built=subprocess.run([sys.executable,'-X','utf8','scripts/prepare_cleanup_tool.py','--inputs',os.environ['HORIZON_CLEANUP_TEST_INPUTS'],'--output',str(output)],capture_output=True,text=True,timeout=60)
+    assert built.returncode==0,built.stderr
+    result=subprocess.run([str(output/'runtime/python.exe'),'-B','-X','utf8','-c',"from hostrun.agent_service import AgentService; import sys; print(AgentService(sys.argv[1],token='s').list_schedules(token='s'))",str(tmp_path/'home')],cwd=output,capture_output=True,text=True,timeout=30)
+    assert result.returncode==0,result.stderr
+    assert result.stdout.strip()=='[]'
