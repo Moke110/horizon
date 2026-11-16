@@ -67,6 +67,11 @@ class DesktopWorker:
                 committed = True
             if code:
                 self.events.put(('agent', {'type': 'error', 'message': f'Agent 退出 ({code})'}))
+        except embedded_agent.ModelConfigurationMissing:
+            failure = {'category':'configuration','retryable':False,'attempts':0,
+                       'message':'请在 Horizon 初始化流程中配置模型 API Key'}
+            self.record_diagnostic('error', **failure)
+            self.events.put(('agent', {'type':'error', **failure}))
         except Exception as exc:
             self.record_diagnostic('error', code=type(exc).__name__)
             self.events.put(('agent', {'type': 'error', 'message': str(exc)}))
