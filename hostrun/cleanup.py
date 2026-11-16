@@ -5,6 +5,7 @@ import uuid
 import os
 import base64
 import re
+import threading
 from contextlib import contextmanager, ExitStack, closing
 from common import file_lock
 from hostrun.windows_cleanup import io_path
@@ -876,6 +877,17 @@ def _lexical_home(home):
     return Path(os.path.abspath(os.path.normpath(spelling)))
 
 
+_instance_entrances = {}
+_instance_entrances_guard = threading.Lock()
+
+
+def _instance_entrance(home):
+    # Serialize only this process's brief admission sections. The outer desktop
+    # shared lifecycle lease must remain concurrently usable by its workers.
+    with _instance_entrances_guard:
+        return _instance_entrances.setdefault(os.path.normcase(str(home)), threading.RLock())
+
+
 @contextmanager
 def instance_lock(home):
     """Serialize registered test instances using a lock outside removable data."""
@@ -910,7 +922,7 @@ def instance_lock(home):
         raise InstanceInvalid('Invalid instance registration') from exc
     with ExitStack() as stack:
         try:
-            with file_lock(root.parent / (root.name + '.gate'), blocking=False) as entrance:
+            with file_lock(root.parent / (root.name + '.gate'), blocking=False, admission=_instance_entrance(home)) as entrance:
                 acquired = entrance and stack.enter_context(lifecycle_lock(root.parent / (root.name + '.lock')))
                 if acquired:
                     preview(root.parent, root.name)

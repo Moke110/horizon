@@ -3081,3 +3081,33 @@ def test_first_install_bounds_file_receipts_and_reclaims_only_empty_batch(tmp_pa
     print({'install_seconds': round(time.perf_counter() - started, 3), 'registration_writes': len(writes), 'registration_bytes': sum(byte_counts)})
     assert len(writes) < 30
     assert cleanup.cleanup_instance(tmp_path, instance['instance_id'], tmp_path.parent / 'reports', confirmation=instance['instance_id'])['status'] == 'cleaned'
+
+@pytest.mark.parametrize('desktop_lease',[False,True])
+def test_managed_database_threads_serialize_shared_lease_entrance(tmp_path,monkeypatch,desktop_lease):
+    import threading,time
+    from contextlib import contextmanager,nullcontext
+    from hostrun import cleanup
+    from hostrun.agent_service import AgentService
+    instance=prepare_instance(tmp_path);cleanup.initialize_layout(tmp_path,instance['instance_id'])
+    service=AgentService(instance['home'],token='s')
+    original=cleanup.lifecycle_lock
+    entered=threading.Event();release=threading.Event();second_started=threading.Event();errors=[]
+    @contextmanager
+    def hold_first(path,*,exclusive=False):
+        with original(path,exclusive=exclusive) as acquired:
+            if threading.current_thread().name=='first-reader':
+                entered.set();assert release.wait(5)
+            yield acquired
+    monkeypatch.setattr(cleanup,'lifecycle_lock',hold_first)
+    def query(second=False):
+        if second:second_started.set()
+        try:assert service.list_tasks(token='s')==[]
+        except BaseException as error:errors.append(error)
+    first=threading.Thread(target=query,name='first-reader');second=threading.Thread(target=query,args=(True,),name='second-reader')
+    with cleanup.instance_lock(instance['home']) if desktop_lease else nullcontext(True) as acquired:
+        assert acquired
+        first.start();assert entered.wait(5)
+        second.start();assert second_started.wait(1);time.sleep(.15);release.set()
+        first.join(5);second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert not errors,[repr(error) for error in errors]
