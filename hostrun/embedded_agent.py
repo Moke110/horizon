@@ -10,6 +10,10 @@ from common import ensure_dir, read_json
 from hostrun.base import HostRunError, load_config
 
 
+class ModelConfigurationMissing(HostRunError):
+    """No usable model credentials were configured; no provider request ran."""
+
+
 def config_path(home: Path) -> Path:
     return Path(home) / "agent" / "model.json"
 
@@ -72,7 +76,7 @@ def argv(home: Path, task: str, *, kind: str, code: Path | None = None, session_
     if not facts["ok"]:
         raise HostRunError("；".join(facts["problems"]))
     if not facts["configured"]:
-        raise HostRunError("请在 Horizon 初始化流程中配置模型 API Key")
+        raise ModelConfigurationMissing("请在 Horizon 初始化流程中配置模型 API Key")
     args = [facts["node"], facts["entry"], "--home", str(Path(home).resolve()),
             "--kind", kind, "--task", task]
     if session_id is not None:

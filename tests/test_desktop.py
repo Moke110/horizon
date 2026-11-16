@@ -391,3 +391,17 @@ def test_manual_continue_replays_successful_child_and_retries_failed_child(tmp_p
     assert len(spawned) == 3
     assert len(app.service.list_children(app.task_id, token='s')) == 2
     assert len(app.service.list_tasks(token='s')[0]['messages']) == 1
+
+def test_missing_model_configuration_persists_failure_for_trace(tmp_path):
+    from hostrun.agent_service import AgentService
+    app = worker(tmp_path)
+    app.resolved['code'] = str(Path(__file__).resolve().parents[1])
+    app.service = AgentService(tmp_path, token='s')
+    app.service_token = 's'
+    task = app.service.create_task({'schema_version':1,'operation_id':'create','title':'missing config'},token='s')
+    app.task_id = task['task_id']
+    app.turn = app.service.begin_turn({'schema_version':1,'operation_id':'missing-turn','task_id':app.task_id,'expected_version':task['version'],'text':'missing config'},token='s')
+    app.run_agent('missing config', app.turn['session_id'])
+    saved = AgentService(tmp_path, token='s').list_turns(app.task_id,token='s')[-1]
+    assert saved['status'] == 'recovery_required'
+    assert saved['failure'] == {'category':'configuration','retryable':False,'attempts':0,'message':'请在 Horizon 初始化流程中配置模型 API Key'}
