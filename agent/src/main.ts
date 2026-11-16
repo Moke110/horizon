@@ -327,7 +327,20 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       const branch = sessionManager.getBranch();
       const index = branch.findIndex(entry => entry.id === marker.id);
       if (index < 0) throw new Error("Turn marker is not on active session branch");
-      recoveredMessages = branch.slice(index + 1).filter((entry: any) => entry.type === "message").map((entry: any) => entry.message);
+      // A failed model response is persisted as an assistant message. Pi's
+      // continue() requires a user/tool-result tail. Keep failure history on
+      // its original branch, resuming from the last committed input instead.
+      let tail = branch.length - 1;
+      while (tail > index) {
+        const entry: any = branch[tail];
+        if (entry.type !== "message") { tail--; continue; }
+        if (entry.message.role !== "assistant" || !["error", "aborted"].includes(entry.message.stopReason)) break;
+        tail--;
+      }
+      if (tail < branch.length - 1 && branch.slice(tail + 1).some((entry: any) => entry.type === "message")) {
+        sessionManager.branch(branch[tail].id);
+      }
+      recoveredMessages = sessionManager.getBranch().slice(index + 1).filter((entry: any) => entry.type === "message").map((entry: any) => entry.message);
     }
     else sessionManager.appendCustomEntry("horizon.turn", { turnId: values["turn-id"] });
   }
