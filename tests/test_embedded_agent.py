@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 import threading
+import random
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -11,6 +12,34 @@ import pytest
 from hostrun import embedded_agent
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def local_model_server(handler):
+    """Use dynamic high ports: Windows bind(0) can choose Fetch-blocked 10080."""
+    failure = None
+    for port in random.sample(range(49152, 65536), 64):
+        try:
+            return ThreadingHTTPServer(('127.0.0.1', port), handler)
+        except OSError as error:
+            failure = error
+    raise RuntimeError('No available high port for local model fixture') from failure
+
+
+@pytest.mark.skipif(not shutil.which('node'), reason='requires Node Fetch')
+def test_local_model_fixture_port_is_accepted_by_node_fetch():
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_GET(self):
+            self.send_response(200);self.end_headers();self.wfile.write(b'local fixture')
+    server=local_model_server(Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        assert 49152 <= server.server_port <= 65535
+        result=subprocess.run(['node','--input-type=module','-e',f"const r=await fetch('http://127.0.0.1:{server.server_port}'); console.log(await r.text());"],capture_output=True,text=True,timeout=10)
+        assert result.returncode==0,result.stderr
+        assert result.stdout.strip()=='local fixture'
+    finally:
+        server.shutdown();server.server_close();thread.join()
 
 
 def test_distribution_keeps_pi_catalog_but_excludes_private_dotfiles(tmp_path):
@@ -69,7 +98,7 @@ def test_real_pi_stream_and_tool_policy(tmp_path, kind):
                 self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
             self.wfile.write(b"data: [DONE]\n\n")
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = local_model_server(Handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
@@ -118,7 +147,7 @@ def test_pi_session_survives_process_restart_and_isolates_tasks(tmp_path):
                 event = {'id': 'test', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'test-model', 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
                 self.wfile.write(('data: ' + json.dumps(event) + '\n\n').encode())
             self.wfile.write(b'data: [DONE]\n\n')
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server = local_model_server(Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -158,7 +187,7 @@ def test_pi_provider_error_does_not_persist_credentials(tmp_path):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({'error': {'message': 'Rejected credential ' + key, 'type': 'authentication_error'}}).encode())
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server = local_model_server(Handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
@@ -190,7 +219,7 @@ def test_child_role_exposes_only_bounded_tools(tmp_path):
             self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
             event = {'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':{'role':'assistant','content':'bounded result'},'finish_reason':'stop'}]}
             self.wfile.write(('data: '+json.dumps(event)+'\n\ndata: [DONE]\n\n').encode())
-    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    server=local_model_server(Handler)
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
     try:
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='child-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
@@ -225,7 +254,7 @@ def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_co
                 event={'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':delta,'finish_reason':finish}]}
                 self.wfile.write(('data: '+json.dumps(event)+'\n\n').encode())
             self.wfile.write(b'data: [DONE]\n\n')
-    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    server=local_model_server(Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='recovery-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
@@ -236,18 +265,20 @@ def test_recovered_turn_replays_stable_distinct_delegations_without_duplicate_co
             proc=subprocess.Popen(args,cwd=ROOT,env={**os.environ,'HORIZON_PYTHON':sys.executable},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
             if history_pipe:
                 proc.stdin.write(json.dumps({'type':'history','messages':[{'role':'You','text':'Prior history marker recovery-key'}]})+'\n');proc.stdin.flush()
-            timer=threading.Timer(35,proc.kill);timer.start();ids=[]
+            timer=threading.Timer(35,proc.kill);timer.start();ids=[];events=[]
             try:
                 for line in proc.stdout:
                     assert 'recovery-key' not in line
                     event=json.loads(line)
+                    events.append(event)
                     if event['type']=='delegate_request':
                         ids.append(event['requestId'])
                         if attempt == 0:
                             proc.kill(); break  # owner committed, reply not yet persisted by Pi
                         proc.stdin.write(json.dumps({'requestId':event['requestId'],'result':{'status':'succeeded','artifact_ref':'agent-child:'+str(len(ids)),'result':'read result'}})+'\n');proc.stdin.flush()
                 code=proc.wait(timeout=5)
-                if attempt: assert code==0,proc.stderr.read()
+                if attempt: assert code==0, {'attempt':attempt,'events':events,'requests':len(requests),'stderr':proc.stderr.read()}
+                else: assert len(ids)==1, {'stage':'before crash cutpoint','events':events,'requests':len(requests),'code':code,'stderr':proc.stderr.read()}
             finally:
                 timer.cancel()
                 if proc.poll() is None:proc.kill();proc.wait()
@@ -283,7 +314,7 @@ def test_failed_delegate_resumes_original_call_after_process_restart(tmp_path):
                 event = {'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':data,'finish_reason':reason}]}
                 self.wfile.write(('data: '+json.dumps(event)+'\n\n').encode())
             self.wfile.write(b'data: [DONE]\n\n')
-    server = ThreadingHTTPServer(('127.0.0.1',0), Handler)
+    server = local_model_server(Handler)
     thread = threading.Thread(target=server.serve_forever,daemon=True); thread.start()
     try:
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='retry-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
@@ -318,7 +349,7 @@ def test_real_pi_http_retry_budget(tmp_path,status,body,expected):
             requests.append(self.rfile.read(int(self.headers['Content-Length'])))
             self.send_response(status); self.send_header('Content-Type','application/json');self.send_header('Retry-After','0');self.end_headers()
             self.wfile.write(json.dumps({'error':{'message':body,'type':body}}).encode())
-    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    server=local_model_server(Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='budget-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
@@ -346,7 +377,7 @@ def test_real_pi_failed_model_turn_can_continue_after_restart(tmp_path):
                 event={'id':'test','object':'chat.completion.chunk','created':1,'model':'test-model','choices':[{'index':0,'delta':delta,'finish_reason':finish}]}
                 self.wfile.write(('data: '+json.dumps(event)+'\n\n').encode())
             self.wfile.write(b'data: [DONE]\n\n')
-    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    server=local_model_server(Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
         embedded_agent.configure(tmp_path,provider='horizon-test',model='test-model',api_key='retry-key',base_url=f'http://127.0.0.1:{server.server_port}/v1')
