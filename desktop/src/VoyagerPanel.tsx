@@ -1,7 +1,8 @@
 import React,{useEffect,useState} from 'react';
 const localInput=(d:Date)=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
 const labels:Record<string,string>={planned:'待执行',running:'执行中',complete:'已完成',partial:'部分覆盖',blocked:'来源未就绪',failed:'执行失败',cancelled:'已取消',uncertain:'结果不确定',pending:'待调用',unconfigured:'未配置',unknown:'结果未知',reserved:'已预留',received:'已收到',foundation:'基础',recent:'近期',incremental:'增量',seconds_budget:'时间到限',queries_budget:'查询次数到限',candidates_budget:'候选数到限',fulltexts_budget:'正文数到限',provider_failed:'来源调用失败',timeout:'来源超时',authentication:'来源认证失败',budget_unknown:'来源额度未知',fulltext_pending:'正文等待回执',fulltext_failed:'正文获取失败'};
-const label=(s:string)=>labels[s]||s;
+const academicLabels:Record<string,string>={rate_limited:'来源限流',preprint:'预印本',article:'文章',not_peer_reviewed:'未经同行评审',published_at:'发表时间',abstract:'摘要',doi:'DOI',title:'标题',authors:'作者',journal:'期刊'};
+const label=(s:string)=>academicLabels[s]||labels[s]||s;
 const budget=(b:any)=>`${b.seconds} 秒 · ${b.queries} 次查询 · ${b.candidates} 个候选 · ${b.fulltexts} 篇正文`;
 const date=(s:number|null|undefined)=>s==null?'未知':new Date(s*1000).toLocaleString();
 export type VoyagerSummary={request_id:string;version:number;status:string;scope_text:string;stop_reason?:string};
@@ -21,7 +22,12 @@ export function VoyagerPanel({requests,busy,selected,history,onCommand}:{request
  <section><h4>成功覆盖</h4>{!Object.keys(selected.successful_cursors).length&&<p>尚无已完成查询。</p>}{selected.queries.filter((q:any)=>selected.successful_cursors[q.query_id]!==undefined).map((q:any)=><p key={q.query_id}>{q.source} · {label(q.phase)} · {q.term}：完成至 {date(selected.successful_cursors[q.query_id])}</p>)}
  <h4>覆盖缺口（{selected.gap_count}，最多显示 100 条）</h4>{selected.gaps.map((g:any,i:number)=><p key={g.query_id||g.work_id||i}>{g.source||'正文获取'} · {label(g.reason)}</p>)}</section>
  <section><h4>查询计划与实际调用</h4>{selected.queries.map((q:any)=><div key={q.query_id}><p>{q.source} · {label(q.phase)} · {q.term} · {label(q.status)} · 已尝试 {q.attempt_count} 次</p>{q.attempts?.length?<details><summary>最近一次实际调用</summary><pre style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(q.attempts[0],null,2)}</pre></details>:<p>尚未调用来源。</p>}<button onClick={()=>onCommand({action:'voyager_history',request_id:selected.request_id,query_id:q.query_id,offset:0})}>查看执行记录</button></div>)}</section>
- <section><h4>候选（{selected.candidate_count}，显示前 50 条）</h4>{selected.candidates.map((c:any)=><div key={c.source+':'+c.source_id}><strong>{c.title}</strong><p>{c.source} · 发表 {date(c.published_at)} · 发现 {date(c.discovered_at)}</p></div>)}</section>
+ <section><h4>候选（{selected.candidate_count}，显示前 50 条）</h4>{selected.candidates.map((c:any)=><div key={c.source+':'+c.source_id}>
+ <strong>{c.title}</strong><p>{c.source} · {c.source_id} · 发表 {date(c.published_at)} · 发现 {date(c.discovered_at)}</p>
+ <p>来源网址：{c.url}</p>
+ <p>资料类型：{label(c.source_type)||'未知'} · 同行评审：{c.peer_review_status==='unknown'?'未知':label(c.peer_review_status)||'未知'}</p>
+ {c.missing_fields?.length>0&&<p>来源缺少：{c.missing_fields.map(label).join('、')}</p>}
+ </div>)}</section>
  {history&&<details open><summary>查询执行记录（共 {history.total} 次，从第 {history.offset+1} 次起）</summary><pre style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(history.items,null,2)}</pre><button disabled={history.offset===0} onClick={()=>onCommand({action:'voyager_history',request_id:history.request_id,query_id:history.query_id,offset:Math.max(0,history.offset-10)})}>上一页</button><button disabled={history.offset+history.items.length>=history.total} onClick={()=>onCommand({action:'voyager_history',request_id:history.request_id,query_id:history.query_id,offset:history.offset+10})}>下一页</button></details>}</article>}
  </div>;
 }
