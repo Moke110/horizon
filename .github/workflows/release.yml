@@ -114,12 +114,18 @@ jobs:
       - name: Assemble the bundled runtime
         shell: pwsh
         run: |
-          python scripts/prepare_runtime.py --embed-zip python-embed.zip --wheels wheels --out $env:RUNTIME_DIR --python-version $env:PYTHON_VERSION --require-module yaml --require-module pypdf --require-module trafilatura
+          python scripts/prepare_runtime.py --embed-zip python-embed.zip --wheels wheels --out $env:RUNTIME_DIR --python-version $env:PYTHON_VERSION --require-module yaml --require-module pypdf --require-module trafilatura --require-module playwright
           if ($LASTEXITCODE -ne 0) { throw "runtime assembly failed; the embeddable zip or a wheel is missing or malformed" }
 
       - uses: actions/setup-node@v4
         with:
           node-version: "24.16.0"
+
+      - name: Prepare pinned Chromium bundle
+        shell: pwsh
+        run: |
+          python scripts/prepare_browser.py --out (Join-Path $env:RUNTIME_DIR "browser")
+          if ($LASTEXITCODE -ne 0) { throw "Chromium preparation failed" }
 
       - name: Build the TypeScript desktop
         shell: pwsh
