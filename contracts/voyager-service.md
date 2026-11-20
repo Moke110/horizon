@@ -8,7 +8,7 @@ All mutations require a launch token, schema_version 1, a unique operation_id an
 
 `create` preserves scope.text, user/planner alternatives, must_include, exclude and source identifiers. There are at most 128 expanded queries. Hard constraints remain on every actual query and accepted candidate. Initial searches separate foundation (effective lower bound zero) and recent queries; incremental searches use the original lower bound minus overlap. UTC timestamps are integer Unix seconds. Windows are half-open [effective_from_at, until_at). Original user bounds are retained separately. Publication and discovery timestamps are independent; missing selected timestamps do not prove inclusion.
 
-`execute` calls configured source owners with an actual query DTO and remaining candidate/time allowance. The default registry includes `arxiv` and `europepmc`. An explicitly supplied registry replaces the defaults, including when empty. A missing source records an unconfigured gap. An exhausted validated page/receipt completes that query only. Success cursors are query-specific and never replace unresolved gaps.
+`execute` calls configured source owners with an actual query DTO and remaining candidate/time allowance. The default registry includes `arxiv` and `europepmc`. It also includes public Crossref (`crossref`) and OpenAlex (`openalex`), which requires a verified OPENALEX_API_KEY and a successful free quota check before each search page. The owner retains optional DOI, up to 100 reference IDs, the provider’s reference count and cited-by count. Null counts indicate missing data. The query result keeps a separate row for each source identity. An explicitly supplied registry replaces the defaults, including when empty. A missing source records an unconfigured gap. An exhausted validated page/receipt completes that query only. Success cursors are query-specific and never replace unresolved gaps.
 
 ## Budgets and recovery
 
@@ -23,3 +23,10 @@ Explicit Continue creates a new segment, retaining aggregate usage, results and 
 Requests, operation receipts and events are Voyager-owned SQLite tables, initialized by this service rather than importing Voyager into AgentService schema setup. Product startup initializes the service on the target home. Managed upgrades preserve the database; first public service access creates its additive tables.
 
 `recent` pages 50 summaries; `view` bounds candidates to 50 (abstract omitted), gaps to 100, fulltext work to 50 and segment history to 3. `query_history` pages ten actual attempts. Candidate pages are bounded to 2 MB metadata; error pages permit only a fixed error_code. Raw provider errors, secret-bearing URLs and arbitrary response bodies are not persisted. Source IO occurs outside the desktop dispatch lock; postcommit notifications refresh authenticated GUI projections.
+## Tavily web discovery
+
+Select source `tavily` and supply the user-owned `TAVILY_API_KEY` to the Horizon process. The key is used only in HTTPS authorization headers. Search snippets are discovery metadata, never full-text evidence. Only Search basic is enabled; automatic parameters, answers and raw content are disabled.
+
+Before each search, `/usage` must positively identify the free Researcher plan, zero PAYG usage/limit and at least one available account/key credit. A durable local ceiling and reservation precede Search. Unknown, exhausted or interrupted usage pauses this channel; other sources remain available. The local ceiling does not reset automatically across months. An interrupted reservation requires reconciliation against verified account usage before resuming; do not erase the ledger to retry an unknown call.
+
+Protocol references: [Usage](https://docs.tavily.com/documentation/api-reference/endpoint/usage), [Search](https://docs.tavily.com/documentation/api-reference/endpoint/search).
