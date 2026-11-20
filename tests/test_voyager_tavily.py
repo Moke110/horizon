@@ -45,3 +45,29 @@ def test_corrupt_negative_reservation_fails_closed(tmp_path):
     with patch.object(TavilyProvider,'_request',return_value=usage()) as request:
         assert TavilyProvider(tmp_path,key='secret').search(query())=={'error_code':'budget_unknown'}
         assert request.call_count==1
+
+def test_rejected_tavily_key_leaves_other_source_usable(tmp_path):
+    import io
+    from urllib.error import HTTPError
+    from hostrun.voyager_service import VoyagerService
+
+    class EmptyCatalog:
+        def search(self, actual_query):
+            return dict(candidates=[], receipt='empty-catalog', next_cursor=None, exhausted=True)
+
+    service = VoyagerService(tmp_path, token='local', providers={
+        'tavily': TavilyProvider(tmp_path, key='fixture-key'), 'catalog': EmptyCatalog(),
+    })
+    planned = service.create(dict(schema_version=1, operation_id='plan',
+        scope=dict(text='photometry', sources=['tavily', 'catalog']),
+        window=dict(mode='incremental', basis='discovered', from_at=1, until_at=2,
+                    overlap_seconds=0)), token='local')
+    denied = HTTPError('https://api.tavily.com/usage', 401, 'fixture-key', {}, io.BytesIO())
+    with patch.object(TavilyProvider, '_request', side_effect=denied) as request:
+        view = service.execute(dict(schema_version=1, operation_id='run',
+            request_id=planned['request_id'], expected_version=1), token='local')
+    assert request.call_count == 1
+    assert view['status'] == 'partial'
+    assert view['gaps'][0]['reason'] == 'authentication'
+    assert view['queries'][1]['status'] == 'complete'
+    assert 'fixture-key' not in str(service.get(planned['request_id'], token='local'))
