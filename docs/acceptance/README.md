@@ -214,7 +214,7 @@ At `50cf2c2`, the desktop command probe searched arXiv and Europe PMC for photom
 
 Candidate 0.1.0-voyager.3 from c907cbf passed installed verification (SHA-256 a7728fb5c8b8dddf64fb43d44cfd2cea27f013e79b92c8fba9bdf00517ebb518). The installed runtime observed RSS 27 → 0, Atom 15 → 0 and a site section 290 → 0 over two refreshes. It also verified the original three-page PDF hash and page-specific extracted text. The Explorer confirmed both the subscription display and the three-page reader check were correct, with no extra console. The recorded pythonw owner and four Electron processes were absent after the check. [Subscription evidence](https://github.com/Moke110/horizon/issues/196#issuecomment-7041659067) and [PDF evidence](https://github.com/Moke110/horizon/issues/199#issuecomment-7041659691).
 
-## Voyager V9 static source acceptance — 2026-11-20
+## Voyager V9 webpage acceptance — 2026-11-20
 
 At frozen source `7ba07a7`, Windows 10 x64 and CPython 3.13.13 ran
 `python -m scripts.probe_voyager_web` with Trafilatura 2.3.1. The public
@@ -224,5 +224,29 @@ anchor. NASA's Hubble news article yielded 14 paragraphs (5,773 bytes),
 the Python Insider release blog 35 (3,352), IANA's Example Domains page
 10 (739), and Python's bisect documentation 150 (8,369). All 15 Windows
 CPython 3.13 release-wheel versions matched their downloaded metadata.
-The [V9 ticket](https://github.com/Moke110/horizon/issues/200) tracks the
-separate dynamic renderer, containment and installed-package acceptance.
+
+The Windows x64 local candidate `0.1.0-voyager.5` from `bf7b87f` installed
+in a fresh C-hosted directory and verified all 20,597 manifest files. The ZIP
+SHA-256 was `b88f7ff59f094d771ded1ad3d765224210f228972101ede8f72d5f53d3a9df82`.
+Bundled Python 3.13.7 used Playwright 1.65.2 and Chromium 159.0.8154.6
+(revision 1255). The Chromium executable's SHA-256 was
+`9b5b0b9d91b08bc432f53ddf9946aaec7ab100b3f887819656c2ee63cde1757e`.
+At the frozen commit, the full Python suite passed 1,485 tests with 15 skipped.
+Desktop typecheck and build passed.
+
+The installed Materials service captured 10 paragraphs from the public Quotes
+to Scrape JavaScript page, with Albert Einstein in anchors `p1`, `p3`, and
+`p6`. The initial response lacked the marker in visible text. Same-operation
+replay used the stored result, and a new service instance verified the snapshot
+and reopened the same anchors and text digest. A live 404 preserved the original
+link and reason with empty original text. Earlier attempts reported capture
+failure and are retained. The previous candidate timed out at serial resource
+fetching. The passing probe observes the actual initial response without sending
+an extra preflight request.
+
+Native installed-runtime probes observed Chromium, Playwright Node, Python, and
+console-host descendants. Cancellation and a navigation timeout both left no
+observed descendants or per-capture temporary directories. The probes supplied
+invalid external driver and browser locations and still observed the bundled
+browser. Visible desktop capture, console visibility, and explicit desktop exit
+remain pending in the [V9 ticket](https://github.com/Moke110/horizon/issues/200).
