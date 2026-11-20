@@ -38,6 +38,14 @@ def material_command(materials, command, *, token):
     if command.get('action') == 'materials_register':
         value=materials.register_text({k:v for k,v in command.items() if k!='action'},token=token)
         return materials.get_package(value['material_id'],token=token)
+    if command.get('action') == 'materials_pdf_register':
+        value = materials.register_pdf({k:v for k,v in command.items() if k != 'action'}, token=token)
+        return materials.get_package(value['material_id'], token=token)
+    if command.get('action') == 'materials_pdf_resolve':
+        decision = {key:value for key,value in command.items() if key != 'decision'}
+        decision['action'] = command.get('decision')
+        value = materials.resolve_pdf(decision, token=token)
+        return materials.get_package(value['material_id'], token=token)
     if command.get('action') == 'materials_open':
         return materials.get_package(command.get('material_id'),token=token)
     raise CommandError('invalid_command','Unknown materials action')
@@ -109,6 +117,9 @@ def serve(resolved):
     materials = MaterialsService(service.home,token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     voyager_current = None
+    from hostrun.voyager_subscriptions import Subscriptions
+    subscriptions = Subscriptions(service.home)
+    subscription_busy = set()
     voyager_busy = set()
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
@@ -151,7 +162,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'materials':materials.list_materials(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_materials(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -198,6 +209,16 @@ def serve(resolved):
                 voyager_busy.discard(command.get('request_id'));state()
                 if voyager_current==command.get('request_id'):emit('voyager_view',voyager.view(voyager_current,token=token))
 
+    def update_subscription(identity):
+        try:
+            subscriptions.refresh(identity)
+        except Exception:
+            emit('notice', '订阅刷新失败')
+        finally:
+            with dispatch_lock:
+                subscription_busy.discard(identity)
+                state()
+
     def commands():
         nonlocal current, response, voyager_current
         for line in incoming:
@@ -210,6 +231,16 @@ def serve(resolved):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action=='subscription_add':
+                        subscriptions.configure(cmd['kind'],cmd['url'])
+                        state()
+                    elif action=='subscription_refresh':
+                        identity=cmd['id']
+                        subscriptions.get(identity)
+                        if identity not in subscription_busy and not exiting.is_set():
+                            subscription_busy.add(identity)
+                            threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
+                            state()
                     elif action=='voyager_execute':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if cmd.get('request_id') in voyager_busy:raise CommandError('execution_busy','Retrieval request is already running')
@@ -220,9 +251,16 @@ def serve(resolved):
                         kind,data=voyager_command(voyager,cmd,token=token)
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
-                    elif action in ('materials_register','materials_open'):
+                    elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
-                        emit('material_package',material_command(materials,cmd,token=token))
+                        package = material_command(materials,cmd,token=token)
+                        if package.get('pdf'):
+                            import base64
+                            original = materials.pdf_original(package['material_id'], token=token)
+                            emit('private_pdf', {'id':package['material_id'], 'data':base64.b64encode(original).decode('ascii')})
+                        else:
+                            emit('private_pdf', None)
+                        emit('material_package', package)
                     elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
                     elif action == 'ready': ui_ready.set()

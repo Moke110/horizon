@@ -13,4 +13,6 @@
 # appears.  Bump these only together with a release and re-run the CI
 # reproducibility check.
 PyYAML==6.0.2
-PyMuPDF==1.26.4
+pypdf==7.1.1
+feedparser==6.0.14
+feedparser-sgmllib==2.1.0

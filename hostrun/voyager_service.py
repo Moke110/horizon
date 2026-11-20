@@ -38,6 +38,7 @@ class VoyagerService:
     def __init__(self,home,*,token,scope_provider=None,providers=None,clock=time.time,on_change=None):
         if not isinstance(token,str) or not token:raise ValueError('A launch token is required')
         self.home=Path(home);self._token=token;self.scope_provider=scope_provider or ExplicitScopeProvider()
+        self._subscription_sources = providers is None
         if providers is None:
             from hostrun.voyager_sources import default_providers
             from hostrun.voyager_doi_sources import CrossrefProvider, OpenAlexProvider
@@ -324,13 +325,23 @@ class VoyagerService:
         while value['status']=='running' and value.get('execution_operation')==command['operation_id']:
             query=next((q for q in value['queries'] if q['status']=='pending'),None)
             if query is None:break
-            if query['source'] not in self.providers:
+            provider = self.providers.get(query['source'])
+            if provider is None and self._subscription_sources and re.fullmatch(r'sub_[0-9a-f]{32}', query['source']):
+                from hostrun.voyager_subscriptions import Subscriptions, SubscriptionProvider
+                subscriptions = Subscriptions(self.home)
+                identity = query['source'][4:]
+                try:
+                    subscriptions.get(identity)
+                    provider = SubscriptionProvider(subscriptions,identity)
+                except ValueError:
+                    pass
+            if provider is None:
                 def unavailable(current):next(q for q in current['queries'] if q['query_id']==query['query_id']).update(status='unconfigured',error='unconfigured')
                 value,_=self._change({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'expected_version':value['version']},'source_unconfigured',unavailable,token=token);continue
             value=self.reserve({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'query_id':query['query_id'],'expected_version':value['version']},token=token)
             if value['status']!='running':break
             lease=value['inflight']
-            try:page=self.providers[query['source']].search(lease['actual_query'])
+            try:page=provider.search(lease['actual_query'])
             except Exception:page={'error_code':'provider_failed'}
             try:value=self.record({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'expected_version':value['version'],'reservation_id':lease['reservation_id'],'page':page},token=token)
             except CommandError:

@@ -6,7 +6,7 @@ temporary keyword smoke loop: the Console's ``/horizon-init`` transport test and
 
 Input modes:
 
-    PDF       extract pages with PyMuPDF; a missing extractor is reported, not
+    PDF       extract pages with pypdf; a missing extractor is reported, not
               replaced by invented text;
     text      read UTF-8; unreadable files become explicit gaps;
     index     JSON / JSONL / CSV / one-title-per-line metadata.  An index has

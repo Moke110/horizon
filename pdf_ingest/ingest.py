@@ -101,21 +101,23 @@ def _md5(path: Path) -> str:
 
 
 def _extract_pages(path: Path) -> list[str]:
+    """Extract page text without OCR; encrypted inputs require user action."""
     try:
-        import fitz  # PyMuPDF
-    except ImportError as exc:  # pragma: no cover - environment guard
-        raise ArchiveError("PyMuPDF is required for PDF ingestion") from exc
-    # Corpus PDFs contain harmless broken color-space references; keep CLI
-    # output machine-readable by suppressing MuPDF's stderr chatter.
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise ArchiveError("pypdf is required for PDF ingestion") from exc
     try:
-        fitz.TOOLS.mupdf_display_errors(False)
-    except Exception:  # pragma: no cover - version guard
-        pass
-    doc = fitz.open(path)
-    try:
-        return [page.get_text("text") for page in doc]
-    finally:
-        doc.close()
+        with Path(path).open('rb') as stream:
+            reader = PdfReader(stream, strict=True)
+            if reader.is_encrypted:
+                raise ArchiveError('PDF is encrypted; provide text or abandon import')
+            if len(reader.pages) > 2000:
+                raise ArchiveError('PDF exceeds 2000-page extraction limit')
+            return [page.extract_text() or '' for page in reader.pages]
+    except ArchiveError:
+        raise
+    except Exception as exc:
+        raise ArchiveError('PDF is damaged or unsupported; provide text or abandon import') from exc
 
 
 # -------------------------------------------------------------------- record

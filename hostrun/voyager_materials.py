@@ -1,4 +1,6 @@
 """Offline user-input materials and immutable, content-addressed text snapshots."""
+import base64
+import io
 import hashlib
 import hmac
 import json
@@ -132,6 +134,123 @@ class MaterialsService:
             self._fault('before_commit')
         self._fault('after_commit')
         return result
+
+    def register_pdf(self, command, *, token):
+        """Accept bounded bytes, retaining the original and page anchors atomically."""
+        self._authorize(token)
+        required = {'schema_version', 'operation_id', 'title', 'pdf_base64', 'source_label'}
+        if not isinstance(command, dict) or set(command) != required or command.get('schema_version') != 1:
+            raise CommandError('invalid_command', 'PDF import fields are invalid')
+        if any(not isinstance(command.get(k), str) or not command[k].strip() for k in required - {'schema_version'}):
+            raise CommandError('invalid_command', 'PDF import strings required')
+        if len(command['pdf_base64']) > 14 * 1024 * 1024 or len(command['title']) > 500 or len(command['source_label']) > 2000:
+            raise CommandError('invalid_command', 'PDF input exceeds bounds')
+        try:
+            data = base64.b64decode(command['pdf_base64'], validate=True)
+        except ValueError as error:
+            raise CommandError('invalid_command', 'Invalid PDF encoding') from error
+        if not data.startswith(b'%PDF-') or len(data) > 10 * 1024 * 1024:
+            raise CommandError('invalid_command', 'PDF bytes required, at most 10 MiB')
+        digest = hashlib.sha256(data).hexdigest()
+        request = json.dumps({k:v for k,v in command.items() if k != 'pdf_base64'}, sort_keys=True) + digest
+        with self._connect() as db:
+            previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (command['operation_id'],)).fetchone()
+        if previous:
+            if previous[0] != request:
+                raise CommandError('operation_conflict', 'operation_id conflicts')
+            return json.loads(previous[1])
+        import subprocess
+        import sys
+        from pdf_ingest.ingest import build_text_and_anchors
+        status = 'pending_text'
+        pages = []
+        reason = 'damaged_or_unsupported'
+        with tempfile.TemporaryDirectory(prefix='horizon-pdf-') as folder:
+            source = Path(folder) / 'input.pdf'
+            output = Path(folder) / 'result.json'
+            source.write_bytes(data)
+            options = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+            try:
+                completed = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-m', 'hostrun.pdf_worker', str(source), str(output)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25, **options)
+                if completed.returncode == 0 and output.stat().st_size <= 25 * 1024 * 1024:
+                    extracted = json.loads(output.read_text(encoding='utf8'))
+                    pages = extracted['pages']
+                    reason = extracted['reason']
+                    if reason == 'extraction_quality_unverified':
+                        status = 'extracted_unverified'
+            except (subprocess.TimeoutExpired, OSError, ValueError, KeyError):
+                reason = 'extraction_limit_or_failure'
+        text, anchors = build_text_and_anchors(pages)
+        self._publish(data, digest)
+        text_data = text.encode('utf8')
+        text_hash = hashlib.sha256(text_data).hexdigest()
+        self._publish(text_data, text_hash)
+        identity = str(uuid.uuid4())
+        result = dict(schema_version=1, material_id=identity, entity_id=identity, version=1, title=command['title'],
+            source=dict(kind='user_pdf', label=command['source_label'], source_id=digest),
+            snapshot=dict(content_hash=text_hash, original_hash=digest, extraction_version='pypdf.7.1.1', byte_length=len(text_data)),
+            pdf=dict(status=status, reason=reason, page_count=len(pages), anchors=anchors, ocr=False), summary=None)
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (command['operation_id'],)).fetchone()
+            if previous:
+                if previous[0] != request:
+                    raise CommandError('operation_conflict', 'operation_id conflicts')
+                return json.loads(previous[1])
+            encoded = json.dumps(result)
+            db.execute('INSERT INTO voyager_materials VALUES(?,?)', (identity, encoded))
+            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)', (command['operation_id'], request, encoded))
+            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)', (json.dumps(dict(type='voyager.pdf_registered', material_id=identity)),))
+        return result
+
+    def resolve_pdf(self, command, *, token):
+        self._authorize(token)
+        if not isinstance(command,dict) or command.get('schema_version') != 1 or command.get('action') not in ('supplement','abandon'):
+            raise CommandError('invalid_command','PDF decision required')
+        if set(command)-{'schema_version','operation_id','material_id','expected_version','action','text'}:
+            raise CommandError('invalid_command','Unsupported PDF decision field')
+        if not isinstance(command.get('operation_id'),str) or not command['operation_id']:
+            raise CommandError('invalid_command','Operation required')
+        text=command.get('text','')
+        if command['action']=='supplement' and (not isinstance(text,str) or not text.strip() or len(text.encode())>4*1024*1024):
+            raise CommandError('invalid_command','Bounded supplement text required')
+        request=json.dumps(command,sort_keys=True)
+        if command['action']=='supplement':
+            digest=hashlib.sha256(text.encode()).hexdigest()
+            self._publish(text.encode(),digest)
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous=db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?',(command['operation_id'],)).fetchone()
+            if previous:
+                if previous[0]!=request:raise CommandError('operation_conflict','Operation conflicts')
+                return json.loads(previous[1])
+            row=db.execute('SELECT result FROM voyager_materials WHERE material_id=?',(command.get('material_id'),)).fetchone()
+            if not row:raise CommandError('not_found','Unknown PDF')
+            result=json.loads(row[0])
+            if result['source']['kind']!='user_pdf':raise CommandError('invalid_material','PDF required')
+            if type(command.get('expected_version')) is not int or command['expected_version']!=result['version']:raise CommandError('version_conflict','PDF changed')
+            result['version']+=1
+            result['pdf']['status']='supplemented' if command['action']=='supplement' else 'abandoned'
+            if command['action']=='supplement':
+                result['snapshot'].update(content_hash=digest,byte_length=len(text.encode()),extraction_version='user_supplement.v1')
+                result['pdf']['supplement_has_page_mapping']=False
+            encoded=json.dumps(result)
+            db.execute('UPDATE voyager_materials SET result=? WHERE material_id=?',(encoded,result['material_id']))
+            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)',(command['operation_id'],request,encoded))
+            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)',(json.dumps(dict(type='voyager.pdf_resolved',material_id=result['material_id'])),))
+        return result
+
+    def pdf_original(self, material_id, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            row = db.execute('SELECT result FROM voyager_materials WHERE material_id=?', (material_id,)).fetchone()
+        if row is None:
+            raise CommandError('not_found', 'Unknown material')
+        result = json.loads(row[0])
+        if result['source']['kind'] != 'user_pdf':
+            raise CommandError('invalid_material', 'Material is not a PDF')
+        return self._read_blob(result['snapshot']['original_hash'])
 
     def list_materials(self,*,token):
         self._authorize(token)

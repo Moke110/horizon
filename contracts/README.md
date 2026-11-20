@@ -132,7 +132,7 @@ checkpoints:
 - `source_id` 回退顺序：manifest 的 `doi`（小写）→ `pmid:<pmid>` → `arxiv:<id>`（去 `arXiv:` 前缀、小写）→ `md5:<md5>`。
 - manifest 是书目与身份的唯一来源（PDF ` /Title`、印刷 DOI 不可信）；raw 记录额外保留
   `doi / pmid / pmcid / arxiv / md5 / category / pdf_path / pdf_pages / pages / year / notes`。
-- 正文：PyMuPDF `page.get_text("text")`，各页文本按 `"\n\n"` 连接写入 `originals/text/<paper_id>.txt`。
+- 正文：pypdf `page.extract_text()`，各页文本按 `"\n\n"` 连接写入 `originals/text/<paper_id>.txt`。
 - 页码锚点 `<archive>/originals/pages/<paper_id>.json`：
 
 ```json

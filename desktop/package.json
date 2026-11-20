@@ -19,6 +19,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "esbuild": "^0.25.0",
+    "pdfjs-dist": "6.5.438",
     "typescript": "~5.9.3"
   }
 }
