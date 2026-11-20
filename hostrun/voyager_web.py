@@ -23,14 +23,21 @@ def acquire(url, *, dynamic=False, cancel=None):
     from lxml import html as lxml_html
 
     current = url
-    for _ in range(5):
+    for hop in range(5):
         if cancel and cancel.is_set():
             return unavailable('cancelled',current)
         public_address(current)
         status, headers, body = fetch_public(current, {'Accept':'text/html,application/xhtml+xml'})
         headers = {k.lower():v for k,v in headers.items()}
         if status in (301,302,303,307,308) and headers.get('location'):
-            current = urljoin(current,headers['location'])
+            if hop==4:
+                return unavailable('redirect_limit',current)
+            next_url = urljoin(current,headers['location'])
+            try:
+                public_address(next_url)
+            except ValueError:
+                return unavailable('redirect_refused',current)
+            current = next_url
             continue
         break
     if status != 200:

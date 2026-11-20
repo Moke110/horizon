@@ -2,9 +2,10 @@ import {PdfReader,type PdfInfo} from './PdfReader';
 import React,{useState} from 'react';
 
 export type Material={material_id:string;title:string;source:{source_id:string;kind:string;label:string;received_at:string};snapshot:{snapshot_id:string;content_hash:string;extraction_version:string;byte_length:number};summary:string|null};
+export type MaterialSummary=Pick<Material,'material_id'|'title'>&{source:{label:string}};
 export type MaterialPackage=Material&{original_text:string;version:number;web?:{status:string;url:string;reason?:string;anchors:{id:string;start:number;end:number}[];metadata:Record<string,string>};pdf?:PdfInfo};
-const webReasons:Record<string,string>={login_required:'需要登录',payment_required:'需要订阅或付费',access_denied:'来源拒绝访问',restricted_page:'来源要求登录或付费',not_html:'该链接不是 HTML 网页',no_article_body:'未发现可提取的正文',no_bounded_article_body:'正文为空或超过限制',fetch_failed:'网页获取失败',browser_unavailable:'动态页面浏览器未就绪',dynamic_capture_failed:'动态页面获取失败'};
-export function MaterialsPanel({jobs,materials,selectedPackage,onCommand}:{jobs:string[];materials:Material[];selectedPackage?:MaterialPackage|null;onCommand:(command:unknown)=>void}){
+const webReasons:Record<string,string>={redirect_limit:'网页重定向次数过多',redirect_refused:'目标地址不符合公开页面要求',login_required:'需要登录',payment_required:'需要订阅或付费',access_denied:'来源拒绝访问',restricted_page:'来源要求登录或付费',not_html:'该链接不是 HTML 网页',no_article_body:'未发现可提取的正文',no_bounded_article_body:'正文为空或超过限制',fetch_failed:'网页获取失败',browser_unavailable:'动态页面浏览器未就绪',dynamic_capture_failed:'动态页面获取失败'};
+export function MaterialsPanel({jobs,materials,selectedPackage,onCommand}:{jobs:string[];materials:MaterialSummary[];selectedPackage?:MaterialPackage|null;onCommand:(command:unknown)=>void}){
  const webText=React.useMemo(()=>selectedPackage?.web?Array.from(selectedPackage.original_text):[],[selectedPackage]);
  const [url,setUrl]=useState(''),[dynamic,setDynamic]=useState(false);
  const [title,setTitle]=useState(''),[label,setLabel]=useState('用户粘贴'),[text,setText]=useState('');

@@ -163,7 +163,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_materials(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -213,8 +213,11 @@ def serve(resolved):
     def capture_web(command, cancelled):
         try:
             result = materials.register_web(command,token=token,cancel=cancelled)
-            if not cancelled.is_set() and not exiting.is_set():
-                emit('web_material',materials.get_package(result['material_id'],token=token))
+            with dispatch_lock:
+                if not cancelled.is_set() and not exiting.is_set():
+                    package = materials.get_package(result['material_id'],token=token)
+                    emit('private_pdf',None)
+                    emit('web_material',package)
         except Exception:
             if not cancelled.is_set():emit('notice','网页获取失败，请检查原链接')
         finally:

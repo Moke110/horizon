@@ -84,3 +84,27 @@ def test_explicit_dynamic_choice_captures_article_even_when_shell_has_navigation
     result=svc.register_web(dict(schema_version=1,operation_id='explicit',url='https://example.org/app',dynamic=True),token='s')
     assert result['web']['mode']=='dynamic'
     assert 'Actual hourly observations' in svc.get_package(result['material_id'],token='s')['original_text']
+
+def test_redirect_limit_never_persists_unchecked_location(tmp_path,monkeypatch):
+    import json
+    import hostrun.voyager_web as web
+    calls=[]
+    def redirect(url,headers):
+        calls.append(url)
+        target='/step/'+str(len(calls)) if len(calls)<5 else '/private?api_key=private-marker'
+        return 302,{'Location':target},b''
+    monkeypatch.setattr(web,'fetch_public',redirect)
+    svc=MaterialsService(tmp_path,token='s')
+    result=svc.register_web(dict(schema_version=1,operation_id='chain',url='https://example.org/'),token='s')
+    assert result['web']['status']=='unavailable' and 'private-marker' not in json.dumps(result)
+    assert len(calls)<=5
+
+
+def test_material_list_projection_omits_hydrated_web_content(tmp_path,monkeypatch):
+    import hostrun.voyager_web as web
+    html=('<html><head><title>Solar</title></head><body><article><p>'+'Solar panels collect light. '*20+'</p></article></body></html>').encode()
+    monkeypatch.setattr(web,'fetch_public',lambda *_:(200,{'Content-Type':'text/html'},html))
+    svc=MaterialsService(tmp_path,token='s')
+    result=svc.register_web(dict(schema_version=1,operation_id='list',url='https://example.org/story'),token='s')
+    assert svc.list_summaries(token='s')==[dict(material_id=result['material_id'],title=result['title'],source={'label':'https://example.org/story'})]
+    assert svc.get_package(result['material_id'],token='s')['web']['anchors']

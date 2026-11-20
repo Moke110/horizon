@@ -308,6 +308,12 @@ class MaterialsService:
             raise CommandError('invalid_material', 'Material is not a PDF')
         return self._read_blob(result['snapshot']['original_hash'])
 
+    def list_summaries(self, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            rows = db.execute("SELECT material_id,json_extract(result,'$.title'),json_extract(result,'$.source.label') FROM voyager_materials ORDER BY rowid DESC")
+            return [dict(material_id=mid,title=title,source={'label':label}) for mid,title,label in rows]
+
     def list_materials(self,*,token):
         self._authorize(token)
         with self._connect() as db:return [json.loads(r[0]) for r in db.execute('SELECT result FROM voyager_materials ORDER BY rowid DESC')]
