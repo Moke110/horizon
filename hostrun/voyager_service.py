@@ -40,7 +40,9 @@ class VoyagerService:
         self.home=Path(home);self._token=token;self.scope_provider=scope_provider or ExplicitScopeProvider()
         if providers is None:
             from hostrun.voyager_sources import default_providers
+            from hostrun.voyager_doi_sources import CrossrefProvider, OpenAlexProvider
             providers = default_providers()
+            providers.update(crossref=CrossrefProvider(), openalex=OpenAlexProvider())
         self.providers=dict(providers);self.clock=clock;self.on_change=on_change or (lambda event:None)
         with self._connect() as db:self.initialize_database(db)
 
@@ -189,7 +191,7 @@ class VoyagerService:
         rows=page.get('candidates')
         if not isinstance(rows,list) or len(rows)>10000:raise CommandError('invalid_provider_response','Candidate page is too large')
         sizes={'source':80,'source_id':512,'title':2048,'abstract':32768,'url':4096,'doi':512,'journal':512,'source_type':64,'peer_review_status':64}
-        allowed=set(sizes)|{'published_at','discovered_at','authors','is_preprint','missing_fields'}
+        allowed=set(sizes)|{'published_at','discovered_at','authors','is_preprint','missing_fields','reference_ids','reference_count','cited_by_count'}
         total=0
         for row in rows:
             if not isinstance(row,dict) or set(row)-allowed:raise CommandError('invalid_provider_response','Invalid candidate fields')
@@ -197,7 +199,10 @@ class VoyagerService:
                 if key in row:
                     if not isinstance(row[key],str) or len(row[key].encode('utf-8'))>limit:raise CommandError('invalid_provider_response','Candidate text exceeds its bound')
                     total+=len(row[key].encode('utf-8'))
-            for key,count,limit in (('authors',100,256),('missing_fields',16,64)):
+            for key in ('reference_count', 'cited_by_count'):
+                if row.get(key) is not None and (type(row[key]) is not int or not 0 <= row[key] <= 2**53-1):
+                    raise CommandError('invalid_provider_response','Invalid citation count')
+            for key,count,limit in (('authors',100,256),('missing_fields',16,64),('reference_ids',100,512)):
                 values=row.get(key,[])
                 if not isinstance(values,list) or len(values)>count or any(not isinstance(v,str) or len(v.encode('utf-8'))>limit for v in values):raise CommandError('invalid_provider_response','Candidate list exceeds its bound')
                 total+=sum(len(v.encode('utf-8')) for v in values)
@@ -232,7 +237,13 @@ class VoyagerService:
                 previous=next((item for item in value['candidates'] if (item['source'],item['source_id'])==(row['source'],row['source_id'])),None)
                 if previous:
                     if query['query_id'] not in previous['query_ids']:previous['query_ids'].append(query['query_id'])
-                else:value['candidates'].append({**row,'first_seen_at':int(self.clock()),'query_ids':[query['query_id']],'scope_kind':value['scope']['kind'],'request_id':value['request_id']})
+                else:
+                    candidate = {**row, 'first_seen_at': int(self.clock()), 'query_ids': [query['query_id']],
+                                 'scope_kind': value['scope']['kind'], 'request_id': value['request_id']}
+                    doi = row.get('doi', '').strip().lower().removeprefix('https://doi.org/')
+                    if re.fullmatch(r'10\.\d{4,9}/[^\s]+', doi):
+                        candidate['canonical_id'] = 'doi:' + doi
+                    value['candidates'].append(candidate)
             segment['used']['candidates']+=len(rows);value['used']['candidates']+=len(rows)
             if 'source_query' in page:attempt['source_query']=page['source_query']
             attempt.update(status='received',receipt=page['receipt'],candidate_count=len(rows));value['inflight']=None

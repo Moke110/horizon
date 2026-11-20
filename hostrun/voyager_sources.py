@@ -44,6 +44,9 @@ class AcademicTransport:
     _next = 0.0
     interval = 0.1
 
+    def track_response_limits(self, headers):
+        pass
+
     def __init__(self, rate_directory=None):
         self.rate_directory = Path(rate_directory) if rate_directory is not None else Path(tempfile.gettempdir()) / 'horizon-source-rates'
 
@@ -88,6 +91,7 @@ class AcademicTransport:
                 with urllib.request.urlopen(request, timeout=min(30, max(0.001, deadline - time.monotonic()))) as response:
                     if response.status != 200:
                         return {'error_code': 'provider_failed'}
+                    self.track_response_limits(getattr(response, 'headers', {}))
                     body = response.read(2 * 1024 * 1024 + 1)
                 if len(body) > 2 * 1024 * 1024:
                     return {'error_code': 'provider_failed'}
