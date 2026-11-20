@@ -213,3 +213,16 @@ At `50cf2c2`, the desktop command probe searched arXiv and Europe PMC for photom
 ## Voyager subscriptions and PDF reader — 2026-11-20
 
 Candidate 0.1.0-voyager.3 from c907cbf passed installed verification (SHA-256 a7728fb5c8b8dddf64fb43d44cfd2cea27f013e79b92c8fba9bdf00517ebb518). The installed runtime observed RSS 27 → 0, Atom 15 → 0 and a site section 290 → 0 over two refreshes. It also verified the original three-page PDF hash and page-specific extracted text. The Explorer confirmed both the subscription display and the three-page reader check were correct, with no extra console. The recorded pythonw owner and four Electron processes were absent after the check. [Subscription evidence](https://github.com/Moke110/horizon/issues/196#issuecomment-7041659067) and [PDF evidence](https://github.com/Moke110/horizon/issues/199#issuecomment-7041659691).
+
+## Voyager V9 static source acceptance — 2026-11-20
+
+At frozen source `7ba07a7`, Windows 10 x64 and CPython 3.13.13 ran
+`python -m scripts.probe_voyager_web` with Trafilatura 2.3.1. The public
+Materials service captured four live pages, replayed each operation, reopened
+its saved material, verified the text digest and resolved every paragraph
+anchor. NASA's Hubble news article yielded 14 paragraphs (5,773 bytes),
+the Python Insider release blog 35 (3,352), IANA's Example Domains page
+10 (739), and Python's bisect documentation 150 (8,369). All 15 Windows
+CPython 3.13 release-wheel versions matched their downloaded metadata.
+The [V9 ticket](https://github.com/Moke110/horizon/issues/200) tracks the
+separate dynamic renderer, containment and installed-package acceptance.
