@@ -624,7 +624,7 @@ def ensure_uv(
 def check_runtime(python_path: str | Path, *, runner=subprocess.run) -> dict:
     """The installed interpreter must already import what installation needs."""
     probe = _run(
-        [str(python_path), "-c", "import yaml, fitz"],
+        [str(python_path), "-c", "import yaml, pypdf"],
         runner=runner,
         timeout=120,
     )
@@ -755,7 +755,7 @@ def ensure_environment(
         }
     checked = verify(python)
     ok = bool(checked.get("ok"))
-    note = "" if ok else "依赖装好后仍无法导入 yaml/fitz：" + checked.get("error", "")
+    note = "" if ok else "依赖装好后仍无法导入 yaml/pypdf：" + checked.get("error", "")
     if not ok and repair:
         note += f"；修复：{repair}"
     return {

@@ -284,8 +284,8 @@ def test_install_check_for_a_package_reports_workspace_and_bundled_dependencies(
     assert (wrapper).is_file()
 
 
-def test_probe_dependencies_blocks_an_interpreter_without_pymupdf(tmp_path):
-    # yaml imports, fitz does not: PyMuPDF is a required dependency, not an
+def test_probe_dependencies_blocks_an_interpreter_without_pypdf(tmp_path):
+    # yaml imports, pypdf does not: pypdf is a required dependency, not an
     # optional extra (workspace.check_runtime asserts both).
     repo = tmp_path / "repo"
     _seed_repo_files(repo)
@@ -298,12 +298,12 @@ def test_probe_dependencies_blocks_an_interpreter_without_pymupdf(tmp_path):
     )
 
     assert result["status"] == "blocked"
-    assert "PyMuPDF" in result["note"]
+    assert "pypdf" in result["note"]
     assert result["evidence"]["yaml"] is True
-    assert result["evidence"]["fitz"] is False
+    assert result["evidence"]["pypdf"] is False
 
 
-def test_probe_dependencies_accepts_yaml_and_fitz(tmp_path):
+def test_probe_dependencies_accepts_yaml_and_pypdf(tmp_path):
     repo = tmp_path / "repo"
     _seed_repo_files(repo)
     python = _fake_python(tmp_path)
@@ -316,7 +316,7 @@ def test_probe_dependencies_accepts_yaml_and_fitz(tmp_path):
 
     assert result["status"] == "ok"
     assert result["evidence"]["yaml"] is True
-    assert result["evidence"]["fitz"] is True
+    assert result["evidence"]["pypdf"] is True
 
 
 def test_probe_identity_reads_booleans_only():

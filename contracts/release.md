@@ -29,9 +29,9 @@
 触发：`push: tags: ["v*"]`，以及 `workflow_dispatch`（`tag`、可选 `channel`、`dry_run` 默认 `true`）。运行器 `windows-latest`，权限 `contents: write`，checkout `fetch-depth: 0`（`built_from_commit` 需要完整历史）。步骤：
 
 1. **推导版本/渠道**：`python -m hostrun.release tag --tag <tag> --github-output <file>`；不合法 tag 直接失败。
-2. **下载固定输入**：CPython `3.13` embeddable **amd64** zip（python.org，版本由 `PYTHON_EMBED_VERSION` 固定），以及 `python -m pip download --only-binary=:all: --dest wheels -r requirements-release.txt` 下载的固定版本 wheel。`requirements-release.txt` 用 `==` 精确固定 PyYAML 与 PyMuPDF；可复现性要求不能使用运行器 site-packages，也不能用浮动区间。
-3. **准备构建环境**：从同一批已下载的 wheel 安装运行器自身的构建期依赖（`python -m pip install --no-index --find-links wheels -r requirements-release.txt`），因为共享构建入口与安装冒烟用的都是运行器 Python，且 `common.py` 导入 PyYAML、PDF 链路导入 PyMuPDF；内置运行时仍使用它自己解压出的那份 wheel，构建环境与打包运行时互不替代。导入检查失败即失败。
-4. **组装运行时**：`python scripts/prepare_runtime.py --embed-zip ... --wheels wheels --out runtime --python-version 3.13 --require-module yaml --require-module fitz`。它把 embeddable zip 解压到 `runtime/`，把每个 wheel 作为 zip 解压到 `runtime/Lib/site-packages/`（`*.data/purelib|platlib` 归位到 site-packages，`scripts/headers/data` 不进入运行时），并确保 `python313._pth` 含 `python313.zip`、`.`、`..`（代码根，包装器从 `<code>` 运行 `-m hostrun.cli`）与 `Lib\site-packages`，每项恰好一次。官方 embeddable zip 的扩展模块平铺在 `python.exe` 旁（不是 `DLLs/`），校验接受平铺与 `DLLs/` 两种布局。输入缺失/损坏/非空输出目录都会带原因失败，绝不产出半成品运行时。
+2. **下载固定输入**：CPython `3.13` embeddable **amd64** zip（python.org，版本由 `PYTHON_EMBED_VERSION` 固定），以及 `python -m pip download --only-binary=:all: --dest wheels -r requirements-release.txt` 下载的固定版本 wheel。`requirements-release.txt` 用 `==` 精确固定 PyYAML 与 pypdf；可复现性要求不能使用运行器 site-packages，也不能用浮动区间。
+3. **准备构建环境**：从同一批已下载的 wheel 安装运行器自身的构建期依赖（`python -m pip install --no-index --find-links wheels -r requirements-release.txt`），因为共享构建入口与安装冒烟用的都是运行器 Python，且 `common.py` 导入 PyYAML、PDF 链路导入 pypdf；内置运行时仍使用它自己解压出的那份 wheel，构建环境与打包运行时互不替代。导入检查失败即失败。
+4. **组装运行时**：`python scripts/prepare_runtime.py --embed-zip ... --wheels wheels --out runtime --python-version 3.13 --require-module yaml --require-module pypdf`。它把 embeddable zip 解压到 `runtime/`，把每个 wheel 作为 zip 解压到 `runtime/Lib/site-packages/`（`*.data/purelib|platlib` 归位到 site-packages，`scripts/headers/data` 不进入运行时），并确保 `python313._pth` 含 `python313.zip`、`.`、`..`（代码根，包装器从 `<code>` 运行 `-m hostrun.cli`）与 `Lib\site-packages`，每项恰好一次。官方 embeddable zip 的扩展模块平铺在 `python.exe` 旁（不是 `DLLs/`），校验接受平铺与 `DLLs/` 两种布局。输入缺失/损坏/非空输出目录都会带原因失败，绝不产出半成品运行时。
 5. **共享构建入口构建两次**：
 
    ```

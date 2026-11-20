@@ -474,8 +474,8 @@ def test_runtime_validation_names_the_missing_input(tmp_path, relative, reason):
 def test_runtime_validation_reports_missing_required_modules(tmp_path):
     runtime = _write_runtime(tmp_path / "runtime")
     with pytest.raises(release.ReleaseError) as excinfo:
-        release.validate_runtime_dir(runtime, required_modules=("yaml", "fitz"))
-    assert "fitz" in str(excinfo.value)
+        release.validate_runtime_dir(runtime, required_modules=("yaml", "pypdf"))
+    assert "pypdf" in str(excinfo.value)
     assert "yaml" not in str(excinfo.value).split("modules:", 1)[1]
 
 
@@ -903,7 +903,7 @@ def test_workflow_assembles_the_runtime_from_pinned_downloads():
     assert "requirements-release.txt" in text
     assert "scripts/prepare_runtime.py" in text
     assert "--require-module yaml" in text
-    assert "--require-module fitz" in text
+    assert "--require-module pypdf" in text
 
 
 def test_workflow_builds_with_explicit_inputs_and_a_bundled_runtime():
@@ -1097,7 +1097,7 @@ def test_release_requirements_pin_exact_versions():
         if line.strip() and not line.lstrip().startswith("#")
     }
     assert "pyyaml" in pinned
-    assert "pymupdf" in pinned
+    assert "pypdf" in pinned
     for version in pinned.values():
         assert version
         assert ">" not in version and "<" not in version

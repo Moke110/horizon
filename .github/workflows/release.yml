@@ -101,20 +101,20 @@ jobs:
 
       - name: Install the build-time dependencies on the runner
         # The build entry and the install smoke test run with the runner's
-        # Python and import `common` (PyYAML) and the PDF stack (PyMuPDF).  The
+        # Python and import `common` (PyYAML) and the PDF stack (pypdf).  The
         # bundled runtime keeps its own copy of these wheels; this step only
         # makes the *build* environment usable, from the same pinned wheels.
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check --no-index --find-links wheels -r requirements-release.txt
           if ($LASTEXITCODE -ne 0) { throw "runner dependency install failed; see requirements-release.txt" }
-          python -c "import yaml, fitz; print('runner build dependencies ok')"
+          python -c "import yaml, pypdf; print('runner build dependencies ok')"
           if ($LASTEXITCODE -ne 0) { throw "runner build dependencies are not importable" }
 
       - name: Assemble the bundled runtime
         shell: pwsh
         run: |
-          python scripts/prepare_runtime.py --embed-zip python-embed.zip --wheels wheels --out $env:RUNTIME_DIR --python-version $env:PYTHON_VERSION --require-module yaml --require-module fitz
+          python scripts/prepare_runtime.py --embed-zip python-embed.zip --wheels wheels --out $env:RUNTIME_DIR --python-version $env:PYTHON_VERSION --require-module yaml --require-module pypdf
           if ($LASTEXITCODE -ne 0) { throw "runtime assembly failed; the embeddable zip or a wheel is missing or malformed" }
 
       - uses: actions/setup-node@v4

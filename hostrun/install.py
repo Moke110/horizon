@@ -52,7 +52,7 @@ STEPS = (
 STEP_NOTES = {
     "host": "宿主产品、版本、本机执行与实际权限",
     "workspace": "代码目录与资料目录分离（运行时区在代码目录内），已有副本检查与续接",
-    "dependencies": "私有 uv、解释器、PyYAML/PyMuPDF 导入探针与仓库副本",
+    "dependencies": "私有 uv、解释器、PyYAML/pypdf 导入探针与仓库副本",
     "skill": "horizon-run 入口指针及参考文件可读",
     "lark_cli": "飞书 CLI 由显式私有路径解析（仅可执行，未证明已登录）",
     "identity": "飞书 user / bot 身份与登录有效期",
@@ -162,12 +162,12 @@ INTERPRETER_PROBE = (
     "        return ''\n"
     "print('%d.%d.%d' % sys.version_info[:3])\n"
     "print(version('yaml'))\n"
-    "print(version('fitz'))\n"
+    "print(version('pypdf'))\n"
 )
 
 
 def _interpreter_facts(python: str, *, runner=subprocess.run) -> dict:
-    """Version, PyYAML and PyMuPDF from the *recorded* interpreter.
+    """Version, PyYAML and pypdf from the *recorded* interpreter.
 
     The probe imports both dependencies the runtime needs (the same pair the
     toolchain verifies): a YAML-only interpreter is not a usable installation.
@@ -182,16 +182,16 @@ def _interpreter_facts(python: str, *, runner=subprocess.run) -> dict:
             except ModuleNotFoundError:
                 has_yaml = False
             try:
-                import fitz  # noqa: F401
+                import pypdf  # noqa: F401
 
-                has_fitz = True
+                has_pypdf = True
             except ModuleNotFoundError:
-                has_fitz = False
+                has_pypdf = False
             return {
                 "ok": True,
                 "version": version,
                 "yaml": has_yaml,
-                "fitz": has_fitz,
+                "pypdf": has_pypdf,
                 "error": "",
             }
         proc = runner(
@@ -207,7 +207,7 @@ def _interpreter_facts(python: str, *, runner=subprocess.run) -> dict:
             "ok": False,
             "version": (0, 0, 0),
             "yaml": False,
-            "fitz": False,
+            "pypdf": False,
             "error": str(exc),
         }
     if proc.returncode != 0:
@@ -215,7 +215,7 @@ def _interpreter_facts(python: str, *, runner=subprocess.run) -> dict:
             "ok": False,
             "version": (0, 0, 0),
             "yaml": False,
-            "fitz": False,
+            "pypdf": False,
             "error": (proc.stderr or proc.stdout or "interpreter failed")[-400:],
         }
     lines = (proc.stdout or "").strip().splitlines()
@@ -227,7 +227,7 @@ def _interpreter_facts(python: str, *, runner=subprocess.run) -> dict:
         "ok": bool(lines),
         "version": version,
         "yaml": len(lines) > 1 and bool(lines[1].strip()),
-        "fitz": len(lines) > 2 and bool(lines[2].strip()),
+        "pypdf": len(lines) > 2 and bool(lines[2].strip()),
         "error": "",
     }
 
@@ -290,7 +290,7 @@ def probe_dependencies(
     notes: list[str] = []
     version = (0, 0, 0)
     has_yaml = False
-    has_fitz = False
+    has_pypdf = False
     facts = {"ok": False, "error": ""}
     outside_repo = False
     in_data_root = False
@@ -311,7 +311,7 @@ def probe_dependencies(
         facts = _interpreter_facts(str(python), runner=runner or subprocess.run)
         version = facts["version"]
         has_yaml = facts["yaml"]
-        has_fitz = facts["fitz"]
+        has_pypdf = facts["pypdf"]
         expected = (Path(home) / workspace_mod.ENV_DIRNAME) if home else None
         in_data_root = bool(expected) and python_path.is_relative_to(expected)
         if bundled_runtime:
@@ -322,8 +322,8 @@ def probe_dependencies(
             notes.append(f"python {'.'.join(map(str, version))} < 3.11")
         elif not has_yaml:
             notes.append("PyYAML missing in this interpreter")
-        elif not has_fitz:
-            notes.append("PyMuPDF (fitz) missing in this interpreter")
+        elif not has_pypdf:
+            notes.append("pypdf (pypdf) missing in this interpreter")
     if missing:
         notes.append("repo missing: " + ", ".join(missing))
     ok = (
@@ -334,7 +334,7 @@ def probe_dependencies(
         and (outside_repo or bundled_runtime)
         and version >= MIN_PYTHON
         and has_yaml
-        and has_fitz
+        and has_pypdf
         and not missing
     )
     if not ok:
@@ -348,7 +348,7 @@ def probe_dependencies(
             "platform": platform or sys.platform,
             "repo": str(repo),
             "yaml": has_yaml,
-            "fitz": has_fitz,
+            "pypdf": has_pypdf,
             "recorded": recorded,
             "outside_repo": outside_repo,
             "bundled_runtime": bundled_runtime,

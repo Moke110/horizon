@@ -45,7 +45,7 @@ preserves every file's bytes.  The expected layout is::
     runtime/python<major><minor>._pth        # module search path (stdlib + Lib/site-packages)
     runtime/python<major><minor>.zip         # stdlib (or a Lib/ tree)
     runtime/DLLs/*.pyd                       # extension modules (or flat *.pyd next to python.exe)
-    runtime/Lib/site-packages/...            # PyYAML, PyMuPDF and their dependencies
+    runtime/Lib/site-packages/...            # PyYAML, pypdf and their dependencies
 
 A bundled runtime also generates ``<package>/bin/horizon.cmd``, the launcher
 wrapper described in :mod:`hostrun.launcher` and ``contracts/distribution-runtime.md``.

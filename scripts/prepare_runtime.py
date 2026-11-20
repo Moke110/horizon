@@ -9,7 +9,7 @@ CI downloads the pinned CPython embeddable zip and the pinned dependency wheels
         --wheels wheels \
         --out runtime \
         --python-version 3.13 \
-        --require-module yaml --require-module fitz
+        --require-module yaml --require-module pypdf
 
 The result is the layout ``hostrun.distribution --runtime-dir`` copies verbatim
 (see ``contracts/distribution-runtime.md``)::

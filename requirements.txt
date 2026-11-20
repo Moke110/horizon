@@ -4,7 +4,7 @@ PyYAML>=6.0
 # PDF initialization (`init intake --pdf`) and PDF ingestion. Required for the
 # standard installation flow; a missing wheel must be reported as blocked, not
 # replaced by invented text.
-PyMuPDF>=1.24
+pypdf==7.1.1
 
 # Tests only:
 #   pip install pytest
@@ -13,3 +13,4 @@ PyMuPDF>=1.24
 # The default push format is self-contained HTML, which needs no extra package.
 # On Windows WeasyPrint additionally needs the GTK3 runtime.
 #   WeasyPrint>=60
+feedparser==6.0.14
