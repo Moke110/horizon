@@ -1,4 +1,5 @@
 """Package-only Chromium execution for public dynamic document capture."""
+import asyncio
 import hashlib
 import json
 import os
@@ -61,8 +62,9 @@ def render_public(url, html_bytes, cancel=None):
     executable=browser_executable(root)
     if cancel is not None and cancel():
         raise ValueError('cancelled')
-    with tempfile.TemporaryDirectory(prefix='horizon-web-') as folder:
-        folder=Path(folder)
+    temporary = tempfile.TemporaryDirectory(prefix='horizon-web-')
+    try:
+        folder=Path(temporary.name)
         (folder/'input.html').write_bytes(html_bytes)
         scratch = folder / 'browser-temp'
         scratch.mkdir()
@@ -89,56 +91,72 @@ def render_public(url, html_bytes, cancel=None):
             if worker.poll() is None:
                 worker.kill()
             worker.wait(timeout=5)
+    finally:
+        # The Job terminates children asynchronously as the worker exits.
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                temporary.cleanup()
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.05)
 
 
-def capture_worker(url, executable, folder):
+async def capture_worker(url, executable, folder):
     # Child owns a nested kill-on-close job; cancellation kills its browser descendants.
     from hostrun.desktop_processes import install
     if os.name!='nt':
         raise ValueError('unsupported_capture_containment')
     install()
-    from playwright.sync_api import sync_playwright
+    from playwright.async_api import async_playwright
     from hostrun.voyager_subscriptions import fetch_public
     folder=Path(folder)
     count=0
-    with sync_playwright() as driver:
-        browser=driver.chromium.launch(executable_path=executable,headless=True,chromium_sandbox=True,args=['--disable-background-networking','--disable-quic','--disable-features=WebRtcHideLocalIpsWithMdns','--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
+    async with async_playwright() as driver:
+        browser=await driver.chromium.launch(executable_path=executable,headless=True,chromium_sandbox=True,args=['--disable-background-networking','--disable-quic','--disable-features=WebRtcHideLocalIpsWithMdns','--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
         try:
             if browser.version != chromium_descriptor()['browserVersion']:
                 raise ValueError('browser_version_mismatch')
-            context=browser.new_context(service_workers='block',accept_downloads=False)
-            context.route_web_socket('**/*',lambda socket:socket.close())
-            context.add_init_script("Object.defineProperty(globalThis,'Worker',{value:undefined});Object.defineProperty(globalThis,'SharedWorker',{value:undefined});Object.defineProperty(globalThis,'RTCPeerConnection',{value:undefined});")
-            page=context.new_page()
-            def route_request(route):
+            context=await browser.new_context(service_workers='block',accept_downloads=False)
+            await context.route_web_socket('**/*',lambda socket:socket.close())
+            await context.add_init_script("Object.defineProperty(globalThis,'Worker',{value:undefined});Object.defineProperty(globalThis,'SharedWorker',{value:undefined});Object.defineProperty(globalThis,'RTCPeerConnection',{value:undefined});")
+            page=await context.new_page()
+            fetch_slots = asyncio.Semaphore(6)
+
+            async def route_request(route):
                 nonlocal count
                 count+=1
                 if count>40 or route.request.method!='GET':
-                    route.abort();return
+                    await route.abort()
+                    return
                 try:
                     if route.request.is_navigation_request() and route.request.frame == page.main_frame:
                         if route.request.url != url:
-                            route.abort()
+                            await route.abort()
                             return
-                        route.fulfill(status=200,content_type='text/html',body=(folder/'input.html').read_bytes())
+                        await route.fulfill(status=200,content_type='text/html',body=(folder/'input.html').read_bytes())
                     else:
-                        status,headers,body=fetch_public(route.request.url,{})
+                        async with fetch_slots:
+                            status,headers,body=await asyncio.to_thread(fetch_public,route.request.url,{})
                         if status!=200:
-                            route.abort();return
-                        route.fulfill(status=status,content_type=headers.get('Content-Type','application/octet-stream'),body=body)
+                            await route.abort()
+                            return
+                        await route.fulfill(status=status,content_type=headers.get('Content-Type','application/octet-stream'),body=body)
                 except Exception:
-                    route.abort()
-            context.route('**/*',route_request)
-            page.goto(url,wait_until='networkidle',timeout=15000)
+                    await route.abort()
+            await context.route('**/*',route_request)
+            await page.goto(url,wait_until='networkidle',timeout=20000)
             if urldefrag(page.url).url != url:
                 raise ValueError('dynamic_source_changed')
-            content=page.content().encode('utf8')
+            content=(await page.content()).encode('utf8')
             if len(content)>2*1024*1024:raise ValueError('response_too_large')
             (folder/'result.html').write_bytes(content)
         finally:
-            browser.close()
+            await browser.close()
 
 
 if __name__=='__main__':
     if len(sys.argv)!=5 or sys.argv[1]!='--worker':raise SystemExit(2)
-    capture_worker(*sys.argv[2:])
+    asyncio.run(capture_worker(*sys.argv[2:]))
