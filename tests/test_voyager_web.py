@@ -108,3 +108,10 @@ def test_material_list_projection_omits_hydrated_web_content(tmp_path,monkeypatc
     result=svc.register_web(dict(schema_version=1,operation_id='list',url='https://example.org/story'),token='s')
     assert svc.list_summaries(token='s')==[dict(material_id=result['material_id'],title=result['title'],source={'label':'https://example.org/story'})]
     assert svc.get_package(result['material_id'],token='s')['web']['anchors']
+
+def test_empty_html_still_records_unavailable_source_link(tmp_path,monkeypatch):
+    import hostrun.voyager_web as web
+    monkeypatch.setattr(web,'fetch_public',lambda *_:(200,{'Content-Type':'text/html'},b'<!-- archived stub -->'))
+    svc=MaterialsService(tmp_path,token='s')
+    result=svc.register_web(dict(schema_version=1,operation_id='empty',url='https://example.org/archive'),token='s')
+    assert result['web']['reason']=='no_article_body' and result['web']['url']=='https://example.org/archive'

@@ -21,6 +21,7 @@ def public_address(url):
 def acquire(url, *, dynamic=False, cancel=None):
     import trafilatura
     from lxml import html as lxml_html
+    from lxml.etree import ParserError
 
     current = url
     for hop in range(5):
@@ -49,7 +50,10 @@ def acquire(url, *, dynamic=False, cancel=None):
     def extract(raw):
         if not raw.strip():
             return None
-        tree=lxml_html.fromstring(raw)
+        try:
+            tree=lxml_html.fromstring(raw)
+        except ParserError:
+            return None
         if tree.xpath('//input[translate(@type,"PASSWORD","password")="password"]') or re.search(rb'"isAccessibleForFree"\s*:\s*(?:false|"false")',raw,re.I):
             return 'restricted'
         extracted=trafilatura.extract(raw,url=current,output_format='json',with_metadata=True,
