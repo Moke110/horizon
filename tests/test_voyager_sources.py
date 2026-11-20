@@ -52,7 +52,8 @@ def test_success_records_exact_source_request(tmp_path):
     with patch('urllib.request.urlopen',return_value=Response()) as opening:
         result=EuropePMCProvider(rate_directory=tmp_path).search(query)
         assert result['source_query']==opening.call_args.args[0].full_url
-        assert 'trial' in result['source_query'] and 'advert' in result['source_query']
+        assert 'evidence' in result['source_query']
+        assert 'trial' not in result['source_query'] and 'advert' not in result['source_query']
     EuropePMCProvider._next=0
 
 
@@ -69,3 +70,18 @@ def test_separate_instances_share_rate_limit(tmp_path):
         assert ArxivProvider(rate_directory=tmp_path).search(query)=={'error_code':'rate_limited'}
         assert opening.call_count==1
     ArxivProvider._next=0
+
+def test_connection_failure_is_not_reported_as_timeout(tmp_path):
+    EuropePMCProvider._next=0
+    query={'term':'evidence','must_include':[],'exclude':[],'window':{'basis':'discovered'},'limit':1,'cursor':None,'timeout_seconds':1}
+    with patch('urllib.request.urlopen',side_effect=urllib.error.URLError('DNS failed')):
+        assert EuropePMCProvider(rate_directory=tmp_path).search(query)=={'error_code':'provider_failed'}
+    EuropePMCProvider._next=0
+
+
+def test_missing_arxiv_title_is_explicit_and_pmc_type_not_inferred():
+    body=b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>http://arxiv.org/abs/1234.12345</id></entry></feed>'
+    row=ArxivProvider().decode(body,{'limit':2,'cursor':None})['candidates'][0]
+    assert row['title']=='[missing title]' and 'title' in row['missing_fields']
+    row=EuropePMCProvider().decode(b'{"resultList":{"result":[{"id":"12","source":"MED","title":"Notice"}]}}',{'limit':2,'cursor':None})['candidates'][0]
+    assert row['source_type']=='unknown' and 'source_type' in row['missing_fields']
