@@ -159,27 +159,28 @@ class MaterialsService:
             if previous[0] != request:
                 raise CommandError('operation_conflict', 'operation_id conflicts')
             return json.loads(previous[1])
-        from pypdf import PdfReader
+        import subprocess
+        import sys
         from pdf_ingest.ingest import build_text_and_anchors
         status = 'pending_text'
         pages = []
         reason = 'damaged_or_unsupported'
-        try:
-            reader = PdfReader(io.BytesIO(data), strict=True)
-            if reader.is_encrypted:
-                reason = 'encrypted'
-            elif len(reader.pages) > 2000:
-                reason = 'page_limit'
-            else:
-                pages = [page.extract_text() or '' for page in reader.pages]
-                if sum(len(text.encode('utf8')) for text in pages) > 4 * 1024 * 1024:
-                    pages = []
-                    reason = 'text_limit'
-                else:
-                    reason = 'extraction_quality_unverified' if all(text.strip() for text in pages) and pages else 'scan_or_empty_page'
-                    status = 'extracted_unverified' if reason == 'extraction_quality_unverified' else 'pending_text'
-        except Exception:
-            pass
+        with tempfile.TemporaryDirectory(prefix='horizon-pdf-') as folder:
+            source = Path(folder) / 'input.pdf'
+            output = Path(folder) / 'result.json'
+            source.write_bytes(data)
+            options = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+            try:
+                completed = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-m', 'hostrun.pdf_worker', str(source), str(output)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25, **options)
+                if completed.returncode == 0 and output.stat().st_size <= 25 * 1024 * 1024:
+                    extracted = json.loads(output.read_text(encoding='utf8'))
+                    pages = extracted['pages']
+                    reason = extracted['reason']
+                    if reason == 'extraction_quality_unverified':
+                        status = 'extracted_unverified'
+            except (subprocess.TimeoutExpired, OSError, ValueError, KeyError):
+                reason = 'extraction_limit_or_failure'
         text, anchors = build_text_and_anchors(pages)
         self._publish(data, digest)
         text_data = text.encode('utf8')
