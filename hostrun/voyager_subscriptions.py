@@ -16,7 +16,7 @@ from hostrun.managed_database import database_connection
 
 def public_address(url):
     parts = urlsplit(url)
-    if (len(url) > 4096 or parts.scheme != 'https' or not parts.hostname or parts.username
+    if (len(url.encode('utf-8')) > 4096 or parts.scheme != 'https' or not parts.hostname or parts.username
             or parts.password or parts.port not in (None, 443) or parts.fragment):
         raise ValueError('invalid_public_https_url')
     return parts
@@ -137,7 +137,7 @@ def discover(subscription, body):
         raise ValueError('malformed_feed')
     if len(feed.entries)>500:
         raise ValueError('too_many_items')
-    entries = []
+    entries = {}
     for item in feed.entries:
         url = urljoin(subscription['url'],item.get('link',''))
         title = item.get('title','').strip()
@@ -147,10 +147,16 @@ def discover(subscription, body):
             public_address(url)
         except ValueError:
             continue
-        entries.append(dict(id=item.get('id') or url,url=url,title=title[:1024],
+        identity = item.get('id') or url
+        entries.setdefault(identity, dict(id=identity,url=url,title=bounded_title(title),
                             summary=item.get('summary','')[:4096],
                             published_at=calendar.timegm(item.published_parsed) if item.get('published_parsed') else None))
-    return entries
+    return list(entries.values())
+
+
+def bounded_title(title):
+    return title.encode('utf-8')[:2048].decode('utf-8', errors='ignore')
+
 
 class SectionLinks(HTMLParser):
     def __init__(self, base, root):
@@ -193,7 +199,7 @@ class SectionLinks(HTMLParser):
             url, pieces = self.anchor
             title=' '.join(''.join(pieces).split())
             if title:
-                self.entries.append(dict(id=url,url=url,title=title[:1024],summary=''))
+                self.entries.append(dict(id=url,url=url,title=bounded_title(title),summary=''))
             self.anchor=None
 
 

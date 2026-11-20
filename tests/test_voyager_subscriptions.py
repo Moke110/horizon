@@ -43,3 +43,14 @@ def test_malformed_feed_preserves_last_success_and_saved_candidates(tmp_path):
     failed=service.refresh(sub['id'])
     assert failed['gap']=='malformed_feed' and failed['last_success']==first['last_success']
     assert owner.get(plan['request_id'],token='s')['candidates']==result['candidates']
+
+def test_duplicate_feed_identity_cannot_rotate_versions_on_unchanged_refresh(tmp_path):
+    xml='<rss version="2.0"><channel><title>News</title>'+''.join(
+        '<item><guid>same</guid><title>'+title+'</title><link>https://example.com/story</link></item>'
+        for title in ['新'*1000,'Old'])+'</channel></rss>'
+    svc=Subscriptions(tmp_path,fetch=lambda *_:(200,{},xml.encode()))
+    sub=svc.configure('feed','https://example.com/news')
+    first=svc.refresh(sub['id'])
+    assert len(first['changes'])==1
+    assert len(first['changes'][0]['title'].encode())<=2048
+    assert svc.refresh(sub['id'])['changes']==[]
