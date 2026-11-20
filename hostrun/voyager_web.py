@@ -59,7 +59,7 @@ def acquire(url, *, dynamic=False, cancel=None):
     article=extract(body)
     if article=='restricted':
         return unavailable('restricted_page',current)
-    if not article and dynamic:
+    if dynamic:
         from hostrun.voyager_web_renderer import render_public
         try:
             body=render_public(current,body,cancel=cancel.is_set if cancel is not None else None)

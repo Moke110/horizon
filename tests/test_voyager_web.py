@@ -71,3 +71,16 @@ def test_cancelled_web_capture_does_not_publish_a_late_material(tmp_path,monkeyp
     with pytest.raises(CommandError,match='cancelled'):
         svc.register_web(dict(schema_version=1,operation_id='cancel',url='https://example.org/news'),token='s',cancel=cancelled)
     assert svc.list_materials(token='s')==[]
+
+def test_explicit_dynamic_choice_captures_article_even_when_shell_has_navigation_text(tmp_path,monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    import hostrun.voyager_web as web
+    shell='<html><title>Archive</title><article><p>'+'Archive navigation and help information. '*20+'</p></article></html>'
+    actual='<html><title>Observation report</title><article><p>'+'Actual hourly observations from our new report. '*20+'</p></article></html>'
+    monkeypatch.setattr(web,'fetch_public',lambda *_:(200,{'content-type':'text/html'},shell.encode()))
+    monkeypatch.setitem(sys.modules,'hostrun.voyager_web_renderer',SimpleNamespace(render_public=lambda *args,**kwargs:actual.encode()))
+    svc=MaterialsService(tmp_path,token='s')
+    result=svc.register_web(dict(schema_version=1,operation_id='explicit',url='https://example.org/app',dynamic=True),token='s')
+    assert result['web']['mode']=='dynamic'
+    assert 'Actual hourly observations' in svc.get_package(result['material_id'],token='s')['original_text']

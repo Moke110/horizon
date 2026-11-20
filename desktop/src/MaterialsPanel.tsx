@@ -11,7 +11,7 @@ export function MaterialsPanel({jobs,materials,selectedPackage,onCommand}:{jobs:
  return <div className="trace"><h2>资料</h2><p>粘贴原文可离线登记，不会自动联网或生成摘要。</p>
  <form onSubmit={e=>{e.preventDefault();onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url,dynamic});}}>
  <label>网页原链接<input required type="url" pattern="https://.+" value={url} onChange={e=>setUrl(e.target.value)}/></label>
- <label><input type="checkbox" checked={dynamic} onChange={e=>setDynamic(e.target.checked)}/>静态正文不足时渲染公开页面</label>
+ <label><input type="checkbox" checked={dynamic} onChange={e=>setDynamic(e.target.checked)}/>使用浏览器渲染公开动态页</label>
  <button disabled={jobs.length>0}>获取网页正文</button></form>
  {jobs.map(id=><button key={id} onClick={()=>onCommand({action:'materials_web_cancel',operation_id:id})}>取消网页获取</button>)}
  <button onClick={()=>onCommand({action:"choose_pdf"})}>导入 PDF</button>
