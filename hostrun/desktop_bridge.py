@@ -109,6 +109,9 @@ def serve(resolved):
     materials = MaterialsService(service.home,token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     voyager_current = None
+    from hostrun.voyager_subscriptions import Subscriptions
+    subscriptions = Subscriptions(service.home)
+    subscription_busy = set()
     voyager_busy = set()
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
@@ -151,7 +154,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'materials':materials.list_materials(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_materials(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -198,6 +201,16 @@ def serve(resolved):
                 voyager_busy.discard(command.get('request_id'));state()
                 if voyager_current==command.get('request_id'):emit('voyager_view',voyager.view(voyager_current,token=token))
 
+    def update_subscription(identity):
+        try:
+            subscriptions.refresh(identity)
+        except Exception:
+            emit('notice', '订阅刷新失败')
+        finally:
+            with dispatch_lock:
+                subscription_busy.discard(identity)
+                state()
+
     def commands():
         nonlocal current, response, voyager_current
         for line in incoming:
@@ -210,6 +223,16 @@ def serve(resolved):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action=='subscription_add':
+                        subscriptions.configure(cmd['kind'],cmd['url'])
+                        state()
+                    elif action=='subscription_refresh':
+                        identity=cmd['id']
+                        subscriptions.get(identity)
+                        if identity not in subscription_busy and not exiting.is_set():
+                            subscription_busy.add(identity)
+                            threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
+                            state()
                     elif action=='voyager_execute':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if cmd.get('request_id') in voyager_busy:raise CommandError('execution_busy','Retrieval request is already running')
