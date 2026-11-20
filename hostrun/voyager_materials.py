@@ -135,6 +135,62 @@ class MaterialsService:
         self._fault('after_commit')
         return result
 
+    def register_web(self, command, *, token, cancel=None):
+        from hostrun import voyager_web as web
+        self._authorize(token)
+        if (not isinstance(command, dict) or command.get('schema_version') != 1 or
+                set(command)-{'schema_version','operation_id','url','dynamic'} or
+                not isinstance(command.get('operation_id'),str) or not command['operation_id'].strip() or
+                not isinstance(command.get('url'),str) or type(command.get('dynamic',False)) is not bool):
+            raise CommandError('invalid_command','A public HTTPS page URL is required')
+        try:
+            web.public_address(command['url'])
+        except ValueError as error:
+            raise CommandError('invalid_command','A public HTTPS page URL is required') from error
+        request=json.dumps(command,sort_keys=True)
+        operation=command['operation_id']
+        def replay(db):
+            old=db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?',(operation,)).fetchone()
+            if old and old[0]!=request:
+                raise CommandError('operation_conflict','operation_id conflicts')
+            return json.loads(old[1]) if old else None
+        with self._connect() as db:
+            previous=replay(db)
+        if previous is not None:
+            return previous
+        try:
+            text,details,original=web.acquire(command['url'],dynamic=command.get('dynamic',False),cancel=cancel)
+        except (OSError,ValueError) as error:
+            text,details,original=web.unavailable('fetch_failed',command['url'])
+        if cancel and cancel.is_set():
+            raise CommandError('cancelled','Web capture cancelled')
+        data=text.encode('utf8')
+        digest=hashlib.sha256(data).hexdigest()
+        self._publish(data,digest)
+        snapshot=dict(snapshot_id=str(uuid.uuid4()),content_hash=digest,hash_algorithm='sha256',
+                      extraction_version=web.extractor_version(),byte_length=len(data))
+        if original:
+            original_hash=hashlib.sha256(original).hexdigest()
+            self._publish(original,original_hash)
+            snapshot['original_hash']=original_hash
+        identity=str(uuid.uuid4())
+        result=dict(schema_version=1,material_id=identity,entity_id=identity,version=1,
+                    title=details['metadata'].get('title') or command['url'],
+                    source=dict(kind='public_web',source_id=details['url'],label=command['url'],
+                                received_at=datetime.now(timezone.utc).isoformat()),
+                    snapshot=snapshot,web=details,summary=None)
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous=replay(db)
+            if previous is not None:return previous
+            if cancel and cancel.is_set():
+                raise CommandError('cancelled','Web capture cancelled')
+            encoded=json.dumps(result,ensure_ascii=False)
+            db.execute('INSERT INTO voyager_materials VALUES(?,?)',(identity,encoded))
+            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)',(operation,request,encoded))
+            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)',(json.dumps(dict(type='voyager.web_registered',material_id=identity,operation_id=operation)),))
+        return result
+
     def register_pdf(self, command, *, token):
         """Accept bounded bytes, retaining the original and page anchors atomically."""
         self._authorize(token)
