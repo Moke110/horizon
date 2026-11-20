@@ -42,6 +42,8 @@ class VoyagerService:
             from hostrun.voyager_sources import default_providers
             from hostrun.voyager_doi_sources import CrossrefProvider, OpenAlexProvider
             providers = default_providers()
+            from hostrun.voyager_tavily import TavilyProvider
+            providers['tavily'] = TavilyProvider(self.home)
             providers.update(crossref=CrossrefProvider(), openalex=OpenAlexProvider())
         self.providers=dict(providers);self.clock=clock;self.on_change=on_change or (lambda event:None)
         with self._connect() as db:self.initialize_database(db)

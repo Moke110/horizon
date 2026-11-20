@@ -1,7 +1,7 @@
 import React,{useEffect,useState} from 'react';
 const localInput=(d:Date)=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
 const labels:Record<string,string>={planned:'待执行',running:'执行中',complete:'已完成',partial:'部分覆盖',blocked:'来源未就绪',failed:'执行失败',cancelled:'已取消',uncertain:'结果不确定',pending:'待调用',unconfigured:'未配置',unknown:'结果未知',reserved:'已预留',received:'已收到',foundation:'基础',recent:'近期',incremental:'增量',seconds_budget:'时间到限',queries_budget:'查询次数到限',candidates_budget:'候选数到限',fulltexts_budget:'正文数到限',provider_failed:'来源调用失败',timeout:'来源超时',authentication:'来源认证失败',budget_unknown:'来源额度未知',fulltext_pending:'正文等待回执',fulltext_failed:'正文获取失败'};
-const academicLabels:Record<string,string>={rate_limited:'来源限流',preprint:'预印本',article:'文章',not_peer_reviewed:'未经同行评审',published_at:'发表时间',abstract:'摘要',doi:'DOI',title:'标题',authors:'作者',journal:'期刊'};
+const academicLabels:Record<string,string>={rate_limited:'来源限流',search_metadata:'搜索片段（元数据）',preprint:'预印本',article:'文章',not_peer_reviewed:'未经同行评审',published_at:'发表时间',abstract:'摘要',doi:'DOI',title:'标题',authors:'作者',journal:'期刊'};
 const label=(s:string)=>academicLabels[s]||labels[s]||s;
 const budget=(b:any)=>`${b.seconds} 秒 · ${b.queries} 次查询 · ${b.candidates} 个候选 · ${b.fulltexts} 篇正文`;
 const date=(s:number|null|undefined)=>s==null?'未知':new Date(s*1000).toLocaleString();

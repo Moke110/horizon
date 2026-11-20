@@ -23,3 +23,10 @@ Explicit Continue creates a new segment, retaining aggregate usage, results and 
 Requests, operation receipts and events are Voyager-owned SQLite tables, initialized by this service rather than importing Voyager into AgentService schema setup. Product startup initializes the service on the target home. Managed upgrades preserve the database; first public service access creates its additive tables.
 
 `recent` pages 50 summaries; `view` bounds candidates to 50 (abstract omitted), gaps to 100, fulltext work to 50 and segment history to 3. `query_history` pages ten actual attempts. Candidate pages are bounded to 2 MB metadata; error pages permit only a fixed error_code. Raw provider errors, secret-bearing URLs and arbitrary response bodies are not persisted. Source IO occurs outside the desktop dispatch lock; postcommit notifications refresh authenticated GUI projections.
+## Tavily web discovery
+
+Select source `tavily` and supply the user-owned `TAVILY_API_KEY` to the Horizon process. The key is used only in HTTPS authorization headers. Search snippets are discovery metadata, never full-text evidence. Only Search basic is enabled; automatic parameters, answers and raw content are disabled.
+
+Before each search, `/usage` must positively identify the free Researcher plan, zero PAYG usage/limit and at least one available account/key credit. A durable local ceiling and reservation precede Search. Unknown, exhausted or interrupted usage pauses this channel; other sources remain available. The local ceiling does not reset automatically across months. An interrupted reservation requires reconciliation against verified account usage before resuming; do not erase the ledger to retry an unknown call.
+
+Protocol references: [Usage](https://docs.tavily.com/documentation/api-reference/endpoint/usage), [Search](https://docs.tavily.com/documentation/api-reference/endpoint/search).
