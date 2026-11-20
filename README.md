@@ -173,6 +173,8 @@ Open **Materials** to paste text, give it a title and source label, and register
 
 In **Materials**, choose **导入 PDF** to import a local PDF up to 10 MiB. Select a page number to compare extracted text against the original page, especially for columns, tables and equations. When text is unavailable you can supply it yourself or abandon the request.
 
+In **Materials**, enter a public HTTPS URL and select **获取网页正文**. The saved material shows the source link, acquisition time and numbered paragraphs from the saved snapshot. You can reopen it offline. An access failure keeps the link and reason available for review.
+
 ### Desktop development
 
 Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
