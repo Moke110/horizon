@@ -8,7 +8,7 @@ All mutations require a launch token, schema_version 1, a unique operation_id an
 
 `create` preserves scope.text, user/planner alternatives, must_include, exclude and source identifiers. There are at most 128 expanded queries. Hard constraints remain on every actual query and accepted candidate. Initial searches separate foundation (effective lower bound zero) and recent queries; incremental searches use the original lower bound minus overlap. UTC timestamps are integer Unix seconds. Windows are half-open [effective_from_at, until_at). Original user bounds are retained separately. Publication and discovery timestamps are independent; missing selected timestamps do not prove inclusion.
 
-`execute` calls configured source owners with an actual query DTO and remaining candidate/time allowance. The default registry is empty: absent sources become unconfigured, never complete. External source adapters and their live acceptance belong to their own contracts. An exhausted validated page/receipt completes that query only. Success cursors are query-specific and never replace unresolved gaps.
+`execute` calls configured source owners with an actual query DTO and remaining candidate/time allowance. The default registry includes `arxiv` and `europepmc`. An explicitly supplied registry replaces the defaults, including when empty. A missing source records an unconfigured gap. An exhausted validated page/receipt completes that query only. Success cursors are query-specific and never replace unresolved gaps.
 
 ## Budgets and recovery
 

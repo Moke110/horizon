@@ -38,7 +38,10 @@ class VoyagerService:
     def __init__(self,home,*,token,scope_provider=None,providers=None,clock=time.time,on_change=None):
         if not isinstance(token,str) or not token:raise ValueError('A launch token is required')
         self.home=Path(home);self._token=token;self.scope_provider=scope_provider or ExplicitScopeProvider()
-        self.providers=dict(providers or {});self.clock=clock;self.on_change=on_change or (lambda event:None)
+        if providers is None:
+            from hostrun.voyager_sources import default_providers
+            providers = default_providers()
+        self.providers=dict(providers);self.clock=clock;self.on_change=on_change or (lambda event:None)
         with self._connect() as db:self.initialize_database(db)
 
     def _notify(self,value):
@@ -179,9 +182,9 @@ class VoyagerService:
 
     @staticmethod
     def _bounded_page(page):
-        if not isinstance(page,dict) or set(page)-{'candidates','exhausted','next_cursor','receipt','error_code'}:raise CommandError('invalid_provider_response','Invalid page fields')
+        if not isinstance(page,dict) or set(page)-{'candidates','exhausted','next_cursor','receipt','source_query','error_code'}:raise CommandError('invalid_provider_response','Invalid page fields')
         if 'error_code' in page:
-            if set(page)!={'error_code'} or page['error_code'] not in ('unconfigured','provider_failed','timeout','authentication','budget_unknown'):raise CommandError('invalid_provider_response','Invalid provider error shape')
+            if set(page)!={'error_code'} or page['error_code'] not in ('unconfigured','provider_failed','timeout','authentication','budget_unknown','rate_limited'):raise CommandError('invalid_provider_response','Invalid provider error shape')
             return
         rows=page.get('candidates')
         if not isinstance(rows,list) or len(rows)>10000:raise CommandError('invalid_provider_response','Candidate page is too large')
@@ -203,7 +206,7 @@ class VoyagerService:
             if address.scheme not in ('https','http') or not address.hostname or address.username or address.password:raise CommandError('invalid_provider_response','Candidate URL must be a credential-free HTTP address')
             total+=512
             if total>2*1024*1024:raise CommandError('invalid_provider_response','Candidate page exceeds its byte budget')
-        for key,limit in (('receipt',512),('next_cursor',4096)):
+        for key,limit in (('receipt',512),('next_cursor',4096),('source_query',16384)):
             if page.get(key) is not None and (not isinstance(page[key],str) or len(page[key].encode('utf-8'))>limit):raise CommandError('invalid_provider_response','Page metadata exceeds its bound')
 
     def record(self,command,*,token):
@@ -215,7 +218,7 @@ class VoyagerService:
             self._account_time(value);segment=value['segments'][-1];page=command.get('page')
             error=page.get('error_code') if isinstance(page,dict) else 'invalid_provider_response'
             if error:
-                query.update(status='failed',error=error if error in ('unconfigured','provider_failed','timeout','authentication','budget_unknown') else 'provider_failed');attempt['status']='failed';value['inflight']=None;return
+                query.update(status='failed',error=error if error in ('unconfigured','provider_failed','timeout','authentication','budget_unknown','rate_limited') else 'provider_failed');attempt['status']='failed';value['inflight']=None;return
             rows=page.get('candidates')
             if not isinstance(rows,list) or len(rows)>lease['actual_query']['limit'] or type(page.get('exhausted')) is not bool or not isinstance(page.get('receipt'),str) or not page['receipt'] or len(page['receipt'])>512:raise CommandError('invalid_provider_response','Provider response is outside its reservation')
             cursor=page.get('next_cursor')
@@ -231,6 +234,7 @@ class VoyagerService:
                     if query['query_id'] not in previous['query_ids']:previous['query_ids'].append(query['query_id'])
                 else:value['candidates'].append({**row,'first_seen_at':int(self.clock()),'query_ids':[query['query_id']],'scope_kind':value['scope']['kind'],'request_id':value['request_id']})
             segment['used']['candidates']+=len(rows);value['used']['candidates']+=len(rows)
+            if 'source_query' in page:attempt['source_query']=page['source_query']
             attempt.update(status='received',receipt=page['receipt'],candidate_count=len(rows));value['inflight']=None
             if segment['used']['seconds']>=segment['limits']['seconds']:
                 value.update(status='partial',stop_reason='seconds_budget');return

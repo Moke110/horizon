@@ -223,10 +223,37 @@ def test_public_progress_events_are_emitted_after_the_snapshot_is_committed(tmp_
 
 def test_desktop_voyager_commands_route_scope_and_unconfigured_result(tmp_path):
     from hostrun.desktop_bridge import voyager_command
-    service=VoyagerService(tmp_path,token='s',clock=lambda:150)
+    service=VoyagerService(tmp_path,token='s',providers={},clock=lambda:150)
     kind,planned=voyager_command(service,{'action':'voyager_create',**request()},token='s')
     assert kind=='voyager_view' and planned['scope']['kind']=='temporary_explicit'
     kind,result=voyager_command(service,{'action':'voyager_execute','schema_version':1,'operation_id':'run','request_id':planned['request_id'],'expected_version':planned['version']},token='s')
     assert result['status']=='blocked' and result['used']['queries']==0 and result['successful_cursors']=={}
     assert all(q['attempt_count']==0 for q in result['queries'])
     assert voyager_command(service,{'action':'voyager_open','request_id':planned['request_id']},token='s')[1]==result
+
+def test_academic_result_remains_readable_when_another_source_fails(tmp_path):
+    from hostrun.desktop_bridge import voyager_command
+
+    class Limited:
+        def search(self, query):
+            return {'error_code': 'rate_limited'}
+
+    class Academic(OnePage):
+        def search(self, query):
+            page = super().search(query)
+            page['source_query'] = 'https://export.arxiv.org/api/query?start=0'
+            return page
+
+    providers = {'arxiv': Academic(), 'europepmc': Limited()}
+    service = VoyagerService(tmp_path, token='s', providers=providers, clock=lambda: 150)
+    command = request()
+    command['scope'].update(sources=['europepmc', 'arxiv'], alternatives=[])
+    command['window']['mode'] = 'incremental'
+    planned = service.create(command, token='s')
+    service.execute({'schema_version': 1, 'operation_id': 'run', 'request_id': planned['request_id'], 'expected_version': 1}, token='s')
+    reopened = VoyagerService(tmp_path, token='s', providers={})
+    _, view = voyager_command(reopened, {'action': 'voyager_open', 'request_id': planned['request_id']}, token='s')
+    assert view['status'] == 'partial'
+    assert view['gaps'][0]['reason'] == 'rate_limited'
+    assert view['candidates'][0]['source_id'] == 'paper-1'
+    assert view['queries'][1]['attempts'][0]['source_query'].endswith('?start=0')
