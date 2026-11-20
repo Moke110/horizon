@@ -104,6 +104,17 @@ def write_inventory(package):
         electron_version = package / 'desktop/node_modules/electron/dist/version'
         if electron_version.read_text(encoding='utf-8').strip().removeprefix('v') != PINNED_VERSIONS['electron']:
             raise ValueError('Electron binary version differs from pinned package')
+    desktop_meta = package / 'desktop/package.json'
+    if desktop_meta.is_file():
+        pdf_pin = json.loads(desktop_meta.read_text(encoding='utf-8')).get('devDependencies', {}).get('pdfjs-dist')
+        if pdf_pin:
+            dist = package / 'desktop/dist'
+            files = ['pdf.mjs', 'pdf.worker.mjs', 'PDFjs-LICENSE', 'cmaps/LICENSE',
+                     'standard_fonts/LICENSE_FOXIT', 'standard_fonts/LICENSE_LIBERATION']
+            if not all((dist / filename).is_file() for filename in files):
+                raise ValueError('Missing PDF.js runtime assets or notices')
+            components.append({'name':'pdfjs-dist', 'version':pdf_pin, 'location':'desktop/dist/pdf.mjs',
+                               'license':'Apache-2.0', 'license_files':['desktop/dist/'+f for f in files[2:]]})
     components.sort(key=lambda item: (item['name'], item['version'], item['location']))
     write_json_bytes(package / 'runtime-components.json', {'schema_version': 1, 'components': components})
 

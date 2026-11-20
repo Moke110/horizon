@@ -41,3 +41,12 @@ have no session/task foreign key: conversation lifecycle does not own originals.
 This ticket adds no conversation-delete API, generated summarizer, web ingestion
 or destructive material collection. Missing/corrupt originals are reported, not
 regenerated from summaries. No public command mutates a published snapshot.
+
+Desktop PDF import uses the native file picker and accepts at most 10 MiB.
+The material stores separate digests for the immutable original PDF and the
+extracted text. One-based anchors identify PDF pages and half-open Unicode
+code-point offsets in the extracted text. Supplemental text has no automatic
+page mapping. The sandboxed renderer uses the bundled PDF.js worker and local
+fonts. The desktop protocol exposes only the currently selected authenticated
+material's original bytes and an allowlist of application assets. Reader
+navigation accepts page numbers, never an arbitrary filesystem path.

@@ -171,6 +171,8 @@ The Trace view records generation and delivery separately. A completed response 
 
 Open **Materials** to paste text, give it a title and source label, and register it offline without model credentials. Select a saved material to read its exact original text and source identity, receipt time, SHA-256 and extraction version. Generated summaries appear separately; registration does not generate one or contact a remote service. Originals remain available independently of conversations.
 
+In **Materials**, choose **导入 PDF** to import a local PDF up to 10 MiB. Select a page number to compare extracted text against the original page, especially for columns, tables and equations. When text is unavailable you can supply it yourself or abandon the request.
+
 ### Desktop development
 
 Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.

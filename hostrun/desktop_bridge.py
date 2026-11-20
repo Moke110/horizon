@@ -38,6 +38,14 @@ def material_command(materials, command, *, token):
     if command.get('action') == 'materials_register':
         value=materials.register_text({k:v for k,v in command.items() if k!='action'},token=token)
         return materials.get_package(value['material_id'],token=token)
+    if command.get('action') == 'materials_pdf_register':
+        value = materials.register_pdf({k:v for k,v in command.items() if k != 'action'}, token=token)
+        return materials.get_package(value['material_id'], token=token)
+    if command.get('action') == 'materials_pdf_resolve':
+        decision = {key:value for key,value in command.items() if key != 'decision'}
+        decision['action'] = command.get('decision')
+        value = materials.resolve_pdf(decision, token=token)
+        return materials.get_package(value['material_id'], token=token)
     if command.get('action') == 'materials_open':
         return materials.get_package(command.get('material_id'),token=token)
     raise CommandError('invalid_command','Unknown materials action')
@@ -243,9 +251,16 @@ def serve(resolved):
                         kind,data=voyager_command(voyager,cmd,token=token)
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
-                    elif action in ('materials_register','materials_open'):
+                    elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
-                        emit('material_package',material_command(materials,cmd,token=token))
+                        package = material_command(materials,cmd,token=token)
+                        if package.get('pdf'):
+                            import base64
+                            original = materials.pdf_original(package['material_id'], token=token)
+                            emit('private_pdf', {'id':package['material_id'], 'data':base64.b64encode(original).decode('ascii')})
+                        else:
+                            emit('private_pdf', None)
+                        emit('material_package', package)
                     elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
                     elif action == 'ready': ui_ready.set()
