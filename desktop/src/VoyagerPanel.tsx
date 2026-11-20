@@ -25,7 +25,10 @@ export function VoyagerPanel({requests,busy,selected,history,onCommand}:{request
  <section><h4>候选（{selected.candidate_count}，显示前 50 条）</h4>{selected.candidates.map((c:any)=><div key={c.source+':'+c.source_id}>
  <strong>{c.title}</strong><p>{c.source} · {c.source_id} · 发表 {date(c.published_at)} · 发现 {date(c.discovered_at)}</p>
  <p>来源网址：{c.url}</p>
- {c.url?.startsWith('https://')&&<button onClick={()=>onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url:c.url,dynamic:false})}>获取此候选的网页正文</button>}
+ {c.url?.startsWith('https://')&&<>
+ <button onClick={()=>onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url:c.url,dynamic:false})}>获取此候选的网页正文</button>
+ <button onClick={()=>onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url:c.url,dynamic:true})}>用浏览器获取此候选的正文</button>
+ </>}
  {c.doi&&<p>DOI：{c.doi}</p>}
  {Array.isArray(c.reference_ids)&&<details><summary>来源提供的引用关系</summary>
  <p>参考文献：已列出 {c.reference_ids.length} 个标识，来源报告 {c.reference_count??'未知'} 条。被引用次数：{c.cited_by_count??'未知'}。</p>

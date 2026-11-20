@@ -9,6 +9,7 @@ import tempfile
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from http.client import HTTPException
 from pathlib import Path
 
 from common import file_lock
@@ -160,7 +161,7 @@ class MaterialsService:
             return previous
         try:
             text,details,original=web.acquire(command['url'],dynamic=command.get('dynamic',False),cancel=cancel)
-        except (OSError,ValueError) as error:
+        except (OSError, ValueError, HTTPException):
             text,details,original=web.unavailable('fetch_failed',command['url'])
         if cancel and cancel.is_set():
             raise CommandError('cancelled','Web capture cancelled')

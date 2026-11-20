@@ -175,6 +175,8 @@ In **Materials**, choose **导入 PDF** to import a local PDF up to 10 MiB. Sele
 
 In **Materials**, enter a public HTTPS URL and select **获取网页正文**. The saved material shows the source link, acquisition time and numbered paragraphs from the saved snapshot. You can reopen it offline. An access failure keeps the link and reason available for review.
 
+For a page that renders its public article with JavaScript, select **使用浏览器渲染公开动态页** before capture. Voyager candidates also have a browser capture action. Dynamic capture uses the Chromium bundled in the Windows package.
+
 ### Desktop development
 
 Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.

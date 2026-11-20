@@ -1,6 +1,5 @@
 """Install official pinned Chromium into an explicit package directory, inventory all bytes."""
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -9,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import shutil
+
+from hostrun.voyager_web_renderer import chromium_descriptor, file_sha256
 
 
 def prepare(destination):
@@ -19,21 +20,22 @@ def prepare(destination):
     with tempfile.TemporaryDirectory(prefix='horizon-chromium-stage-') as temporary:
         stage=Path(temporary)
         environment=dict(os.environ,PLAYWRIGHT_BROWSERS_PATH=str(stage))
-        subprocess.run([sys.executable,'-m','playwright','install','chromium'],env=environment,check=True)
+        subprocess.run([sys.executable,'-m','playwright','install','--no-shell','chromium'],env=environment,check=True)
         folders=list(stage.glob('chromium-*'))
         if len(folders)!=1:raise ValueError('Expected one Chromium revision')
         shutil.copytree(folders[0],destination/folders[0].name)
+    write_inventory(destination)
+
+
+def write_inventory(destination):
     candidates=list(destination.glob('chromium-*/chrome-win*/chrome.exe'))
     if len(candidates)!=1:
         raise ValueError('Expected one packaged Chromium executable')
-    from playwright._impl._driver import compute_driver_executable
-    driver=Path(compute_driver_executable()[1]).parent
-    descriptor=json.loads((driver/'browsers.json').read_text())
-    chromium=next(item for item in descriptor['browsers'] if item['name']=='chromium')
-    inventory={'chromium_revision':chromium['revision'],'chromium_version':chromium['browserVersion'],'playwright_version':importlib.metadata.version('playwright'),'executable':candidates[0].relative_to(destination).as_posix(),'sha256':hashlib.sha256(candidates[0].read_bytes()).hexdigest(),'files':{}}
+    chromium=chromium_descriptor()
+    inventory={'chromium_revision':chromium['revision'],'chromium_version':chromium['browserVersion'],'playwright_version':importlib.metadata.version('playwright'),'executable':candidates[0].relative_to(destination).as_posix(),'sha256':file_sha256(candidates[0]),'files':{}}
     for path in sorted(destination.rglob('*')):
         if path.is_file():
-            inventory['files'][path.relative_to(destination).as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+            inventory['files'][path.relative_to(destination).as_posix()]=file_sha256(path)
     (destination/'browser-inventory.json').write_text(json.dumps(inventory,sort_keys=True,indent=2),encoding='utf8')
 
 

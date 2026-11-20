@@ -124,7 +124,7 @@ jobs:
       - name: Prepare pinned Chromium bundle
         shell: pwsh
         run: |
-          python scripts/prepare_browser.py --out (Join-Path $env:RUNTIME_DIR "browser")
+          python -m scripts.prepare_browser --out (Join-Path $env:RUNTIME_DIR "browser")
           if ($LASTEXITCODE -ne 0) { throw "Chromium preparation failed" }
 
       - name: Build the TypeScript desktop

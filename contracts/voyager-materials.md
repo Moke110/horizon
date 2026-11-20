@@ -58,3 +58,10 @@ source-supplied title, author, publication date and site name where present.
 An available snapshot records original-byte and extracted-text SHA-256 hashes.
 The paragraph IDs and half-open Unicode code-point spans refer to its saved
 text. Opening a saved material reads the verified local snapshot.
+
+For URL and candidate capture, `dynamic: true` renders public JavaScript content
+with the Windows package's pinned Playwright Chromium. The saved original-byte
+hash identifies the rendered HTML in dynamic mode. Browser rendering uses a
+fresh profile, blocks navigation to a different top-level source, and passes
+network fetches through the public HTTPS boundary. The capture worker owns a
+nested Windows Job and uses a capture-scoped temporary directory.

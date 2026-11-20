@@ -7,11 +7,20 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urldefrag
 
 
 def file_sha256(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream,'sha256').hexdigest()
+
+
+def chromium_descriptor():
+    import playwright
+
+    path = Path(playwright.__file__).parent / 'driver' / 'package' / 'browsers.json'
+    descriptor = json.loads(path.read_text(encoding='utf8'))
+    return next(browser for browser in descriptor['browsers'] if browser['name'] == 'chromium')
 
 
 def browser_executable(root):
@@ -36,6 +45,10 @@ def browser_executable(root):
     from importlib.metadata import version
     if version('playwright') != inventory['playwright_version']:
         raise ValueError('browser_driver_version_mismatch')
+    chromium = chromium_descriptor()
+    if (inventory.get('chromium_version'), inventory.get('chromium_revision')) != (
+            chromium['browserVersion'], chromium['revision']):
+        raise ValueError('browser_version_mismatch')
     return executable
 
 
@@ -51,7 +64,14 @@ def render_public(url, html_bytes, cancel=None):
     with tempfile.TemporaryDirectory(prefix='horizon-web-') as folder:
         folder=Path(folder)
         (folder/'input.html').write_bytes(html_bytes)
+        scratch = folder / 'browser-temp'
+        scratch.mkdir()
+        environment = {key: value for key, value in os.environ.items()
+                       if key.upper() not in {'PLAYWRIGHT_NODEJS_PATH', 'PLAYWRIGHT_BROWSERS_PATH'}}
+        environment.update(TEMP=str(scratch), TMP=str(scratch), TMPDIR=str(scratch),
+                           PLAYWRIGHT_BROWSERS_PATH=str(root))
         options={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
+        options['env'] = environment
         worker=subprocess.Popen([sys.executable,'-B','-X','utf8','-m','hostrun.voyager_web_renderer','--worker',url,str(executable),str(folder)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**options)
         deadline=time.monotonic()+30
         try:
@@ -84,6 +104,8 @@ def capture_worker(url, executable, folder):
     with sync_playwright() as driver:
         browser=driver.chromium.launch(executable_path=executable,headless=True,chromium_sandbox=True,args=['--disable-background-networking','--disable-quic','--disable-features=WebRtcHideLocalIpsWithMdns','--force-webrtc-ip-handling-policy=disable_non_proxied_udp'])
         try:
+            if browser.version != chromium_descriptor()['browserVersion']:
+                raise ValueError('browser_version_mismatch')
             context=browser.new_context(service_workers='block',accept_downloads=False)
             context.route_web_socket('**/*',lambda socket:socket.close())
             context.add_init_script("Object.defineProperty(globalThis,'Worker',{value:undefined});Object.defineProperty(globalThis,'SharedWorker',{value:undefined});Object.defineProperty(globalThis,'RTCPeerConnection',{value:undefined});")
@@ -94,7 +116,10 @@ def capture_worker(url, executable, folder):
                 if count>40 or route.request.method!='GET':
                     route.abort();return
                 try:
-                    if route.request.url==url and route.request.is_navigation_request():
+                    if route.request.is_navigation_request() and route.request.frame == page.main_frame:
+                        if route.request.url != url:
+                            route.abort()
+                            return
                         route.fulfill(status=200,content_type='text/html',body=(folder/'input.html').read_bytes())
                     else:
                         status,headers,body=fetch_public(route.request.url,{})
@@ -105,6 +130,8 @@ def capture_worker(url, executable, folder):
                     route.abort()
             context.route('**/*',route_request)
             page.goto(url,wait_until='networkidle',timeout=15000)
+            if urldefrag(page.url).url != url:
+                raise ValueError('dynamic_source_changed')
             content=page.content().encode('utf8')
             if len(content)>2*1024*1024:raise ValueError('response_too_large')
             (folder/'result.html').write_bytes(content)

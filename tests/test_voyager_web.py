@@ -115,3 +115,20 @@ def test_empty_html_still_records_unavailable_source_link(tmp_path,monkeypatch):
     svc=MaterialsService(tmp_path,token='s')
     result=svc.register_web(dict(schema_version=1,operation_id='empty',url='https://example.org/archive'),token='s')
     assert result['web']['reason']=='no_article_body' and result['web']['url']=='https://example.org/archive'
+
+
+def test_interrupted_http_response_keeps_original_source(tmp_path, monkeypatch):
+    from http.client import IncompleteRead
+    import hostrun.voyager_web as web
+
+    def interrupted_fetch(url, headers):
+        raise IncompleteRead(b'<html>', 40)
+
+    monkeypatch.setattr(web, 'fetch_public', interrupted_fetch)
+    url = 'https://example.org/interrupted'
+    service = MaterialsService(tmp_path, token='s')
+    result = service.register_web(dict(schema_version=1, operation_id='interrupted', url=url), token='s')
+    saved = MaterialsService(tmp_path, token='s').get_package(result['material_id'], token='s')
+    assert saved['web']['reason'] == 'fetch_failed'
+    assert saved['source']['label'] == url
+    assert saved['original_text'] == ''
