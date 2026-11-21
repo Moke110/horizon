@@ -60,6 +60,8 @@ Keep `docs/adr/` for Matt-maintained decisions, `docs/agents/` for Matt skill co
 
 For development checks, use an independent Python environment with PyYAML, pytest and PyMuPDF. The repository `.venv` is a uv-managed CPython 3.13 environment and passes the suite (1012 passed, 3 skipped on 2026-10-31); rebuild it with `uv` only if its interpreter disappears. On Windows, use `python -X utf8 -m pytest -q` to avoid locale-dependent reads without persistent environment changes. The release pipeline and the distribution package are documented in the "Release, tags and channels" section above; real acceptance evidence belongs in `docs/acceptance/README.md`.
 
+Put relocatable temporary files for development, tests, packaging and acceptance under the checkout's `tmp/`. Use short, per-run paths and set tool options or process-scoped environment variables before launching tools so pytest (`--basetemp`), caches, build staging, diagnostic scratch files and GitHub `--body-file` transport stay there. When an acceptance requirement depends on the real platform install or data location, use that location only for the part under test and keep staging and other scratch files in `tmp/`.
+
 ### Skill pack
 
 Read the relevant `SKILL.md` before applying a skill. Shared Matt Pocock skills are installed under `~/.agents/skills/<name>/`; source metadata lives in `~/.agents/.skill-lock.json`. Codex and DeepSeek Harness should use their supported skill-loading mechanism against this shared source, without relying on WorkBuddy junctions. If a required skill is unavailable, report the missing integration rather than inventing its behavior.
