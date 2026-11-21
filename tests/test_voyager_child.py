@@ -26,6 +26,7 @@ def test_voyager_child_receives_only_bound_explicit_scope(tmp_path):
     evidence = child_evidence(voyager, plan['request_id'], owner['task_id'], token=token)
     assert evidence['request_id'] == plan['request_id']
     assert evidence['scope_kind'] == 'temporary_explicit'
+    assert 'frontier_id' not in evidence and 'frontier_version' not in evidence
     assert evidence['gaps'][0]['source'] == 'crossref'
     assert 'test' not in json.dumps(evidence)
     with pytest.raises(CommandError) as cross_task:
@@ -34,6 +35,43 @@ def test_voyager_child_receives_only_bound_explicit_scope(tmp_path):
     with pytest.raises(CommandError) as invalid_request:
         child_evidence(voyager, 'Solar observations', owner['task_id'], token=token)
     assert invalid_request.value.code == 'invalid_request'
+
+
+def test_voyager_child_frontier_scope_needs_same_task_and_reports_version(tmp_path):
+    from hostrun.frontier import FrontierService
+    from hostrun.voyager_child import child_evidence
+
+    token = 'test'
+    agent = AgentService(tmp_path, token=token)
+    owner = agent.create_task(dict(schema_version=1, operation_id='task', title='Solar research'), token=token)
+    other = agent.create_task(dict(schema_version=1, operation_id='other', title='Other research'), token=token)
+    frontier = FrontierService(tmp_path, token=token).create(dict(schema_version=1, operation_id='frontier',
+        question='Solar activity', status='following',
+        scope=dict(text='Solar observations', alternatives=[], sources=['crossref']),
+        hard_constraints=dict(must_include=[], exclude=[]), relations=[]), token=token)
+    voyager = VoyagerService(tmp_path, token=token, providers={})
+    plan = voyager.create(dict(schema_version=1, operation_id='plan', task_id=owner['task_id'],
+        scope=dict(frontier_id=frontier['frontier_id']),
+        window=dict(mode='incremental', basis='discovered', from_at=0, until_at=20, overlap_seconds=0)), token=token)
+    voyager.execute(dict(schema_version=1, operation_id='execute', request_id=plan['request_id'],
+        expected_version=plan['version']), token=token)
+
+    evidence = child_evidence(voyager, plan['request_id'], owner['task_id'], token=token)
+    assert evidence['scope_kind'] == 'frontier'
+    assert evidence['frontier_id'] == frontier['frontier_id']
+    assert evidence['frontier_version'] == frontier['version']
+    with pytest.raises(CommandError) as cross_task:
+        child_evidence(voyager, plan['request_id'], other['task_id'], token=token)
+    assert cross_task.value.code == 'invalid_task'
+
+    unbound = voyager.create(dict(schema_version=1, operation_id='unbound',
+        scope=dict(frontier_id=frontier['frontier_id']),
+        window=dict(mode='incremental', basis='discovered', from_at=0, until_at=20, overlap_seconds=0)), token=token)
+    voyager.execute(dict(schema_version=1, operation_id='execute-unbound', request_id=unbound['request_id'],
+        expected_version=unbound['version']), token=token)
+    with pytest.raises(CommandError) as missing_task:
+        child_evidence(voyager, unbound['request_id'], None, token=token)
+    assert missing_task.value.code == 'invalid_task'
 
 
 def test_parent_routes_voyager_to_private_context(tmp_path):

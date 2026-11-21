@@ -16,6 +16,7 @@ from hostrun.embedded_agent import load_source_configuration, save_source_key, s
 from hostrun.managed_database import database_connection
 from hostrun.voyager_relevance import candidate_change, candidate_identity, scope_identity, selection_reason
 from hostrun.voyager_sources import valid_candidate_timestamps
+from hostrun.frontier import FrontierService
 from common import file_lock
 
 DEFAULT_LIMITS={'seconds':900,'queries':20,'candidates':100,'fulltexts':20}
@@ -39,6 +40,20 @@ class ExplicitScopeProvider:
         return result
 
 
+class KnowledgeScopeProvider:
+    """Resolve an existing Frontier in the transaction that creates a plan."""
+
+    @staticmethod
+    def resolve(value, *, db):
+        frontier_id = value['frontier_id']
+        if not isinstance(frontier_id, str) or not frontier_id.strip():
+            raise CommandError('invalid_scope', '请选择有效的 Frontier')
+        expected = value.get('expected_version')
+        if 'expected_version' in value and type(expected) is not int:
+            raise CommandError('version_conflict', 'Frontier 版本无效，请刷新后重试')
+        return FrontierService.resolve_in_transaction(db, frontier_id, expected_version=expected)
+
+
 class VoyagerService:
     def __init__(self,home,*,token,scope_provider=None,providers=None,clock=time.time,on_change=None):
         if not isinstance(token,str) or not token:raise ValueError('A launch token is required')
@@ -56,7 +71,9 @@ class VoyagerService:
                 'openalex': lambda key, _: OpenAlexProvider(key=key),
             }
         self.providers=dict(providers);self.clock=clock;self.on_change=on_change or (lambda event:None)
-        with self._connect() as db:self.initialize_database(db)
+        with self._connect() as db:
+            self.initialize_database(db)
+            FrontierService.initialize_database(db)
 
     def source_settings(self, *, token):
         self._authorize(token)
@@ -154,7 +171,11 @@ class VoyagerService:
         with self._connect() as db:
             db.execute('BEGIN IMMEDIATE');encoded,previous=self._replay(db,command,'create')
             if previous is not None:return previous
-            scope=self.scope_provider.resolve(command.get('scope'))
+            scope_input = command.get('scope')
+            if isinstance(scope_input, dict) and 'frontier_id' in scope_input:
+                scope = KnowledgeScopeProvider.resolve(scope_input, db=db)
+            else:
+                scope = self.scope_provider.resolve(scope_input)
             if not isinstance(command.get('limits',{}),dict):raise CommandError('invalid_budget','Budgets must be an object')
             limits={**DEFAULT_LIMITS,**command.get('limits',{})}
             if set(limits)!=set(DEFAULT_LIMITS) or any(type(v) is not int or v<0 or v>{'seconds':86400,'queries':1000,'candidates':10000,'fulltexts':1000}[k] for k,v in limits.items()):raise CommandError('invalid_budget','Budgets must be nonnegative integer limits')
@@ -189,13 +210,24 @@ class VoyagerService:
             if not row:raise CommandError('not_found','Unknown retrieval request')
             value=json.loads(row[0])
             if type(command.get('expected_version')) is not int or command['expected_version']!=value['version']:raise CommandError('version_conflict','Retrieval request changed')
+            event = action
+            if action in ('execution_started', 'query_reserved') and value['scope']['kind']=='frontier':
+                try:
+                    FrontierService.resolve_in_transaction(db, value['scope']['frontier_id'])
+                except CommandError as exc:
+                    if action == 'execution_started' or exc.code not in ('frontier_inactive', 'not_found'):
+                        raise
+                    value.update(status='partial', stop_reason='frontier_inactive')
+                    event = 'execution_stopped'
             interrupted=None
             if action=='execution_started' and value.get('execution_operation') and value['status'] in ('running','uncertain'):
                 interrupted=json.loads(json.dumps(value))
                 interrupted['status']='uncertain' if interrupted.get('inflight') else 'partial'
                 for query in interrupted['queries']:
                     if query['attempts'] and query['attempts'][-1]['status']=='reserved':query['attempts'][-1]['status']='unknown'
-            mutate(value);value['version']+=1
+            if event == action:
+                mutate(value)
+            value['version']+=1
             if interrupted is not None:
                 db.execute('UPDATE voyager_operations SET result=? WHERE operation_id=?',(json.dumps(interrupted),interrupted['execution_operation']))
                 event_id=str(uuid.uuid4())
@@ -204,7 +236,7 @@ class VoyagerService:
             encoded=json.dumps(value)
             db.execute('UPDATE voyager_requests SET result=? WHERE request_id=?',(encoded,value['request_id']))
             db.execute('INSERT INTO voyager_operations VALUES(?,?,?)',(operation,request,encoded))
-            db.execute('INSERT INTO voyager_events(operation_id,event) VALUES(?,?)',(operation,json.dumps({'schema_version':1,'type':'voyager.'+action,'request_id':value['request_id'],'operation_id':operation})))
+            db.execute('INSERT INTO voyager_events(operation_id,event) VALUES(?,?)',(operation,json.dumps({'schema_version':1,'type':'voyager.'+event,'request_id':value['request_id'],'operation_id':operation})))
         self._notify(value)
         return value,True
 

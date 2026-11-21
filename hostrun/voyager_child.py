@@ -22,7 +22,8 @@ def child_evidence(voyager, request_id, task_id, *, token):
     if not valid:
         raise CommandError('invalid_request', 'Voyager needs an explicit retrieval ID')
     request = voyager.get(request_id, token=token)
-    if request.get('task_id') != task_id or request['scope']['kind'] != 'temporary_explicit':
+    if (not request.get('task_id') or request['task_id'] != task_id
+            or request['scope']['kind'] not in ('temporary_explicit', 'frontier')):
         raise CommandError('invalid_task', 'Retrieval is not bound to this task')
     if request['status'] in ('planned', 'running', 'cancelled'):
         raise CommandError('invalid_transition', 'Finish the current retrieval segment first')
@@ -54,7 +55,7 @@ def child_evidence(voyager, request_id, task_id, *, token):
             content_hash=snapshot['content_hash'], extraction_version=snapshot['extraction_version'],
             anchors=anchors, anchor_count=len(locators)))
 
-    return dict(schema_version=1, request_id=request_id, scope_kind=request['scope']['kind'],
+    evidence = dict(schema_version=1, request_id=request_id, scope_kind=request['scope']['kind'],
         status=request['status'], stop_reason=request.get('stop_reason'), candidates=candidates,
         candidate_count=len(request['candidates']), snapshots=snapshots,
         gaps=[{key: gap[key] for key in ('source', 'reason', 'query_id', 'work_id') if key in gap}
@@ -62,3 +63,7 @@ def child_evidence(voyager, request_id, task_id, *, token):
         limitations=['Only retrieved source metadata and captured snapshot locators are available.',
                      'The child has no original body, does not verify claims, and may not infer complete coverage.',
                      'Unlisted candidates, anchors and gaps are outside the bounded projection.'])
+    if request['scope']['kind'] == 'frontier':
+        evidence['frontier_id'] = request['scope']['frontier_id']
+        evidence['frontier_version'] = request['scope']['frontier_version']
+    return evidence

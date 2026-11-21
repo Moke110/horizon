@@ -55,6 +55,26 @@ _Avoid_: category, tag, folder
 **Knowledge Base（知识库）**:
 Horizon-managed knowledge representing what the Explorer has mastered, with automatic and manual Knowledge Card and Theme updates. Source collection alone does not establish mastery.
 
+**Frontier（关注问题）**:
+The Explorer's focus question with an explicit research scope, hard constraints, a version and a following status; it is the durable knowledge scope a Voyager retrieval plan can use. Relations stay empty in K1.
+_Avoid_: topic, saved search, subscription
+
+**Frontier status（关注状态）**:
+The lifecycle state of a Frontier: following, paused, resolved or deleted. Pause, resolve and delete stop future retrieval without destroying the Frontier's history or already-produced materials; deleted is terminal and cannot be edited.
+_Avoid_: enabled flag, archived, closed
+
+**Retrieval plan（检索计划）**:
+A Voyager request created from a temporary explicit scope or a Frontier, recording its scope snapshot, queries, window and budgets. Creating a plan does not contact a source.
+_Avoid_: search, retrieval run, result
+
+**Retrieval run（检索执行）**:
+The explicit Voyager execution that accesses configured sources under a plan's budgets and records candidates, cursors and gaps. It is distinct from creating the plan and independent of model configuration.
+_Avoid_: plan, scheduled job
+
+**Scope snapshot（范围快照）**:
+The scope values a Voyager request keeps from creation, including the Frontier id and version when the plan came from a Frontier. Later Frontier edits do not rewrite it.
+_Avoid_: live scope, current scope
+
 **Personalized explanation（个性化解读）**:
 Writing grounded in new sources, existing knowledge and accumulated Explorer preferences; independent of delivery.
 
