@@ -248,5 +248,9 @@ Native installed-runtime probes observed Chromium, Playwright Node, Python, and
 console-host descendants. Cancellation and a navigation timeout both left no
 observed descendants or per-capture temporary directories. The probes supplied
 invalid external driver and browser locations and still observed the bundled
-browser. Visible desktop capture, console visibility, and explicit desktop exit
-remain pending in the [V9 ticket](https://github.com/Moke110/horizon/issues/200).
+browser. On November 21, the Explorer confirmed the installed desktop showed
+numbered paragraphs containing Albert Einstein, with no extra console during
+capture, and explicitly exited from the tray. Installed-service readback after
+exit verified the same 10 paragraphs, anchor IDs, and text digest. The recorded
+Python owner and four Electron processes were gone, and no matching candidate
+process remained. See the [V9 ticket](https://github.com/Moke110/horizon/issues/200).
