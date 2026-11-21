@@ -175,6 +175,8 @@ In **Materials**, choose **导入 PDF** to import a local PDF up to 10 MiB. Sele
 
 In **Materials**, enter a public HTTPS URL and select **获取网页正文**. The saved material shows the source link, acquisition time and numbered paragraphs from the saved snapshot. You can reopen it offline. An access failure keeps the link and reason available for review.
 
+Use **归档资料** to move a material into **已归档资料** while retaining its snapshots and citations. Before permanent deletion, review the references and retrievals listed under **查看永久删除影响**, then confirm. **回收无引用快照** reclaims blobs that are no longer used by any surviving version or citation.
+
 For a page that renders its public article with JavaScript, select **使用浏览器渲染公开动态页** before capture. Voyager candidates also have a browser capture action. Dynamic capture uses the Chromium bundled in the Windows package.
 
 ### Desktop development
@@ -214,3 +216,5 @@ HTML or XML. Horizon checks source-native documents, open-access DOI locators,
 and the public landing page. To enable Unpaywall, save a contact email under
 **范围检索 → 检索来源 API**. **查看资料与获取记录** opens the saved snapshot and
 its provenance or shows why the material is still waiting for full text.
+
+For an academic item awaiting full text, open its source record in **Materials** to supplement it with a readable PDF, abandon it, or explicitly authorize abstract-only analysis for its original task. The abstract carries a full-text limitation. A late supplement from a scheduled task waits in the same plan's queue. It neither changes the covered interval nor resumes a paused plan.

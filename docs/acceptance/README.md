@@ -305,3 +305,25 @@ the installed Unpaywall locator returned HTTP 200 and two open-location
 links for DOI `10.1371/journal.pcbi.1003285`. The contact was absent from
 the locator receipt and diagnostic output. See
 [V10](https://github.com/Moke110/horizon/issues/201).
+
+## Voyager waiting materials and archives — 2026-11-21
+
+Windows x64 candidate `0.1.0-voyager.9` from `a45f0b2` installed and
+verified all 20,604 files. ZIP SHA-256
+`4d9d85e8f9edb2017cf6b383f6176d0765499704a0444bc4c6f6527130b02876`.
+Desktop typecheck and build passed. The related Python suite passed 112
+tests with two skips.
+
+With isolated test materials, the installed runtime bound abstract consent
+to the original task, extracted a supplied PDF as a new readable version,
+preserved the earlier record, and reopened an abandoned material. The
+schedule regression tests exercised paused plans, existing work and a
+coverage-neutral late-full-text turn. See
+[V11](https://github.com/Moke110/horizon/issues/202).
+
+The installed runtime reopened an archived snapshot and its registered
+citation, rejected a mismatched deletion confirmation and preserved a removed
+citation marker. It retained text shared by a second material and collected
+the blob only after its final owner was removed. The reference tests use
+file-backed snapshots and precede Editor integration. See
+[V12](https://github.com/Moke110/horizon/issues/203).

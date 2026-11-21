@@ -38,8 +38,8 @@ business row can commit before that unlink and digest verification complete.
 and returns original_text plus distinct summary (initially null). GUI renders
 original text literally, separately from generated summaries. Material records
 have no session/task foreign key: conversation lifecycle does not own originals.
-This ticket adds no conversation-delete API, generated summarizer, web ingestion
-or destructive material collection. Missing/corrupt originals are reported, not
+Material records and citation identities do not cascade with a conversation or
+Frontier deletion. Missing/corrupt originals are reported, not
 regenerated from summaries. No public command mutates a published snapshot.
 
 Desktop PDF import uses the native file picker and accepts at most 10 MiB.
@@ -84,3 +84,36 @@ identifiers are retained, and citation counts can exceed the supplied IDs.
 Both an available and a pending material can be inspected from the Voyager
 receipt. Replaying the same acquisition returns its stored result. An
 interrupted reservation with an unknown remote outcome stays charged.
+
+### 待全文资料
+
+资料页保留原始来源和失败记录。探索者可补充可读取的 PDF 或放弃该资料。补充登记同一资料实体的新快照版本，旧快照保持可读。放弃保留出处并停止对同一检索候选的再次全文获取。
+
+摘要授权需显式确认并绑定原检索、资料和任务。读回时只向该任务呈现授权摘要及「未核对全文」限制。待全文及授权摘要均不构成正式报道的正文证据。
+
+正式计划原任务的迟到全文进入该计划的持久串行队列。计划仍需处于启用状态，且没有当前计划执行或未完成的原任务对话；上传不会恢复暂停的计划或任务。续接在原任务新建独立对话轮次，不改变计划覆盖进度，也不自动重发报道。显式临时检索缺少持久计划绑定时，补充只登记资料。
+
+## Archive, citations and snapshot reclamation
+
+`archive_material(material_id)` removes the record from active lists. The
+archived list is returned by `list_summaries(archived=True)` and
+`list_materials(archived=True)`. Archived packages and citation text remain
+readable. `register_reference(material_id, owner_id, content_hash)` verifies the
+expected current snapshot and binds an immutable report citation owner to that
+version. `resolve_reference(material_id, owner_id)` reads the verified referenced
+text and returns a stable removed marker after permanent deletion. Both use the
+authenticated service seam.
+
+Permanent deletion requires an archived material and the exact
+`deletion_impact` confirmation, which binds its current snapshot, affected
+citation owners and associated retrieval IDs. Changes invalidate that
+confirmation. Deletion preserves the material ID and citation tombstones while
+discarding material data and its replay payloads. Academic reimports retain
+the entity ID and continue numbering above every removed or surviving version.
+
+`collect_orphan_snapshots` removes only validated content-addressed text or
+original blobs absent from live materials, their version receipts, and live
+citation bindings. Publishers and collection share a per-home cross-process
+lock across blob publication and SQLite commit. Managed storage verifies each
+file against its enrolled identity before collection. The service leaves
+unrecognized or damaged entries untouched.

@@ -15,9 +15,10 @@ from pathlib import Path
 from common import file_lock
 from hostrun.agent_service import CommandError
 from hostrun.managed_database import database_connection
+from hostrun.voyager_material_lifecycle import MaterialLifecycle, SCHEMA, material_write_lock, serialized_material_write
 
 
-class MaterialsService:
+class MaterialsService(MaterialLifecycle):
     def __init__(self, home, *, token, fault_observer=None):
         if not isinstance(token,str) or not token: raise ValueError('Launch token required')
         self.home=Path(home);self._token=token
@@ -29,6 +30,7 @@ class MaterialsService:
                 CREATE TABLE IF NOT EXISTS voyager_material_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS voyager_academic_identity ON voyager_materials(json_extract(result,'$.academic.identity'));
             ''')
+            db.executescript(SCHEMA)
 
     @contextmanager
     def _connect(self):
@@ -107,6 +109,7 @@ class MaterialsService:
         if hashlib.sha256(data).hexdigest()!=digest:raise CommandError('snapshot_corrupt','Snapshot changed')
         return data
 
+    @serialized_material_write
     def register_text(self,command,*,token):
         self._authorize(token)
         if not isinstance(command,dict) or type(command.get('schema_version')) is not int or command['schema_version']!=1:raise CommandError('invalid_command','schema_version 1 required')
@@ -168,30 +171,31 @@ class MaterialsService:
             raise CommandError('cancelled','Web capture cancelled')
         data=text.encode('utf8')
         digest=hashlib.sha256(data).hexdigest()
-        self._publish(data,digest)
-        snapshot=dict(snapshot_id=str(uuid.uuid4()),content_hash=digest,hash_algorithm='sha256',
-                      extraction_version=web.extractor_version(),byte_length=len(data))
-        if original:
-            original_hash=hashlib.sha256(original).hexdigest()
-            self._publish(original,original_hash)
-            snapshot['original_hash']=original_hash
-        identity=str(uuid.uuid4())
-        result=dict(schema_version=1,material_id=identity,entity_id=identity,version=1,
-                    title=details['metadata'].get('title') or command['url'],
-                    source=dict(kind='public_web',source_id=details['url'],label=command['url'],
-                                received_at=datetime.now(timezone.utc).isoformat()),
-                    snapshot=snapshot,web=details,summary=None)
-        with self._connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            previous=replay(db)
-            if previous is not None:return previous
-            if cancel and cancel.is_set():
-                raise CommandError('cancelled','Web capture cancelled')
-            encoded=json.dumps(result,ensure_ascii=False)
-            db.execute('INSERT INTO voyager_materials VALUES(?,?)',(identity,encoded))
-            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)',(operation,request,encoded))
-            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)',(json.dumps(dict(type='voyager.web_registered',material_id=identity,operation_id=operation)),))
-        return result
+        with material_write_lock(self.home):
+            self._publish(data,digest)
+            snapshot=dict(snapshot_id=str(uuid.uuid4()),content_hash=digest,hash_algorithm='sha256',
+                          extraction_version=web.extractor_version(),byte_length=len(data))
+            if original:
+                original_hash=hashlib.sha256(original).hexdigest()
+                self._publish(original,original_hash)
+                snapshot['original_hash']=original_hash
+            identity=str(uuid.uuid4())
+            result=dict(schema_version=1,material_id=identity,entity_id=identity,version=1,
+                        title=details['metadata'].get('title') or command['url'],
+                        source=dict(kind='public_web',source_id=details['url'],label=command['url'],
+                                    received_at=datetime.now(timezone.utc).isoformat()),
+                        snapshot=snapshot,web=details,summary=None)
+            with self._connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                previous=replay(db)
+                if previous is not None:return previous
+                if cancel and cancel.is_set():
+                    raise CommandError('cancelled','Web capture cancelled')
+                encoded=json.dumps(result,ensure_ascii=False)
+                db.execute('INSERT INTO voyager_materials VALUES(?,?)',(identity,encoded))
+                db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)',(operation,request,encoded))
+                db.execute('INSERT INTO voyager_material_events(event) VALUES(?)',(json.dumps(dict(type='voyager.web_registered',material_id=identity,operation_id=operation)),))
+            return result
 
     def register_pdf(self, command, *, token):
         """Accept bounded bytes, retaining the original and page anchors atomically."""
@@ -219,27 +223,28 @@ class MaterialsService:
             return json.loads(previous[1])
         extracted = self.extract_academic_pdf(data)
         text, pdf = extracted['text'], extracted['pdf']
-        self._publish(data, digest)
-        text_data = text.encode('utf8')
-        text_hash = hashlib.sha256(text_data).hexdigest()
-        self._publish(text_data, text_hash)
-        identity = str(uuid.uuid4())
-        result = dict(schema_version=1, material_id=identity, entity_id=identity, version=1, title=command['title'],
-            source=dict(kind='user_pdf', label=command['source_label'], source_id=digest),
-            snapshot=dict(content_hash=text_hash, original_hash=digest, extraction_version='pypdf.7.1.1', byte_length=len(text_data)),
-            pdf=pdf, summary=None)
-        with self._connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (command['operation_id'],)).fetchone()
-            if previous:
-                if previous[0] != request:
-                    raise CommandError('operation_conflict', 'operation_id conflicts')
-                return json.loads(previous[1])
-            encoded = json.dumps(result)
-            db.execute('INSERT INTO voyager_materials VALUES(?,?)', (identity, encoded))
-            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)', (command['operation_id'], request, encoded))
-            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)', (json.dumps(dict(type='voyager.pdf_registered', material_id=identity)),))
-        return result
+        with material_write_lock(self.home):
+            self._publish(data, digest)
+            text_data = text.encode('utf8')
+            text_hash = hashlib.sha256(text_data).hexdigest()
+            self._publish(text_data, text_hash)
+            identity = str(uuid.uuid4())
+            result = dict(schema_version=1, material_id=identity, entity_id=identity, version=1, title=command['title'],
+                source=dict(kind='user_pdf', label=command['source_label'], source_id=digest),
+                snapshot=dict(content_hash=text_hash, original_hash=digest, extraction_version='pypdf.7.1.1', byte_length=len(text_data)),
+                pdf=pdf, summary=None)
+            with self._connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (command['operation_id'],)).fetchone()
+                if previous:
+                    if previous[0] != request:
+                        raise CommandError('operation_conflict', 'operation_id conflicts')
+                    return json.loads(previous[1])
+                encoded = json.dumps(result)
+                db.execute('INSERT INTO voyager_materials VALUES(?,?)', (identity, encoded))
+                db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)', (command['operation_id'], request, encoded))
+                db.execute('INSERT INTO voyager_material_events(event) VALUES(?)', (json.dumps(dict(type='voyager.pdf_registered', material_id=identity)),))
+            return result
 
     @staticmethod
     def extract_academic_pdf(data, *, timeout=25):
@@ -268,12 +273,26 @@ class MaterialsService:
         text, anchors = build_text_and_anchors(pages)
         return dict(text=text, pdf=dict(status=status, reason=reason, page_count=len(pages), anchors=anchors, ocr=False))
 
+    def academic_disposition(self, request_id, source, source_id, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            row = db.execute('''SELECT json_extract(result,'$.academic.status')
+                FROM voyager_materials
+                WHERE json_extract(result,'$.academic.status') IN ('abandoned','supplemented')
+                  AND EXISTS (SELECT 1 FROM json_each(result,'$.academic.provenance') AS origin
+                    WHERE json_extract(origin.value,'$.request_id')=?
+                      AND json_extract(origin.value,'$.source')=?
+                      AND json_extract(origin.value,'$.source_id')=?)
+                LIMIT 1''', (request_id, source, source_id)).fetchone()
+        return row[0] if row else None
+
     def academic_receipt(self, operation, *, token):
         self._authorize(token)
         with self._connect() as db:
             row = db.execute('SELECT result FROM voyager_material_operations WHERE operation_id=?', (operation,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    @serialized_material_write
     def register_academic(self, operation, request_id, candidate, capture, attempts, *, token):
         from hostrun.voyager_fulltext import audit_url, doi_of
         from hostrun.voyager_web import extractor_version
@@ -313,6 +332,10 @@ class MaterialsService:
                 if previous[0] != request:
                     raise CommandError('operation_conflict', 'operation_id conflicts')
                 return json.loads(previous[1])
+            request_row = db.execute('SELECT result FROM voyager_requests WHERE request_id=?', (request_id,)).fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='voyager_requests'").fetchone() else None
+            task_id = json.loads(request_row[0]).get('task_id') if request_row else None
+            if task_id:
+                provenance['task_id'] = task_id
             versions = db.execute("""SELECT result FROM voyager_materials
                 WHERE json_extract(result,'$.academic.identity')=? ORDER BY rowid DESC""", (identity,)).fetchall()
             existing = [json.loads(row[0]) for row in versions]
@@ -330,13 +353,18 @@ class MaterialsService:
                 kind = capture['kind'] if capture else 'missing'
                 extraction = {'xml': 'jats_body.v1', 'pdf': 'pypdf.7.1.1', 'missing': 'unavailable.v1'}
                 algorithm = extractor_version() if kind == 'html' else extraction[kind]
+                removed = db.execute('SELECT entity_id, version FROM voyager_removed_academic_versions WHERE identity=?',
+                                     (identity,)).fetchone()
+                entity_id = existing[0]['entity_id'] if existing else removed[0] if removed else material_id
+                current_version = max((item['version'] for item in existing), default=0)
+                if removed:
+                    current_version = max(current_version, removed[1])
                 snapshot = dict(snapshot_id=str(uuid.uuid4()), content_hash=text_hash, hash_algorithm='sha256',
                                 extraction_version=algorithm, byte_length=len(text))
                 if original_hash:
                     snapshot['original_hash'] = original_hash
                 result = dict(schema_version=1, material_id=material_id,
-                    entity_id=existing[0]['entity_id'] if existing else material_id,
-                    version=len(existing)+1, title=candidate['title'][:500], summary=None,
+                    entity_id=entity_id, version=current_version+1, title=candidate['title'][:500], summary=None,
                     source=dict(kind='academic', label=origin, source_id=source_id, received_at=found_at),
                     snapshot=snapshot, academic=dict(identity=identity, format=kind, notice_type=notice_type,
                         status='available' if capture else 'pending_fulltext', attempts=attempts,
@@ -351,6 +379,7 @@ class MaterialsService:
                 type='voyager.academic_recorded', material_id=result['material_id'])),))
         return result
 
+    @serialized_material_write
     def resolve_pdf(self, command, *, token):
         self._authorize(token)
         if not isinstance(command,dict) or command.get('schema_version') != 1 or command.get('action') not in ('supplement','abandon'):
@@ -399,19 +428,29 @@ class MaterialsService:
             raise CommandError('invalid_material', 'Material is not a PDF')
         return self._read_blob(result['snapshot']['original_hash'])
 
-    def list_summaries(self, *, token):
+    def list_summaries(self, *, token, archived=False):
         self._authorize(token)
         with self._connect() as db:
-            rows = db.execute("SELECT material_id,json_extract(result,'$.title'),json_extract(result,'$.source.label') FROM voyager_materials ORDER BY rowid DESC")
+            rows = db.execute("SELECT material_id,json_extract(result,'$.title'),json_extract(result,'$.source.label') "
+                              "FROM voyager_materials WHERE COALESCE(json_extract(result,'$.archived'),0)=? "
+                              "ORDER BY rowid DESC", (archived,))
             return [dict(material_id=mid,title=title,source={'label':label}) for mid,title,label in rows]
 
-    def list_materials(self,*,token):
+    def list_materials(self,*,token,archived=False):
         self._authorize(token)
-        with self._connect() as db:return [json.loads(r[0]) for r in db.execute('SELECT result FROM voyager_materials ORDER BY rowid DESC')]
+        with self._connect() as db:
+            rows = db.execute("SELECT result FROM voyager_materials "
+                              "WHERE COALESCE(json_extract(result,'$.archived'),0)=? ORDER BY rowid DESC", (archived,))
+            return [json.loads(row[0]) for row in rows]
 
-    def get_package(self,material_id,*,token):
+    def get_package(self, material_id, *, token, task_id=None):
         self._authorize(token)
         with self._connect() as db:row=db.execute('SELECT result FROM voyager_materials WHERE material_id=?',(material_id,)).fetchone()
         if row is None:raise CommandError('not_found','Unknown material')
-        result=json.loads(row[0]);result['original_text']=self._read_blob(result['snapshot']['content_hash']).decode('utf8')
+        result = json.loads(row[0])
+        if academic := result.get('academic'):
+            academic['abstract_authorizations'] = [
+                record for record in academic.get('abstract_authorizations', [])
+                if task_id is not None and record['task_id'] == task_id]
+        result['original_text'] = self._read_blob(result['snapshot']['content_hash']).decode('utf8')
         return result
