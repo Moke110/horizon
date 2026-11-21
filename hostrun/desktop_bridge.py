@@ -15,6 +15,7 @@ from hostrun.agent_delivery import DeliveryService
 from hostrun.voyager_materials import MaterialsService
 from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
+from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -79,6 +80,30 @@ def frontier_command(frontier, command, *, token):
         raise CommandError("invalid_command", "Unknown Frontier action")
     value = methods[action]({k: v for k, v in command.items() if k != "action"}, token=token)
     return "frontier_view", value
+
+
+def card_command(cards, command, *, token):
+    """Route desktop Knowledge Card commands through the public service."""
+    action = command.get("action")
+    if action == "card_list":
+        return "card_list", cards.list(token=token)
+    if action == "card_query":
+        return "card_query", cards.query(
+            token=token, card_ids=command.get("card_ids"),
+            include_archived=command.get("include_archived", False))
+    if action == "card_open":
+        card = cards.view(command.get("card_id"), token=token)
+        if isinstance(command.get("operation_id"), str):
+            card["read_operation_id"] = command["operation_id"]
+        return "card_view", card
+    methods = {"card_create": cards.create,
+               "card_update": cards.update,
+               "card_archive": cards.archive}
+    if action not in methods:
+        raise CommandError("invalid_command", "Unknown Knowledge Card action")
+    value = methods[action]({k: v for k, v in command.items() if k != "action"},
+                            token=token)
+    return "card_view", value
 
 
 def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
@@ -157,6 +182,7 @@ def serve(resolved):
     materials = MaterialsService(service.home,token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
+    knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
     from hostrun.voyager_fulltext import FulltextService
     fulltext = FulltextService(voyager, materials)
     voyager_current = None
@@ -207,7 +233,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),'frontiers':frontier.list(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),'frontiers':frontier.list(token=token),'cards':knowledge_cards.list(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -348,6 +374,11 @@ def serve(resolved):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=frontier_command(frontier,cmd,token=token)
                         emit(kind,data)
+                    elif action in ('card_create','card_update','card_archive',
+                                    'card_open','card_list','card_query'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=card_command(knowledge_cards,cmd,token=token)
+                        emit(kind,data)
                     elif action in ('materials_archive_list','materials_delete_impact','materials_delete','materials_collect_orphans'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         result = material_command(materials, cmd, token=token)
@@ -434,7 +465,12 @@ def serve(resolved):
                 except CommandError as exc:
                     refresh_chats()
                     state()
-                    emit('command_error', {'schema_version': 1, 'operation_id': cmd.get('operation_id'), 'code': exc.code, 'message': str(exc)})
+                    error = {'schema_version': 1, 'operation_id': cmd.get('operation_id'),
+                             'code': exc.code, 'message': str(exc)}
+                    details = getattr(exc, 'details', None)
+                    if details is not None:
+                        error['details'] = details
+                    emit('command_error', error)
                     emit('notice', str(exc))
                 except Exception as exc:
                     emit('notice', str(exc))
@@ -462,6 +498,10 @@ def serve(resolved):
                     if voyager_current==data:emit('voyager_view',voyager.view(data,token=token))
                 continue
             if kind == 'frontier_changed':
+                with dispatch_lock:
+                    state()
+                continue
+            if kind == 'card_changed':
                 with dispatch_lock:
                     state()
                 continue
