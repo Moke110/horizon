@@ -327,3 +327,49 @@ citation marker. It retained text shared by a second material and collected
 the blob only after its final owner was removed. The reference tests use
 file-backed snapshots and precede Editor integration. See
 [V12](https://github.com/Moke110/horizon/issues/203).
+
+## Voyager five-channel package verification — 2026-11-21
+
+Windows x64 candidate `0.1.0-voyager.11` from `4659167ee7ece6c7c6e24e0057441803108f81f8`
+was built twice with matching ZIP and manifest hashes. The clean AppData
+install verified all 21,175 files and the bundled Node loaded Pi 1.5.0.
+ZIP SHA-256 `6ba542db2e46fbf211fe4aa77729c2eae4247ffca0c7953affc8cca2f7d8ff04` and
+manifest SHA-256 `79cd91cbd953559c03fa91cc5faf8a25a2467e696c7de6c2b4adbe9d73a2f936`.
+The inventory reported 258 entries and each referenced license notice was
+present. Pi declares MIT and supplies no separate notice path. Two Windows Job
+cleanup tests passed. The full Python run before the renderer adjustment
+passed 1,514 tests with 15 skips. The targeted run with the renderer adjustment
+passed 22 tests, including the role, web and process checks. Agent and desktop
+builds passed, including desktop typecheck.
+
+- Installed `.10` arXiv returned four dated, in-window Kepler-1625b candidates
+  and a receipt. Reopening preserved the same response. The one-query budget
+  persisted partial coverage and pending pagination. Installed `.9` captured
+  results from Crossref, OpenAlex and Europe PMC, including a saved public
+  OpenAlex PDF. See the earlier source, DOI and full-text entries for their
+  relationships, fallbacks and limitations.
+- Installed `.9` captured the IANA Example Domains URL as 739 text bytes with
+  ten anchors and retained original HTML. Isolated user text reopened with
+  all 36 bytes intact. Live RSS, Atom and section refreshes returned 27, 15
+  and 290 entries respectively, then zero new entries for all three. A fresh
+  service reopen retained the timestamps and results with no gaps.
+- Installed `.11` captured the public JavaScript-rendered Quotes to Scrape
+  page from the clean C-volume AppData install with a minimal PATH and
+  intentionally invalid external Playwright overrides. It stored 1,121 text
+  bytes, ten anchors and the rendered HTML hash. Reopen verified the
+  snapshot, and same-operation replay returned the same result. A separate
+  E-volume smoke install verified its files, but its Chromium driver failed
+  at launch with `0x80000003`. The default AppData install completed the live
+  capture.
+- React markup fixtures exercised full-text supplement, abandonment and
+  task-bound abstract consent, partial coverage, no-new status and Tavily
+  budget status and controls. The 15 focused Tavily tests covered the
+  free-budget stop and unknown allowance. These checks used rendered markup
+  and service state.
+
+**Pending:** The real model delegation from the installed parent Agent to
+Voyager remains blocked by the older desktop holding the authorized test
+data lock. The installed probe exited before making a model request. The
+offline model protocol test exercised an independent Voyager child, the
+restricted evidence tool and a committed result. Interactive desktop startup and visual acceptance of this candidate
+remain pending. See [V13](https://github.com/Moke110/horizon/issues/204).
