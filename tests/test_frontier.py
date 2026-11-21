@@ -204,6 +204,11 @@ def test_desktop_frontier_commands_route_through_public_seam(tmp_path):
     kind, view = bridge(service, {"action": "frontier_open",
                                   "frontier_id": created["frontier_id"]}, token="s")
     assert kind == "frontier_view" and view == created
+    kind, view = bridge(service, {"action": "frontier_open",
+                                  "frontier_id": created["frontier_id"],
+                                  "operation_id": "open-frontier"}, token="s")
+    assert kind == "frontier_view"
+    assert view == {**created, "read_operation_id": "open-frontier"}
     kind, listed = bridge(service, {"action": "frontier_list"}, token="s")
     assert kind == "frontier_list" and listed[0]["frontier_id"] == created["frontier_id"]
     with pytest.raises(CommandError):

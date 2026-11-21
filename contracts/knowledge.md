@@ -4,6 +4,14 @@
 
 K2 adds manually edited Knowledge Cards with versioned source citations and related card IDs in the same data home.
 
+## Local knowledge workbench search
+
+The authenticated read-only desktop action `knowledge_search` searches persisted records owned by the Card, Theme and Frontier services in one database snapshot. The response event has the same name and echoes the supplied `operation_id`. It includes `results`, `total`, `offset` and `limit`. Each result has `kind`, `id`, `title`, `summary`, `status` and `version`. Selecting a result reads the complete committed record from its owner before it can be edited. Saves and citation reads retain each owner's version and operation checks.
+
+The optional `kind` narrows the search to `card`, `theme` or `frontier`. `scope=active`, the default, returns active known Cards and Themes and following Frontiers. `scope=inactive` returns archived Cards and Themes and paused, resolved or deleted Frontiers. `scope=pending` is separate and currently empty. A known Card marked questionable or awaiting a source remains active. An optional `related_to` containing `kind` and `id` filters to direct relations in either direction. This includes Card-to-Card and Theme-to-Card relationships. There are no Frontier relations at this stage.
+
+Search is local and lexical. Unicode compatibility normalization and case folding allow different forms of the same letters and digits to match. One-character, two-character and longer Chinese text matches as a substring, including when it is mixed with English. An empty or whitespace-only query lists the chosen scope. Results are paged using a zero-based `offset` and a bounded `limit`.
+
 ## Entity and validation
 
 A committed Frontier carries `schema_version: 1`, the `operation_id` that produced the current committed version, `frontier_id`, integer `version`, `question`, `status`, `scope`, `hard_constraints`, `relations`, `created_at` and `updated_at`.

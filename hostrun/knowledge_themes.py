@@ -355,15 +355,21 @@ class KnowledgeThemeService:
         self._notify(theme)
         return theme
 
+    @classmethod
+    def query_all_in_transaction(cls, db):
+        """Read every committed Theme, newest row first, on the caller's transaction."""
+        rows = db.execute("SELECT result FROM knowledge_themes ORDER BY rowid DESC").fetchall()
+        return [json.loads(row[0]) for row in rows]
+
     def list(self, *, token):
         """List all committed Themes, including archived ones with status."""
         self._authorize(token)
         with self._connect() as db:
             db.execute("BEGIN")
-            rows = db.execute("SELECT result FROM knowledge_themes ORDER BY rowid DESC").fetchall()
+            themes = self.query_all_in_transaction(db)
             removed = self.materials.removed_references(db)
-        return [self._summary(self._project_sources(json.loads(row[0]), removed))
-                for row in rows]
+        return [self._summary(self._project_sources(theme, removed))
+                for theme in themes]
 
     def query(self, *, token, theme_ids=None, include_archived=False):
         """Read committed Themes for search and the Editor, carrying versions."""
@@ -381,9 +387,7 @@ class KnowledgeThemeService:
         with self._connect() as db:
             db.execute("BEGIN")
             if identifiers is None:
-                rows = db.execute(
-                    "SELECT result FROM knowledge_themes ORDER BY rowid DESC").fetchall()
-                themes = [json.loads(row[0]) for row in rows]
+                themes = self.query_all_in_transaction(db)
             else:
                 themes = [self._read(db, theme_id) for theme_id in identifiers]
             removed = self.materials.removed_references(db)

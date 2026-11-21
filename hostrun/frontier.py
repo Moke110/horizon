@@ -225,11 +225,17 @@ class FrontierService:
         self._notify(frontier)
         return frontier
 
+    @classmethod
+    def query_all_in_transaction(cls, db):
+        """Read every committed Frontier, newest row first, on the caller's transaction."""
+        rows = db.execute("SELECT result FROM frontiers ORDER BY rowid DESC").fetchall()
+        return [json.loads(row[0]) for row in rows]
+
     def list(self, *, token):
         self._authorize(token)
         with self._connect() as db:
-            rows = db.execute("SELECT result FROM frontiers ORDER BY rowid DESC").fetchall()
-        return [self._summary(json.loads(row[0])) for row in rows]
+            frontiers = self.query_all_in_transaction(db)
+        return [self._summary(frontier) for frontier in frontiers]
 
     @staticmethod
     def _summary(frontier):
