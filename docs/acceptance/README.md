@@ -254,3 +254,29 @@ capture, and explicitly exited from the tray. Installed-service readback after
 exit verified the same 10 paragraphs, anchor IDs, and text digest. The recorded
 Python owner and four Electron processes were gone, and no matching candidate
 process remained. See the [V9 ticket](https://github.com/Moke110/horizon/issues/200).
+
+## Voyager DOI and source settings — 2026-11-21
+
+Windows x64 candidate `0.1.0-voyager.7` from `0d4c4dd` installed and
+verified all 20,598 files. The ZIP SHA-256 was
+`b194fa90871e853e2237b3ec0257742b547b0fd03fb5d5a9cb36c8c0fbb81f2f`.
+Desktop typecheck and build passed. The related Python suite passed 284 tests.
+The installed command confirmed the Tavily allowance persisted after reopening,
+cleared on key rotation, and returned only the setting state and limit.
+
+The original candidate received two OpenAlex pages and reopened both. It also
+rejected a later page containing pre-1970 publications. The revised installed
+runtime retained six publications dated before 1970 in a discovery-time window,
+and fetched and reopened two distinct Crossref pages with score ordering. Both
+sources retained DOI `10.1016/j.nuclphysa.2016.02.011`. OpenAlex listed 45
+references and reported 45. Crossref listed 40 and reported 45. See
+[V3](https://github.com/Moke110/horizon/issues/194).
+
+Tavily authenticated and reported free Researcher plan credits and zero PAYG
+usage. Its usage response returned null for both the key and PAYG caps. The
+Explorer verified their Tavily dashboard settings, then saved the PAYG
+confirmation and monthly limit in the new candidate. Its installed runtime
+ran one Search basic request in 2.95 seconds, recorded one credit and its
+receipt, and reopened five metadata-only results. The candidate cap stopped
+the retrieval segment with the partial result retained. See
+[V4](https://github.com/Moke110/horizon/issues/195).

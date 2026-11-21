@@ -15,6 +15,7 @@ class CrossrefProvider(AcademicTransport):
     _lock = threading.Lock()
     endpoint = 'https://api.crossref.org/works'
     interval = 1.0
+    _score_cursor_prefix = 'score:'
 
     def track_response_limits(self, headers):
         interval = headers.get('X-Rate-Limit-Interval', '')
@@ -25,8 +26,14 @@ class CrossrefProvider(AcademicTransport):
             type(self)._next = max(type(self)._next, time.monotonic() + spacing)
 
     def search(self, query):
-        params = {'query.bibliographic': query['term'], 'cursor': query['cursor'] or '*',
+        cursor = query['cursor']
+        # A stored cursor from an older run must continue with its original ordering.
+        sort_by_score = not cursor or cursor.startswith(self._score_cursor_prefix)
+        params = {'query.bibliographic': query['term'],
+                  'cursor': cursor.removeprefix(self._score_cursor_prefix) if cursor else '*',
                   'rows': min(query['limit'], 20)}
+        if sort_by_score:
+            params['sort'] = 'score'
         if query['window']['basis'] == 'published':
             window = query['window']
             end = datetime.fromtimestamp(window['until_at'] - 1, timezone.utc).date()
@@ -35,7 +42,10 @@ class CrossrefProvider(AcademicTransport):
                 start = datetime.fromtimestamp(window['effective_from_at'], timezone.utc).date()
                 bounds.append('from-pub-date:' + str(start))
             params['filter'] = ','.join(bounds)
-        return self._fetch(self.endpoint + '?' + urlencode(params), query)
+        result = self._fetch(self.endpoint + '?' + urlencode(params), query)
+        if sort_by_score and result.get('next_cursor'):
+            result['next_cursor'] = self._score_cursor_prefix + result['next_cursor']
+        return result
 
     def decode(self, body, query):
         message = json.loads(body)['message']
@@ -60,15 +70,22 @@ class OpenAlexProvider(AcademicTransport):
     interval = 1.0
     endpoint = 'https://api.openalex.org'
 
+    def __init__(self, rate_directory=None, *, key=None):
+        super().__init__(rate_directory)
+        self.key = key
+
+    def _key(self):
+        return self.key if self.key is not None else os.environ.get('OPENALEX_API_KEY', '')
+
     def search(self, query):
-        if not os.environ.get('OPENALEX_API_KEY'):
+        if not self._key():
             return {'error_code': 'unconfigured'}
         return self._fetch(self.endpoint, query)
 
     def _fetch_locked(self, address, query):
         from urllib.request import Request, urlopen
         from urllib.error import HTTPError, URLError
-        key = os.environ.get('OPENALEX_API_KEY')
+        key = self._key()
         if not key:
             return {'error_code': 'unconfigured'}
         deadline = time.monotonic() + query['timeout_seconds']

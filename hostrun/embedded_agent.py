@@ -6,7 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
-from common import ensure_dir, read_json
+from common import ensure_dir, file_lock, read_json
 from hostrun.base import HostRunError, load_config
 
 
@@ -19,13 +19,71 @@ def config_path(home: Path) -> Path:
 
 
 def load_model_config(home):
-    return _model_snapshot(home)[0]
+    data = _model_snapshot(home)[0]
+    return {key: value for key, value in data.items() if key != 'voyagerKeys'}
 
 
-def _model_snapshot(home):
+def load_source_configuration(home):
+    keys = dict(_model_snapshot(home)[0].get('voyagerKeys', {}))
+    tavily = keys.get('tavily')
+    if isinstance(tavily, dict):
+        keys['tavily'] = tavily['key']
+        return keys, tavily['monthlyLimit']
+    return keys, None
+
+
+def save_source_key(home, source, key):
+    snapshot = _model_snapshot(home)
+    data = dict(snapshot[0])
+    source_keys = dict(data.get('voyagerKeys', {}))
+    if key is None:
+        source_keys.pop(source, None)
+    else:
+        previous = source_keys.get(source)
+        if not isinstance(previous, dict) or key != previous.get('key'):
+            source_keys[source] = key
+    if source_keys:
+        data['voyagerKeys'] = source_keys
+    else:
+        data.pop('voyagerKeys', None)
+    if data != snapshot[0]:
+        _save_model_config(home, data, expected=snapshot)
+
+
+def save_tavily_budget(home, monthly_limit):
+    snapshot = _model_snapshot(home)
+    data = dict(snapshot[0])
+    keys = dict(data.get('voyagerKeys', {}))
+    current = keys.get('tavily')
+    key = current['key'] if isinstance(current, dict) else current
+    if not key:
+        return False
+    keys['tavily'] = key if monthly_limit is None else {'key': key, 'monthlyLimit': monthly_limit}
+    if keys != data['voyagerKeys']:
+        data['voyagerKeys'] = keys
+        _save_model_config(home, data, expected=snapshot)
+    return True
+
+
+def _read_legacy_credentials(path, *, repair=False):
+    try:
+        data = read_json(path) or {}
+        if not isinstance(data, dict):
+            raise ValueError("model configuration must be an object")
+        return data
+    except ValueError:
+        if repair:
+            return {}
+        raise
+
+
+def _model_snapshot(home, *, repair_legacy=False):
     from hostrun.cleanup import load_managed_model_config
     managed, data, identity = load_managed_model_config(home)
-    return ((data if managed else read_json(config_path(home))) or {}, identity)
+    data = (data or {}) if managed else _read_legacy_credentials(config_path(home), repair=repair_legacy)
+    if not isinstance(data, dict):
+        raise ValueError("model configuration must be an object")
+    return data, identity
 
 
 def configure(home: Path, *, provider: str, model: str, api_key: str, base_url: str = "") -> dict:
@@ -34,17 +92,11 @@ def configure(home: Path, *, provider: str, model: str, api_key: str, base_url: 
         raise HostRunError("模型服务、模型名称和 API Key 均不能为空")
     if base_url and not base_url.startswith(("https://", "http://localhost:", "http://127.0.0.1:")):
         raise HostRunError("模型地址必须使用 HTTPS（本机服务可以使用 HTTP）")
-    path = config_path(home)
-    from hostrun.cleanup import save_managed_model_config
-    if save_managed_model_config(home, {"provider": provider, "model": model, "apiKey": api_key,
-                                        "baseUrl": base_url.strip()}):
-        return {"provider": provider, "model": model, "configured": True}
-    ensure_dir(path.parent)
-    # Kept out of install/config.json, reports, process arguments and run logs.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({"provider": provider, "model": model, "apiKey": api_key,
-                   "baseUrl": base_url.strip()}, handle, ensure_ascii=False)
+    snapshot = _model_snapshot(home, repair_legacy=True)
+    data = dict(snapshot[0])
+    data.pop('models', None)
+    data.update(provider=provider, model=model, apiKey=api_key, baseUrl=base_url.strip())
+    _save_model_config(home, data, expected=snapshot, repair_legacy=True)
     return {"provider": provider, "model": model, "configured": True}
 
 
@@ -57,8 +109,6 @@ def runtime(home: Path, *, code: Path | None = None) -> dict:
     problems = []
     try:
         model = load_model_config(home)
-        if not isinstance(model, dict):
-            raise ValueError("model configuration must be an object")
     except (ValueError, OSError):
         model = {}
         problems.append("模型配置无法读取，请在 Horizon 内重新配置")
@@ -92,24 +142,27 @@ def discover_and_configure(home, *, provider, api_key, base_url='', expected=Non
     previous = snapshot[0]
     base, models = discover(provider, api_key, base_url)
     selected = previous.get('model') if previous.get('provider') == provider and previous.get('model') in models else models[0]
-    data = {'provider': provider, 'model': selected, 'apiKey': api_key.strip(), 'baseUrl': base, 'models': models}
+    data = dict(previous, provider=provider, model=selected, apiKey=api_key.strip(), baseUrl=base, models=models)
     _save_model_config(home, data, expected=snapshot)
     return models
 
-def _save_model_config(home, data, *, expected=None):
+def _save_model_config(home, data, *, expected=None, repair_legacy=False):
     from hostrun.cleanup import save_managed_model_config
     if save_managed_model_config(home, data, expected=expected):
         return
     import tempfile
     path = config_path(home)
     ensure_dir(path.parent)
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix='model-', suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            json.dump(data, stream, ensure_ascii=False)
-        os.replace(name, path)
-    finally:
-        Path(name).unlink(missing_ok=True)
+    with file_lock(path.with_suffix('.lock')):
+        if expected is not None and _read_legacy_credentials(path, repair=repair_legacy) != expected[0]:
+            raise HostRunError('凭据配置已更改，请重试')
+        fd, name = tempfile.mkstemp(dir=path.parent, prefix='model-', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(data, stream, ensure_ascii=False)
+            os.replace(name, path)
+        finally:
+            Path(name).unlink(missing_ok=True)
 
 def refresh_models(home):
     snapshot = _model_snapshot(home)

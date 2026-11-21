@@ -13,6 +13,10 @@ def main():
         managed, data, _ = load_managed_model_config(home)
         if not managed:
             data = load_model_config(home)
+        if data is not None and not isinstance(data, dict):
+            raise ValueError('Model configuration must be an object')
+        model = {key: value for key, value in (data or {}).items()
+                 if key in {'provider', 'model', 'apiKey', 'baseUrl', 'models'}}
     except (OSError, ValueError, RuntimeError) as error:
         message = ('Model configuration identity validation failed' if isinstance(error, InstanceInvalid)
                    else 'Model configuration instance busy' if isinstance(error, InstanceBusy)
@@ -20,7 +24,7 @@ def main():
         print(message, file=sys.stderr)
         return 2
     # The parent consumes this pipe in memory; credentials never enter argv/env.
-    sys.stdout.write(json.dumps({'managed': managed, 'config': data or {}}, ensure_ascii=False))
+    sys.stdout.write(json.dumps({'managed': managed, 'config': model}, ensure_ascii=False))
     return 0
 
 

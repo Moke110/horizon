@@ -66,6 +66,17 @@ def test_model_config_is_not_in_public_facts_or_argv(tmp_path):
         assert "private-test-key" not in " ".join(embedded_agent.argv(tmp_path, "hello", kind="agent", code=ROOT))
 
 
+def test_explicit_model_configuration_recovers_an_unreadable_legacy_file(tmp_path):
+    path = embedded_agent.config_path(tmp_path)
+    path.parent.mkdir()
+    path.write_text('{"incomplete":', encoding="utf-8")
+
+    result = embedded_agent.configure(tmp_path, provider="deepseek", model="deepseek-chat", api_key="new-test-key")
+
+    assert result["configured"]
+    assert embedded_agent.load_model_config(tmp_path)["model"] == "deepseek-chat"
+
+
 @pytest.mark.skipif(not shutil.which("node") or not (ROOT / "agent/dist/main.js").exists(), reason="build the Pi agent first")
 @pytest.mark.parametrize("kind", ["intent_judgement", "kb_read", "push", "push_tool", "push_private", "push_database", "push_snapshot", "push_hardlink"])
 def test_real_pi_stream_and_tool_policy(tmp_path, kind):

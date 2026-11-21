@@ -25,6 +25,15 @@ def timestamp(value):
 def page(rows, cursor, body):
     return dict(candidates=rows, exhausted=cursor is None, next_cursor=cursor, receipt=hashlib.sha256(body).hexdigest())
 
+def valid_candidate_timestamps(row):
+    # Publication can predate the Unix epoch. Discovery is recorded by Horizon.
+    for field, earliest in (('published_at', -62135596800), ('discovered_at', 0)):
+        value = row.get(field)
+        if value is not None and (type(value) is not int or not earliest <= value <= 253402300799):
+            return False
+    return True
+
+
 def valid_metadata(result):
     limits = {'source': 80, 'source_id': 512, 'title': 2048, 'abstract': 32768, 'url': 4096, 'source_type': 64, 'peer_review_status': 64}
     for row in result['candidates']:
@@ -34,9 +43,8 @@ def valid_metadata(result):
                 return False
         if not row['source_id'] or not row['title']:
             return False
-        for key in ('published_at', 'discovered_at'):
-            if row.get(key) is not None and (type(row[key]) is not int or row[key] < 0):
-                return False
+        if not valid_candidate_timestamps(row):
+            return False
     return True
 
 class AcademicTransport:
