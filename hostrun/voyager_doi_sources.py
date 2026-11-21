@@ -136,6 +136,7 @@ class OpenAlexProvider(AcademicTransport):
                                  published_at=int(datetime.fromisoformat(date).replace(tzinfo=timezone.utc).timestamp()) if date else None,
                                  discovered_at=int(time.time()), source_type=item.get('type') or 'unknown',
                                  peer_review_status='unknown',
+                                 is_retracted=item.get('is_retracted') if type(item.get('is_retracted')) is bool else None,
                                  reference_ids=[v for v in item.get('referenced_works', []) if isinstance(v,str) and len(v.encode()) <= 512][:100],
                                  reference_count=item.get('referenced_works_count'), cited_by_count=item.get('cited_by_count'),
                                  missing_fields=[k for k in ('doi','publication_date','display_name') if not item.get(k)]))

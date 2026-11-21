@@ -14,6 +14,7 @@ import uuid
 from hostrun.agent_service import CommandError
 from hostrun.embedded_agent import load_source_configuration, save_source_key, save_tavily_budget
 from hostrun.managed_database import database_connection
+from hostrun.voyager_relevance import candidate_change, candidate_identity, scope_identity, selection_reason
 from hostrun.voyager_sources import valid_candidate_timestamps
 from common import file_lock
 
@@ -95,7 +96,12 @@ class VoyagerService:
     def initialize_database(db):
         db.executescript('''CREATE TABLE IF NOT EXISTS voyager_requests(request_id TEXT PRIMARY KEY,result TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS voyager_operations(operation_id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS voyager_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT UNIQUE NOT NULL,event TEXT NOT NULL);''')
+        CREATE TABLE IF NOT EXISTS voyager_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT UNIQUE NOT NULL,event TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS voyager_candidate_deliveries(
+            scope_id TEXT NOT NULL, identity TEXT NOT NULL, candidate_change TEXT NOT NULL,
+            first_request_id TEXT NOT NULL, PRIMARY KEY(scope_id, identity, candidate_change));
+        CREATE INDEX IF NOT EXISTS voyager_candidate_scope_lookup
+            ON voyager_candidate_deliveries(identity, candidate_change, scope_id);''')
 
     @contextmanager
     def _connect(self):
@@ -232,7 +238,7 @@ class VoyagerService:
         rows=page.get('candidates')
         if not isinstance(rows,list) or len(rows)>10000:raise CommandError('invalid_provider_response','Candidate page is too large')
         sizes={'source':80,'source_id':512,'title':2048,'abstract':32768,'url':4096,'doi':512,'journal':512,'source_type':64,'peer_review_status':64}
-        allowed=set(sizes)|{'published_at','discovered_at','authors','is_preprint','missing_fields','reference_ids','reference_count','cited_by_count'}
+        allowed=set(sizes)|{'published_at','discovered_at','authors','is_preprint','is_retracted','missing_fields','reference_ids','reference_count','cited_by_count'}
         total=0
         for row in rows:
             if not isinstance(row,dict) or set(row)-allowed:raise CommandError('invalid_provider_response','Invalid candidate fields')
@@ -248,7 +254,12 @@ class VoyagerService:
                 if not isinstance(values,list) or len(values)>count or any(not isinstance(v,str) or len(v.encode('utf-8'))>limit for v in values):raise CommandError('invalid_provider_response','Candidate list exceeds its bound')
                 total+=sum(len(v.encode('utf-8')) for v in values)
             if row.get('is_preprint') is not None and type(row['is_preprint']) is not bool:raise CommandError('invalid_provider_response','Invalid preprint state')
-            address=urlsplit(row.get('url',''))
+            if row.get('is_retracted') is not None and type(row['is_retracted']) is not bool:
+                raise CommandError('invalid_provider_response','Invalid retraction state')
+            try:
+                address=urlsplit(row.get('url',''))
+            except ValueError:
+                raise CommandError('invalid_provider_response','Candidate URL must be a credential-free HTTP address') from None
             if address.scheme not in ('https','http') or not address.hostname or address.username or address.password:raise CommandError('invalid_provider_response','Candidate URL must be a credential-free HTTP address')
             total+=512
             if total>2*1024*1024:raise CommandError('invalid_provider_response','Candidate page exceeds its byte budget')
@@ -269,22 +280,32 @@ class VoyagerService:
             if not isinstance(rows,list) or len(rows)>lease['actual_query']['limit'] or type(page.get('exhausted')) is not bool or not isinstance(page.get('receipt'),str) or not page['receipt'] or len(page['receipt'])>512:raise CommandError('invalid_provider_response','Provider response is outside its reservation')
             cursor=page.get('next_cursor')
             if (page['exhausted'] and cursor is not None) or (not page['exhausted'] and (not isinstance(cursor,str) or not cursor or cursor==query['cursor'])):raise CommandError('invalid_provider_response','Provider pagination did not make progress')
+            scope_id = scope_identity(value['scope'])
+            previous_candidates = {(item['source'], item['source_id'], item.get('change', 'discovery')): item
+                                   for item in value['candidates']}
             for row in rows:
                 if not isinstance(row,dict) or any(not isinstance(row.get(k),str) or not row[k].strip() for k in ('source','source_id','title','url')) or not valid_candidate_timestamps(row):raise CommandError('invalid_provider_response','Candidate metadata is invalid')
                 text=(row['title']+' '+row.get('abstract','')).casefold()
                 if row['source']!=query['source'] or any(t.casefold() not in text for t in query['must_include']) or any(t.casefold() in text for t in query['exclude']):continue
                 stamp=row.get(value['window']['basis']+'_at');start=lease['actual_query']['window']['effective_from_at']
                 if stamp is None or stamp>=value['window']['until_at'] or (query['phase']!='foundation' and stamp<start):continue
-                previous=next((item for item in value['candidates'] if (item['source'],item['source_id'])==(row['source'],row['source_id'])),None)
-                if previous:
-                    if query['query_id'] not in previous['query_ids']:previous['query_ids'].append(query['query_id'])
-                else:
-                    candidate = {**row, 'first_seen_at': int(self.clock()), 'query_ids': [query['query_id']],
-                                 'scope_kind': value['scope']['kind'], 'request_id': value['request_id']}
-                    doi = row.get('doi', '').strip().lower().removeprefix('https://doi.org/')
-                    if re.fullmatch(r'10\.\d{4,9}/[^\s]+', doi):
-                        candidate['canonical_id'] = 'doi:' + doi
+                reason = selection_reason(row, query)
+                if reason is None:continue
+                candidate = {**row, 'first_seen_at': int(self.clock()), 'query_ids': [query['query_id']],
+                             'scope_kind': value['scope']['kind'], 'request_id': value['request_id'],
+                             'scope_id': scope_id, 'selection_reason': reason}
+                doi = row.get('doi', '').strip().lower().removeprefix('https://doi.org/')
+                if re.fullmatch(r'10\.\d{4,9}/[^\s]+', doi):
+                    candidate['canonical_id'] = 'doi:' + doi
+                candidate['identity'] = candidate_identity(candidate)
+                candidate['change'] = candidate_change(candidate)
+                key = (row['source'], row['source_id'], candidate['change'])
+                previous = previous_candidates.get(key)
+                if previous is None:
+                    previous_candidates[key] = candidate
                     value['candidates'].append(candidate)
+                elif query['query_id'] not in previous['query_ids']:
+                    previous['query_ids'].append(query['query_id'])
             segment['used']['candidates']+=len(rows);value['used']['candidates']+=len(rows)
             if 'source_query' in page:attempt['source_query']=page['source_query']
             attempt.update(status='received',receipt=page['receipt'],candidate_count=len(rows));value['inflight']=None
@@ -296,6 +317,26 @@ class VoyagerService:
             reason=self._limit_reason(value)
             if reason:value.update(status='partial',stop_reason=reason)
         return self._change(command,'query_recorded',mutate,token=token)[0]
+
+    @staticmethod
+    def _deliver_candidates(db, value):
+        for candidate in value['candidates']:
+            if 'is_new' in candidate or 'selection_reason' not in candidate:
+                continue
+            candidate['is_new'] = False
+            if not candidate['selection_reason']['reposted']:
+                identity = (candidate['scope_id'], candidate['identity'], candidate['change'])
+                db.execute('INSERT OR IGNORE INTO voyager_candidate_deliveries VALUES(?,?,?,?)',
+                           (*identity, value['request_id']))
+                first = db.execute('SELECT first_request_id FROM voyager_candidate_deliveries '
+                                   'WHERE scope_id=? AND identity=? AND candidate_change=?', identity).fetchone()
+                candidate['is_new'] = first[0] == value['request_id']
+
+    @staticmethod
+    def _delivery_status(value):
+        if value['status'] != 'complete':
+            return value['status']
+        return 'new_results' if any(c.get('is_new', True) for c in value['candidates']) else 'no_new'
 
     def reserve_fulltext(self,command,*,token):
         """Charge one body acquisition before its owner performs external IO."""
@@ -393,9 +434,12 @@ class VoyagerService:
                 value=self.get(value['request_id'],token=token);break
         with self._connect() as db:
             db.execute('BEGIN IMMEDIATE');current=json.loads(db.execute('SELECT result FROM voyager_requests WHERE request_id=?',(value['request_id'],)).fetchone()[0])
-            if current.get('execution_operation')==command['operation_id'] and current['status']=='running':
-                current['status']='uncertain' if current.get('inflight') else 'partial' if any(work['status']!='succeeded' for work in current.get('fulltext_work',[])) else 'complete' if all(q['status']=='complete' for q in current['queries']) else 'blocked' if all(q['status']=='unconfigured' for q in current['queries']) else 'partial' if any(q['status']=='complete' for q in current['queries']) else 'failed'
-                current['version']+=1;self._gaps(current);db.execute('UPDATE voyager_requests SET result=? WHERE request_id=?',(json.dumps(current),current['request_id']))
+            if current.get('execution_operation')==command['operation_id'] and current['status']!='cancelled':
+                if current['status']=='running':
+                    current['status']='uncertain' if current.get('inflight') else 'partial' if any(work['status']!='succeeded' for work in current.get('fulltext_work',[])) else 'complete' if all(q['status']=='complete' for q in current['queries']) else 'blocked' if all(q['status']=='unconfigured' for q in current['queries']) else 'partial' if any(q['status']=='complete' for q in current['queries']) else 'failed'
+                self._deliver_candidates(db, current)
+                current['version']+=1;self._gaps(current)
+                db.execute('UPDATE voyager_requests SET result=? WHERE request_id=?',(json.dumps(current),current['request_id']))
             db.execute('UPDATE voyager_operations SET result=? WHERE operation_id=?',(json.dumps(current),command['operation_id']))
             event_id=str(uuid.uuid4())
             db.execute('INSERT INTO voyager_events(operation_id,event) VALUES(?,?)',(event_id,json.dumps({'schema_version':1,'type':'voyager.execution_finished','operation_id':event_id,'execution_operation':command['operation_id'],'request_id':current['request_id'],'status':current['status']})))
@@ -408,12 +452,28 @@ class VoyagerService:
             boundary=db.execute('SELECT rowid FROM voyager_requests WHERE request_id=?',(before,)).fetchone() if before else None
             if before and not boundary:raise CommandError('not_found','Unknown retrieval page')
             rows=db.execute('SELECT result FROM voyager_requests WHERE rowid<? ORDER BY rowid DESC LIMIT 50',(boundary[0] if boundary else 9223372036854775807,)).fetchall()
-        return [{'request_id':v['request_id'],'version':v['version'],'status':v['status'],'scope_text':v['scope']['text'][:256],'stop_reason':v.get('stop_reason')} for v in map(lambda r:json.loads(r[0]),rows)]
+        return [{'request_id':v['request_id'],'version':v['version'],'status':v['status'],
+                 'delivery_status':self._delivery_status(v),'scope_text':v['scope']['text'][:256],
+                 'stop_reason':v.get('stop_reason')} for v in map(lambda r:json.loads(r[0]),rows)]
 
     def view(self,request_id,*,token):
         value=self.get(request_id,token=token)
         result={k:v for k,v in value.items() if k not in ('queries','candidates','segments','gaps','fulltext_work')}
         result.update(queries=[{**{k:q[k] for k in ('query_id','source','term','phase','status','cursor')},'attempt_count':len(q['attempts']),'attempts':q['attempts'][-1:]} for q in value['queries']],candidates=[{k:v for k,v in row.items() if k!='abstract'} for row in value['candidates'][:50]],candidate_count=len(value['candidates']),segments=value.get('segments',[])[-3:],segment_count=len(value.get('segments',[])),gaps=value['gaps'][:100],gap_count=len(value['gaps']),fulltext_work=value.get('fulltext_work',[])[:50])
+        result['delivery_status'] = self._delivery_status(value)
+        groups = {}
+        for index, row in enumerate(result['candidates']):
+            group_key = (row.get('identity') or candidate_identity(row), row.get('change', 'discovery'))
+            group = groups.setdefault(group_key, {'identity': group_key[0], 'change': group_key[1],
+                                                   'candidate_indexes': [], 'is_new': False})
+            group['candidate_indexes'].append(index)
+            group['is_new'] |= row.get('is_new', False)
+        with self._connect() as db:
+            for key, group in groups.items():
+                links = db.execute('SELECT scope_id, first_request_id FROM voyager_candidate_deliveries '
+                                   'WHERE identity=? AND candidate_change=? ORDER BY scope_id LIMIT 10', key)
+                group['scope_links'] = [{'scope_id': scope, 'request_id': request} for scope, request in links]
+        result['candidate_groups'] = list(groups.values())
         return result
 
     def query_history(self,request_id,query_id,*,token,offset=0):
