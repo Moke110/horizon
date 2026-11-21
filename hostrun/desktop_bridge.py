@@ -51,6 +51,17 @@ def material_command(materials, command, *, token):
         return materials.get_package(resolve(materials, command, token=token), token=token, task_id=command.get('task_id'))
     if command.get('action') == 'materials_open':
         return materials.get_package(command.get('material_id'), token=token, task_id=command.get('task_id'))
+    if command.get('action') == 'materials_archive':
+        value = materials.archive_material(command.get('material_id'), token=token)
+        return materials.get_package(value['material_id'], token=token)
+    if command.get('action') == 'materials_archive_list':
+        return materials.list_summaries(archived=True, token=token)
+    if command.get('action') == 'materials_delete_impact':
+        return materials.deletion_impact(command.get('material_id'), token=token)
+    if command.get('action') == 'materials_delete':
+        return materials.delete_material(command.get('material_id'), command.get('confirmation'), token=token)
+    if command.get('action') == 'materials_collect_orphans':
+        return materials.collect_orphan_snapshots(token=token)
     raise CommandError('invalid_command','Unknown materials action')
 
 
@@ -316,7 +327,22 @@ def serve(resolved):
                             fulltext_jobs[cmd['request_id']].set()
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
-                    elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve','materials_pending_resolve'):
+                    elif action in ('materials_archive_list','materials_delete_impact','materials_delete','materials_collect_orphans'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        result = material_command(materials, cmd, token=token)
+                        if action == 'materials_archive_list':
+                            emit('material_archive_list', result)
+                        elif action == 'materials_delete_impact':
+                            emit('material_deletion_impact', result)
+                        elif action == 'materials_delete':
+                            emit('private_pdf', None)
+                            emit('material_package', None)
+                            emit('material_archive_list', materials.list_summaries(archived=True, token=token))
+                            emit('notice', '资料已永久删除')
+                        else:
+                            emit('notice', f"已整理 {len(result['removed'])} 个无引用快照")
+                    elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve',
+                                    'materials_pending_resolve','materials_archive'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         package = material_command(materials,cmd,token=token)
                         if package.get('pdf'):
@@ -326,6 +352,8 @@ def serve(resolved):
                         else:
                             emit('private_pdf', None)
                         emit('material_package', package)
+                        if action == 'materials_archive':
+                            emit('material_archive_list', materials.list_summaries(archived=True, token=token))
                     elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
                     elif action == 'ready': ui_ready.set()

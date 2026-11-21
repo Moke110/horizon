@@ -6,6 +6,7 @@ import json
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.voyager_material_lifecycle import material_write_lock
 
 
 SUMMARY_LIMIT = '依据来源摘要解读，尚未核对全文。此授权只适用于指定任务，不可作为正式报道的全文证据。'
@@ -58,10 +59,10 @@ def resolve(materials, command, *, token):
         text_bytes = extracted['text'].encode('utf8')
         text_hash = hashlib.sha256(text_bytes).hexdigest()
         original_hash = hashlib.sha256(pdf).hexdigest()
-        materials._publish(text_bytes, text_hash)
-        materials._publish(pdf, original_hash)
-
-    with materials._connect() as db:
+    with material_write_lock(materials.home), materials._connect() as db:
+        if extracted:
+            materials._publish(text_bytes, text_hash)
+            materials._publish(pdf, original_hash)
         db.execute('BEGIN IMMEDIATE')
         prior = previous(db)
         if prior:
@@ -96,7 +97,9 @@ def resolve(materials, command, *, token):
             last_version, = db.execute('''SELECT MAX(json_extract(result,'$.version'))
                 FROM voyager_materials WHERE json_extract(result,'$.entity_id')=?''',
                 (result['entity_id'],)).fetchone()
-            followup['version'] = max(result['version'], last_version or 0) + 1
+            removed = db.execute('SELECT version FROM voyager_removed_academic_versions WHERE identity=?',
+                                 (academic['identity'],)).fetchone()
+            followup['version'] = max(result['version'], last_version or 0, removed[0] if removed else 0) + 1
             followup['snapshot'] = dict(snapshot_id=str(uuid.uuid4()), hash_algorithm='sha256',
                 content_hash=text_hash, original_hash=original_hash, byte_length=len(text_bytes),
                 extraction_version='pypdf.7.1.1')
