@@ -15,7 +15,7 @@ from pathlib import Path
 from common import file_lock
 from hostrun.agent_service import CommandError
 from hostrun.managed_database import database_connection
-from hostrun.voyager_material_lifecycle import MaterialLifecycle, SCHEMA, material_write_lock, serialized_material_write
+from hostrun.voyager_material_lifecycle import MaterialLifecycle, SCHEMA, _record, material_write_lock, serialized_material_write
 
 
 class MaterialsService(MaterialLifecycle):
@@ -454,3 +454,31 @@ class MaterialsService(MaterialLifecycle):
                 if task_id is not None and record['task_id'] == task_id]
         result['original_text'] = self._read_blob(result['snapshot']['content_hash']).decode('utf8')
         return result
+
+    def knowledge_reference(self, db, material_id, excerpt, *, card_id, token):
+        """Verify and bind a citation on the caller's transaction."""
+        self._authorize(token)
+        material = _record(db, material_id)
+        snapshot = material['snapshot']
+        content_hash = snapshot['content_hash']
+        body = self._read_blob(content_hash).decode('utf8')
+        if ' '.join(excerpt.split()) not in ' '.join(body.split()):
+            raise CommandError('invalid_source', '摘录不在所选资料的快照中')
+        reference = {
+            'material_id': material_id,
+            'material_version': material['version'],
+            'content_hash': content_hash,
+            'source_kind': material['source']['kind'],
+            'title': material['title'],
+        }
+        if 'snapshot_id' in snapshot:
+            reference['snapshot_id'] = snapshot['snapshot_id']
+        owner = f"card:{card_id}:{content_hash}"
+        db.execute("INSERT INTO voyager_material_references VALUES(?,?,?,?) "
+                   "ON CONFLICT(material_id,owner_id) DO NOTHING",
+                   (material_id, owner, content_hash, snapshot.get('original_hash')))
+        return reference
+
+    @staticmethod
+    def removed_references(db):
+        return {row[0] for row in db.execute("SELECT material_id FROM voyager_removed_materials")}

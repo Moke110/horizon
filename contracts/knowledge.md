@@ -1,6 +1,8 @@
-# Knowledge Frontier service
+# Knowledge Frontier and Knowledge Card service
 
-`hostrun.frontier.FrontierService` owns local Frontiers (关注问题) in the stable data home's `horizon.sqlite3`, beside Voyager and AgentService. A Frontier is the Explorer's focus question with an explicit research scope, hard constraints and a following/paused/resolved/deleted status. K1 stores no relations: an empty `relations` list is valid and expected. The service is the public application seam the desktop drives; it is not a retrieval scheduler and it does not import Keeper approval.
+`hostrun.frontier.FrontierService` owns local Frontiers (关注问题) in the stable data home's `horizon.sqlite3`, beside Voyager and AgentService. A Frontier is the Explorer's focus question with an explicit research scope, hard constraints and a following/paused/resolved/deleted status. K1 stores no Frontier relations: an empty `relations` list is valid and expected. The service is the public application seam the desktop drives; it is not a retrieval scheduler and it does not import Keeper approval.
+
+K2 adds manually edited Knowledge Cards with versioned source citations and related card IDs in the same data home.
 
 ## Entity and validation
 
@@ -28,7 +30,7 @@ The desktop bridge exposes `frontier_create`, `frontier_open`, `frontier_list`, 
 
 For a Frontier command error, the bridge's `command_error` carries the failed `operation_id` together with its `code` and `message`. It includes no committed view; an error is never a successful save and must not clear an edit draft.
 
-## Desktop editing behavior
+## Frontier desktop editing behavior
 
 - Opening an edit requests and uses the full committed view only. List summaries are never written into the form.
 - The edit is pinned to the version it loaded. Background refreshes do not rebase the draft; saving after a newer commit fails with `version_conflict`, and the draft remains for review.
@@ -36,6 +38,24 @@ For a Frontier command error, the bridge's `command_error` carries the failed `o
 - Status can be chosen while creating or editing among following, paused and resolved. Explicit pause, resolve, re-follow and delete controls remain available from the list.
 - Deleted Frontiers show no edit action. Deleting while an edit is open exits the edit and keeps the history message.
 - Saves commit directly. Keeper approval, relation editing and scheduling are out of scope for K1.
+
+## Knowledge Cards
+
+Cards have a stable ID, committed version, operation ID, manual origin and timestamps. Each requires title and content. Aliases and recall terms each allow 32 entries of up to 256 UTF-8 bytes. Relations contain at most 32 existing card IDs. Self-relations are rejected.
+
+Source input has the shape `{material_id, locator, excerpt}`. The service verifies the excerpt against the saved material text and pins the version, hash, title, source kind and snapshot ID when available. Whitespace is normalized for validation. The locator is supplied by the Explorer. Unchanged citations preserve their pinned versions. Citation owners appear in material deletion impact. After permanent removal, card reads mark that source `removed` and retain the historical citation and excerpt.
+
+At least one verified citation from captured public web or academic material yields `provenance: sourced`. Local user input or an empty citation list yields `user_statement` and `source_pending: true`. The independent `questionable` flag records doubt. Archival excludes a card from the active known set and leaves its history readable. Reading, rating and retrieval leave known state unchanged.
+
+### Commands and queries
+
+- `card_create` commits version 1. `card_update` changes supplied editable fields. `card_archive` makes a card read-only and increments its version. Mutations require schema version 1 and an operation ID. Update and archive also require the card ID and integer expected version.
+- `card_open` reads the full committed card. It echoes a supplied read operation as `read_operation_id`. `card_list` and desktop state `cards` contain active and archived summaries.
+- `card_query` calls authenticated `KnowledgeCardService.query`, the public read boundary for Voyager and the Editor. It returns active known cards with committed versions by default. Callers may pass a bounded `card_ids` selection or opt in to archived records with `include_archived`.
+
+A card mutation, its receipt, new material bindings and its event commit together. An identical replay returns the original committed result. Reusing its operation ID for a different command fails.
+
+A stale edit returns `version_conflict` with the operation ID, expected and current versions, current card, submitted fields and differing field names. The desktop retains the draft and shows differences. The Explorer can explicitly adopt the latest version as a new base or discard the draft.
 
 ## Voyager scope and snapshots
 
