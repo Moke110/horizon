@@ -367,9 +367,44 @@ builds passed, including desktop typecheck.
   free-budget stop and unknown allowance. These checks used rendered markup
   and service state.
 
-**Pending:** The real model delegation from the installed parent Agent to
-Voyager remains blocked by the older desktop holding the authorized test
-data lock. The installed probe exited before making a model request. The
-offline model protocol test exercised an independent Voyager child, the
-restricted evidence tool and a committed result. Interactive desktop startup and visual acceptance of this candidate
-remain pending. See [V13](https://github.com/Moke110/horizon/issues/204).
+- Installed `.11` (`C:/Users/Chang/AppData/Local/Horizon-V11-4659167e/code`)
+  completed a real Pi-to-Voyager delegation with the saved model, exit code 0
+  and no additional Unpaywall contact. Parent turn
+  `02bd87c8-958e-4309-adc5-85f9b25541da` had exactly one successful Voyager
+  child, `b99386e4-8c1c-4744-854c-f9c4677af9ed`, with an independent session,
+  nonempty analysis and an exact match to the stored evidence projection,
+  including its evidence limitations.
+  The explicit temporary OpenAlex request `5cc5820f-5719-470e-987d-aba99cc402b5`
+  returned four candidates and one coverage gap. Material
+  `8dd57d99-8327-43f5-b2ce-16d561222558` had a verified snapshot ID and hash,
+  four anchors and a selection reason.
+
+The installed AppData candidate started interactively without a console. The
+C-volume Python GUI owner (PID 68492) launched Electron (PID 70544), which
+owned the sole Horizon application window. The Explorer selected
+`Use delegate with role v` and opened `轨迹`. They confirmed that
+exactly one Voyager child displayed `succeeded` and showed its analysis.
+
+The first interactive tray exit, `退出 Horizon（暂停任务）`, recorded
+`desktop_exit`. The Python owner (PID 68492), Electron main process (PID
+70544) and all three tracked descendants were absent after exit. The verified
+C-volume AppData install relaunched without a console using an isolated,
+credential-free offline fixture with its own archive. The fixture made no
+live provider requests.
+
+In `204 Acceptance - Pending Materials`, the Explorer supplemented `Solar
+Fixture - Supplement` v2 with a PDF. Extraction completed and stored snapshot
+`98de6c79-38e3-463f-9dae-32387defa607`. The Explorer abandoned the separate
+`Solar Fixture - Abandon` v2 and authorized `Solar Fixture - Abstract Consent`,
+which persisted one consent for that task. A screenshot of `204 Acceptance -
+Scope Control` showed the same material still marked `待全文`, with no
+task-specific abstract authorization or interpretation controls.
+
+The Explorer confirmed three retrieval details in the installed `.11` GUI.
+The partial-coverage result displayed an OpenAlex source failure in its gaps.
+`solar · 无新增` showed completion without a stop reason. The offline
+`fixture Tavily hard stop · 执行失败` displayed the gap
+`tavily · 来源额度未知`. The matching offline provider check called usage,
+search, then usage, and blocked the second search before dispatch. The earlier
+live `.7` check consumed one free credit. The hard-stop scenario used the
+offline fixture. See [V13](https://github.com/Moke110/horizon/issues/204).
