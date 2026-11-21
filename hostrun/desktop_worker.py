@@ -110,6 +110,16 @@ class DesktopWorker:
         if existing:
             if existing['role'] != event.get('role') or existing['input_text'] != event.get('input'):
                 raise ValueError('Delegation identity conflicts with committed input')
+            if existing['status'] != 'running':
+                self.record_diagnostic('child_reused', child_id=existing['child_id'], status=existing['status'])
+                return existing
+        voyager_context = None
+        if event.get('role') == 'voyager':
+            from hostrun.voyager_child import child_evidence
+            from hostrun.voyager_service import VoyagerService
+            voyager_context = child_evidence(VoyagerService(self.home, token=self.service_token),
+                event.get('input'), self.task_id, token=self.service_token)
+        if existing:
             child = existing
         else:
             child = self.service.start_child({'schema_version': 1, 'operation_id': operation,
@@ -124,19 +134,26 @@ class DesktopWorker:
         output = ''
         status, error = 'failed', ''
         child_failure = None
+        saw_voyager_context = False
         try:
             if self.cancelled.is_set():
                 raise RuntimeError('Task cancelled')
-            argv = embedded_agent.argv(self.home, child['input_text'], kind='agent',
+            task = ('Use voyager_context to return an evidence package for this retrieval.'
+                    if voyager_context is not None else child['input_text'])
+            argv = embedded_agent.argv(self.home, task, kind='agent',
                 code=Path(self.resolved['code']), session_id=child['session_id'])
             argv.extend(['--child-role', child['role']])
+            context_pipe = subprocess.PIPE if voyager_context is not None else subprocess.DEVNULL
             self.child_process = subprocess.Popen(argv, cwd=self.resolved['code'],
-                env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=subprocess.DEVNULL,
+                env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=context_pipe,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             self.record_diagnostic('child_started', child_id=child['child_id'], session_id=child['session_id'],
                                    pid=getattr(self.child_process, 'pid', None), parent_pid=os.getpid())
             threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
+            if voyager_context is not None:
+                self.child_process.stdin.write(json.dumps(voyager_context, ensure_ascii=False) + '\n')
+                self.child_process.stdin.close()
             if self.cancelled.is_set():
                 self.child_process.terminate()
             for line in self.child_process.stdout:
@@ -149,10 +166,16 @@ class DesktopWorker:
                     child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
                 if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
                 if item.get('type') == 'tool_result':
+                    if item.get('name') == 'voyager_context' and not item.get('isError'):
+                        saw_voyager_context = True
                     self.events.put(('agent', {'type': 'tool_result', 'name': child['role'] + ': ' + str(item.get('name')), 'isError': item.get('isError', False)}))
             exit_code = self.child_process.wait()
             if exit_code or self.cancelled.is_set() or not output.strip():
                 raise RuntimeError('Child failed or cancelled')
+            if voyager_context is not None:
+                if not saw_voyager_context:
+                    raise RuntimeError('Voyager did not read the bound retrieval')
+                output = json.dumps({'evidence': voyager_context, 'analysis': output[:12000]}, ensure_ascii=False)
             status = 'succeeded'
         except Exception:
             error = 'Child execution failed or was cancelled; completed sibling results are retained.'

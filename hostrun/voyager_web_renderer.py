@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urldefrag
+from urllib.parse import urldefrag, urlsplit
 
 
 def file_sha256(path):
@@ -104,13 +104,35 @@ def render_public(url, html_bytes, cancel=None):
                 time.sleep(.05)
 
 
+async def wait_for_rendered_text(page, deadline):
+    """Let client-side text settle without waiting for unrelated network traffic."""
+    started = time.monotonic()
+    deadline = min(deadline, started + 12)
+    latest_text = None
+    changed = started
+    observed_update = False
+    body = page.locator('body')
+    while (remaining := deadline - time.monotonic()) > 0:
+        # Evaluate via a locator so the first sample can wait for the body.
+        text = await body.inner_text(timeout=max(1, int(remaining * 1000)))
+        now = time.monotonic()
+        if text != latest_text:
+            observed_update = latest_text is not None
+            latest_text = text
+            changed = now
+        # The first sample can be a stable loading shell or header and footer.
+        if observed_update and text.strip() and now - started >= 2 and now - changed >= .75:
+            return
+        await asyncio.sleep(max(0, min(.25, deadline - now)))
+
+
 async def capture_worker(url, executable, folder):
     # Child owns a nested kill-on-close job; cancellation kills its browser descendants.
     from hostrun.desktop_processes import install
     if os.name!='nt':
         raise ValueError('unsupported_capture_containment')
     install()
-    from playwright.async_api import async_playwright
+    from playwright.async_api import TimeoutError as PlaywrightTimeout, async_playwright
     from hostrun.voyager_subscriptions import fetch_public
     folder=Path(folder)
     count=0
@@ -124,11 +146,13 @@ async def capture_worker(url, executable, folder):
             await context.add_init_script("Object.defineProperty(globalThis,'Worker',{value:undefined});Object.defineProperty(globalThis,'SharedWorker',{value:undefined});Object.defineProperty(globalThis,'RTCPeerConnection',{value:undefined});")
             page=await context.new_page()
             fetch_slots = asyncio.Semaphore(6)
+            source_host = urlsplit(url).hostname
 
             async def route_request(route):
                 nonlocal count
                 count+=1
-                if count>40 or route.request.method!='GET':
+                if (count > 40 or route.request.method != 'GET' or
+                        route.request.resource_type in {'image', 'font', 'media'}):
                     await route.abort()
                     return
                 try:
@@ -138,8 +162,12 @@ async def capture_worker(url, executable, folder):
                             return
                         await route.fulfill(status=200,content_type='text/html',body=(folder/'input.html').read_bytes())
                     else:
+                        # A slow third-party CSS import can block even inline scripts.
+                        stylesheet = route.request.resource_type == 'stylesheet'
+                        third_party = urlsplit(route.request.url).hostname != source_host
+                        timeout = 3 if stylesheet and third_party else 12
                         async with fetch_slots:
-                            status,headers,body=await asyncio.to_thread(fetch_public,route.request.url,{})
+                            status,headers,body=await asyncio.to_thread(fetch_public,route.request.url,{},timeout=timeout)
                         if status!=200:
                             await route.abort()
                             return
@@ -147,7 +175,14 @@ async def capture_worker(url, executable, folder):
                 except Exception:
                     await route.abort()
             await context.route('**/*',route_request)
-            await page.goto(url,wait_until='networkidle',timeout=20000)
+            navigation_deadline = time.monotonic() + 20
+            try:
+                await page.goto(url, wait_until='domcontentloaded', timeout=15000)
+            except PlaywrightTimeout:
+                # A committed page can still yield text while another script loads.
+                if urldefrag(page.url).url != url:
+                    raise
+            await wait_for_rendered_text(page, navigation_deadline)
             if urldefrag(page.url).url != url:
                 raise ValueError('dynamic_source_changed')
             content=(await page.content()).encode('utf8')
