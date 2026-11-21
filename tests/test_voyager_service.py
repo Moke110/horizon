@@ -332,3 +332,72 @@ def test_academic_result_remains_readable_when_another_source_fails(tmp_path):
     assert view['gaps'][0]['reason'] == 'rate_limited'
     assert view['candidates'][0]['source_id'] == 'paper-1'
     assert view['queries'][1]['attempts'][0]['source_query'].endswith('?start=0')
+
+
+def test_scope_delivery_explains_counterevidence_and_filters_unrelated_hits(tmp_path):
+    class Catalog:
+        def search(self, query):
+            def item(identity, title, abstract, **fields):
+                return dict(source='catalog', source_id=identity, title=title, abstract=abstract,
+                            url='https://example.org/' + identity, published_at=120, discovered_at=150, **fields)
+            return dict(exhausted=True, next_cursor=None, receipt='catalog-page', candidates=[
+                item('paper', 'Solar irradiance observations', 'Independent measurements of solar irradiance.'),
+                item('counter', 'Solar irradiance under cloudy skies', 'We found no evidence for the reported effect.'),
+                item('correction', 'Correction: Solar irradiance observations', 'Correction to the reported effect.'),
+                item('retracted', 'Solar irradiance predictions', 'A proposed new series.', is_retracted=True),
+                item('blocked', 'Correction: Solar irradiance advert', 'Correction to the reported effect.'),
+                item('unrelated', 'Online retail', 'Irradiance mentioned once in unrelated data.'),
+            ])
+
+    service = VoyagerService(tmp_path, token='s', providers={'catalog': Catalog()}, clock=lambda: 160)
+    plan = service.create(dict(schema_version=1, operation_id='scope',
+        scope=dict(text='solar irradiance', sources=['catalog'], exclude=['advert']),
+        window=dict(mode='incremental', basis='discovered', from_at=100, until_at=200, overlap_seconds=0)), token='s')
+    run = dict(schema_version=1, operation_id='run', request_id=plan['request_id'], expected_version=plan['version'])
+    service.execute(run, token='s')
+    view = VoyagerService(tmp_path, token='s').view(plan['request_id'], token='s')
+    assert view['delivery_status'] == 'new_results'
+    reasons = {row['source_id']: row['selection_reason'] for row in view['candidates']}
+    assert set(reasons) == {'paper', 'counter', 'correction', 'retracted'}
+    assert {key: reason['kind'] for key, reason in reasons.items()} == {
+        'paper': 'scope_match', 'counter': 'counterevidence', 'correction': 'correction', 'retracted': 'retraction'}
+    assert all(reason['matched_terms'] == ['solar', 'irradiance'] for reason in reasons.values())
+    assert all(row['query_ids'] == [plan['queries'][0]['query_id']]
+               and row['scope_kind'] == 'temporary_explicit' for row in view['candidates'])
+    assert view['used']['candidates'] == 6
+
+
+def test_repeated_discovery_groups_cross_source_dois_without_consuming_another_scope(tmp_path):
+    class Catalog:
+        def search(self, query):
+            source = query['source']
+            return dict(exhausted=True, next_cursor=None, receipt=source + '-page', candidates=[
+                dict(source=source, source_id=source + '-1', doi='10.1234/solar',
+                     title='Solar irradiance forecast', abstract='Solar irradiance forecast from observations.',
+                     url='https://' + source + '.example.org/1', discovered_at=150),
+                dict(source=source, source_id=source + '-repost',
+                     title='Solar irradiance forecast (repost)',
+                     abstract='Originally published by another outlet. Solar irradiance forecast.',
+                     url='https://' + source + '.example.org/repost', discovered_at=150),
+            ])
+
+    def run(ordinal, scope):
+        service = VoyagerService(tmp_path, token='s', providers={name: Catalog() for name in ('first', 'second')})
+        plan = service.create(dict(schema_version=1, operation_id=f'scope-{ordinal}',
+            scope=dict(text=scope, sources=['first', 'second']),
+            window=dict(mode='incremental', basis='discovered', from_at=100, until_at=200, overlap_seconds=0)), token='s')
+        service.execute(dict(schema_version=1, operation_id=f'run-{ordinal}', request_id=plan['request_id'],
+                             expected_version=plan['version']), token='s')
+        return service.view(plan['request_id'], token='s')
+
+    first = run(1, 'solar irradiance')
+    repeated = run(2, 'solar irradiance')
+    second_scope = run(3, 'solar irradiance forecast')
+    assert [item['delivery_status'] for item in (first, repeated, second_scope)] == [
+        'new_results', 'no_new', 'new_results']
+    group = next(group for group in second_scope['candidate_groups'] if group['identity'] == 'doi:10.1234/solar')
+    assert [second_scope['candidates'][i]['source'] for i in group['candidate_indexes']] == ['first', 'second']
+    assert {link['request_id'] for link in group['scope_links']} == {first['request_id'], second_scope['request_id']}
+    assert [group['is_new'] for group in second_scope['candidate_groups']].count(True) == 1
+    assert all(not row['is_new'] and row['selection_reason']['reposted'] for row in repeated['candidates']
+               if row['source_id'].endswith('-repost'))

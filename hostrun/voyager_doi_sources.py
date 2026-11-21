@@ -62,6 +62,30 @@ class CrossrefProvider(AcademicTransport):
                              reference_count=item.get('reference-count'), cited_by_count=item.get('is-referenced-by-count'),
                              published_at=published, discovered_at=int(time.time()),
                              missing_fields=[k for k in ('title','abstract','published') if not item.get(k)]))
+            if isinstance(item.get('link'), list):
+                links = [link['URL'] for link in item['link'][:10] if isinstance(link,dict)
+                         and isinstance(link.get('URL'),str) and link['URL'].startswith('https://')
+                         and len(link['URL'].encode()) <= 4096
+                         and link.get('content-type') in ('application/pdf','text/html','application/xml','text/xml')]
+                if links:
+                    rows[-1]['native_fulltext_urls'] = links
+            relations = item.get('relation')
+            if isinstance(relations, dict):
+                linked_dois = [relation['id'] for name in ('is-preprint-of','has-preprint','is-version-of','has-version')
+                    for relation in (relations.get(name) or [])[:10]
+                    if isinstance(relation,dict) and relation.get('id-type')=='doi'
+                    and isinstance(relation.get('id'),str) and len(relation['id'].encode()) <= 480]
+                if linked_dois:
+                    rows[-1]['related_dois'] = linked_dois[:10]
+            updates = item.get('update-to')
+            if isinstance(updates, list):
+                changes = [entry for entry in updates if isinstance(entry, dict)
+                           and entry.get('type') in ('correction','retraction','expression-of-concern')
+                           and isinstance(entry.get('DOI'), str) and len(entry['DOI'].encode()) <= 480]
+                if changes:
+                    rows[-1]['source_type'] = changes[0]['type']
+                    rows[-1]['related_dois'] = list(dict.fromkeys(
+                        [entry['DOI'] for entry in changes[:10]] + rows[-1].get('related_dois', [])))[:10]
         cursor = message.get('next-cursor') if len(rows) == min(query['limit'], 20) else None
         return page(rows, cursor, body)
 
@@ -136,6 +160,7 @@ class OpenAlexProvider(AcademicTransport):
                                  published_at=int(datetime.fromisoformat(date).replace(tzinfo=timezone.utc).timestamp()) if date else None,
                                  discovered_at=int(time.time()), source_type=item.get('type') or 'unknown',
                                  peer_review_status='unknown',
+                                 is_retracted=item.get('is_retracted') if type(item.get('is_retracted')) is bool else None,
                                  reference_ids=[v for v in item.get('referenced_works', []) if isinstance(v,str) and len(v.encode()) <= 512][:100],
                                  reference_count=item.get('referenced_works_count'), cited_by_count=item.get('cited_by_count'),
                                  missing_fields=[k for k in ('doi','publication_date','display_name') if not item.get(k)]))

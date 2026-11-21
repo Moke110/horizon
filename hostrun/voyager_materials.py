@@ -27,6 +27,7 @@ class MaterialsService:
                 CREATE TABLE IF NOT EXISTS voyager_materials(material_id TEXT PRIMARY KEY, result TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS voyager_material_operations(operation_id TEXT PRIMARY KEY, request TEXT NOT NULL, result TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS voyager_material_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS voyager_academic_identity ON voyager_materials(json_extract(result,'$.academic.identity'));
             ''')
 
     @contextmanager
@@ -216,6 +217,32 @@ class MaterialsService:
             if previous[0] != request:
                 raise CommandError('operation_conflict', 'operation_id conflicts')
             return json.loads(previous[1])
+        extracted = self.extract_academic_pdf(data)
+        text, pdf = extracted['text'], extracted['pdf']
+        self._publish(data, digest)
+        text_data = text.encode('utf8')
+        text_hash = hashlib.sha256(text_data).hexdigest()
+        self._publish(text_data, text_hash)
+        identity = str(uuid.uuid4())
+        result = dict(schema_version=1, material_id=identity, entity_id=identity, version=1, title=command['title'],
+            source=dict(kind='user_pdf', label=command['source_label'], source_id=digest),
+            snapshot=dict(content_hash=text_hash, original_hash=digest, extraction_version='pypdf.7.1.1', byte_length=len(text_data)),
+            pdf=pdf, summary=None)
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (command['operation_id'],)).fetchone()
+            if previous:
+                if previous[0] != request:
+                    raise CommandError('operation_conflict', 'operation_id conflicts')
+                return json.loads(previous[1])
+            encoded = json.dumps(result)
+            db.execute('INSERT INTO voyager_materials VALUES(?,?)', (identity, encoded))
+            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)', (command['operation_id'], request, encoded))
+            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)', (json.dumps(dict(type='voyager.pdf_registered', material_id=identity)),))
+        return result
+
+    @staticmethod
+    def extract_academic_pdf(data, *, timeout=25):
         import subprocess
         import sys
         from pdf_ingest.ingest import build_text_and_anchors
@@ -229,7 +256,7 @@ class MaterialsService:
             options = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
             try:
                 completed = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-m', 'hostrun.pdf_worker', str(source), str(output)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25, **options)
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, **options)
                 if completed.returncode == 0 and output.stat().st_size <= 25 * 1024 * 1024:
                     extracted = json.loads(output.read_text(encoding='utf8'))
                     pages = extracted['pages']
@@ -239,26 +266,89 @@ class MaterialsService:
             except (subprocess.TimeoutExpired, OSError, ValueError, KeyError):
                 reason = 'extraction_limit_or_failure'
         text, anchors = build_text_and_anchors(pages)
-        self._publish(data, digest)
-        text_data = text.encode('utf8')
-        text_hash = hashlib.sha256(text_data).hexdigest()
-        self._publish(text_data, text_hash)
-        identity = str(uuid.uuid4())
-        result = dict(schema_version=1, material_id=identity, entity_id=identity, version=1, title=command['title'],
-            source=dict(kind='user_pdf', label=command['source_label'], source_id=digest),
-            snapshot=dict(content_hash=text_hash, original_hash=digest, extraction_version='pypdf.7.1.1', byte_length=len(text_data)),
-            pdf=dict(status=status, reason=reason, page_count=len(pages), anchors=anchors, ocr=False), summary=None)
+        return dict(text=text, pdf=dict(status=status, reason=reason, page_count=len(pages), anchors=anchors, ocr=False))
+
+    def academic_receipt(self, operation, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            row = db.execute('SELECT result FROM voyager_material_operations WHERE operation_id=?', (operation,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def register_academic(self, operation, request_id, candidate, capture, attempts, *, token):
+        from hostrun.voyager_fulltext import audit_url, doi_of
+        from hostrun.voyager_web import extractor_version
+        from urllib.parse import urlsplit
+        import re
+
+        self._authorize(token)
+        source_id = candidate['source_id']
+        identity = candidate['source'] + ':' + source_id
+        if candidate['source'] == 'arxiv':
+            identity = 'arxiv:' + re.sub(r'v\d+$', '', source_id)
+        doi = doi_of(candidate)
+        if doi:
+            identity = 'doi:' + doi
+        request = json.dumps([request_id, candidate['source'], source_id])
+        text = capture['text'].encode('utf8') if capture else b''
+        text_hash = hashlib.sha256(text).hexdigest()
+        original = capture['original'] if capture else None
+        original_hash = hashlib.sha256(original).hexdigest() if original else None
+        self._publish(text, text_hash)
+        if original_hash:
+            self._publish(original, original_hash)
+        origin = audit_url(urlsplit(candidate['url']))
+        found_at = datetime.now(timezone.utc).isoformat()
+        provenance = dict(request_id=request_id, source=candidate['source'], source_id=source_id,
+                          source_type=candidate.get('source_type'), url=origin,
+                          original_hash=original_hash, format=capture['kind'] if capture else None,
+                          related_dois=candidate.get('related_dois', []), attempts=attempts,
+                          reference_ids=candidate.get('reference_ids', []),
+                          reference_count=candidate.get('reference_count'), cited_by_count=candidate.get('cited_by_count'))
+        notice_type = candidate.get('source_type') if candidate.get('source_type') in (
+            'correction', 'retraction', 'expression-of-concern') else None
         with self._connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (command['operation_id'],)).fetchone()
+            previous = db.execute('SELECT request,result FROM voyager_material_operations WHERE operation_id=?', (operation,)).fetchone()
             if previous:
                 if previous[0] != request:
                     raise CommandError('operation_conflict', 'operation_id conflicts')
                 return json.loads(previous[1])
-            encoded = json.dumps(result)
-            db.execute('INSERT INTO voyager_materials VALUES(?,?)', (identity, encoded))
-            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)', (command['operation_id'], request, encoded))
-            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)', (json.dumps(dict(type='voyager.pdf_registered', material_id=identity)),))
+            versions = db.execute("""SELECT result FROM voyager_materials
+                WHERE json_extract(result,'$.academic.identity')=? ORDER BY rowid DESC""", (identity,)).fetchall()
+            existing = [json.loads(row[0]) for row in versions]
+            current = next((item for item in existing if item['snapshot']['content_hash'] == text_hash
+                            and item['academic'].get('notice_type') == notice_type), None)
+            if current is not None:
+                result = current
+                if provenance not in result['academic']['provenance']:
+                    result['academic']['provenance'].append(provenance)
+                result['academic']['attempts'] = attempts
+                db.execute('UPDATE voyager_materials SET result=? WHERE material_id=?',
+                           (json.dumps(result, ensure_ascii=False), result['material_id']))
+            else:
+                material_id = str(uuid.uuid4())
+                kind = capture['kind'] if capture else 'missing'
+                extraction = {'xml': 'jats_body.v1', 'pdf': 'pypdf.7.1.1', 'missing': 'unavailable.v1'}
+                algorithm = extractor_version() if kind == 'html' else extraction[kind]
+                snapshot = dict(snapshot_id=str(uuid.uuid4()), content_hash=text_hash, hash_algorithm='sha256',
+                                extraction_version=algorithm, byte_length=len(text))
+                if original_hash:
+                    snapshot['original_hash'] = original_hash
+                result = dict(schema_version=1, material_id=material_id,
+                    entity_id=existing[0]['entity_id'] if existing else material_id,
+                    version=len(existing)+1, title=candidate['title'][:500], summary=None,
+                    source=dict(kind='academic', label=origin, source_id=source_id, received_at=found_at),
+                    snapshot=snapshot, academic=dict(identity=identity, format=kind, notice_type=notice_type,
+                        status='available' if capture else 'pending_fulltext', attempts=attempts,
+                        url=capture['url'] if capture else origin, provenance=[provenance]))
+                if kind == 'pdf':
+                    result['pdf'] = capture['pdf']
+                db.execute('INSERT INTO voyager_materials VALUES(?,?)',
+                           (material_id, json.dumps(result, ensure_ascii=False)))
+            db.execute('INSERT INTO voyager_material_operations VALUES(?,?,?)',
+                       (operation, request, json.dumps(result, ensure_ascii=False)))
+            db.execute('INSERT INTO voyager_material_events(event) VALUES(?)',(json.dumps(dict(
+                type='voyager.academic_recorded', material_id=result['material_id'])),))
         return result
 
     def resolve_pdf(self, command, *, token):
@@ -305,7 +395,7 @@ class MaterialsService:
         if row is None:
             raise CommandError('not_found', 'Unknown material')
         result = json.loads(row[0])
-        if result['source']['kind'] != 'user_pdf':
+        if not result.get('pdf') or not result['snapshot'].get('original_hash'):
             raise CommandError('invalid_material', 'Material is not a PDF')
         return self._read_blob(result['snapshot']['original_hash'])
 

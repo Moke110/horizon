@@ -12,6 +12,14 @@ All retrieval mutations require a launch token, schema_version 1, a unique opera
 
 `source_settings`, `save_source_setting` and `save_tavily_budget_setting` require a launch token and return key presence plus the confirmed Tavily monthly limit when set. The desktop can set or remove the saved key for `openalex` or `tavily`. Saved keys override `OPENALEX_API_KEY` and `TAVILY_API_KEY` and take effect on the next provider attempt. A key being present does not establish authorization or quota. Credentials are stored in the local managed credential file outside the Voyager database, request receipts, diagnostics and model configuration pipe.
 
+## Candidate delivery
+
+After hard scope and time checks, Voyager selects candidates from observed title and abstract matches. Required scope terms can anchor a result; otherwise the actual query needs a bounded share of distinctive terms in the metadata. The selection reason reports matching terms and flags possible counterevidence, corrections and retractions when the provider type or retrieved text indicates them. These signals do not establish reliability or authority. Explicit repost disclosures are retained as provenance and do not create a new independent result.
+
+Within a retrieval scope, novelty is recorded atomically at delivery for each normalized DOI or source URL and correction or retraction fingerprint. Source IDs, provider rows and query links stay inspectable. The desktop groups rows with the same identity and change, and offers links to other scopes that found that identity. URL fragments do not affect identity; titles alone cannot merge independent reports. Records predating the selection policy remain readable without fabricated selection reasons.
+
+When all requested queries are covered, the desktop `delivery_status` distinguishes `new_results` from `no_new`. A repeat of delivered evidence or an empty qualified list has no new result. Partial, uncertain, blocked and failed runs retain their existing status and coverage gaps. The outcome does not schedule or fabricate a report.
+
 ## Budgets and recovery
 
 Defaults per segment: seconds 900, queries 20, candidates 100, fulltexts 20. Any zero or exactly reached limit stops with partial coverage, including when the final page exhausts the source. Query and fulltext reservations charge before external work. Candidate use counts returned rows including rejected/duplicate rows. Time is accounted at reservation and result commit. A late result may retain evidence but cannot erase a time gap or advance its cursor.

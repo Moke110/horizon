@@ -22,24 +22,24 @@ def public_address(url):
     return parts
 
 
-def fetch_public(url, headers):
+def fetch_public(url, headers, *, byte_limit=2*1024*1024, timeout=12):
     parts = public_address(url)
     addresses = socket.getaddrinfo(parts.hostname, 443, type=socket.SOCK_STREAM)
     if not addresses or any(not ipaddress.ip_address(row[4][0]).is_global for row in addresses):
         raise ValueError('nonpublic_address')
     family, kind, protocol, _, destination = addresses[0]
     with socket.socket(family, kind, protocol) as stream:
-        stream.settimeout(12)
+        stream.settimeout(timeout)
         stream.connect(destination)
         with ssl.create_default_context().wrap_socket(stream, server_hostname=parts.hostname) as secure:
-            connection = http.client.HTTPSConnection(parts.hostname, timeout=12)
+            connection = http.client.HTTPSConnection(parts.hostname, timeout=timeout)
             connection.sock = secure
             try:
                 connection.request('GET', urlunsplit(('', '', parts.path or '/', parts.query,'')),
                                    headers={'User-Agent':'Horizon/1.0 feed discovery', **headers})
                 response = connection.getresponse()
-                body = response.read(2*1024*1024+1)
-                if len(body) > 2*1024*1024:
+                body = response.read(byte_limit+1)
+                if len(body) > byte_limit:
                     raise ValueError('response_too_large')
                 return response.status, dict(response.getheaders()), body
             finally:

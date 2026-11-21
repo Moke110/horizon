@@ -51,7 +51,7 @@ def material_command(materials, command, *, token):
     raise CommandError('invalid_command','Unknown materials action')
 
 
-def voyager_command(voyager, command, *, token):
+def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
     """Route desktop scope commands through Voyager's authenticated public seam."""
     action=command.get('action')
     if action=='voyager_source_settings':
@@ -61,6 +61,9 @@ def voyager_command(voyager, command, *, token):
     if action=='voyager_save_tavily_budget' and 'monthly_limit' in command:
         return 'voyager_source_settings', voyager.save_tavily_budget_setting(
             command.get('paygo_disabled'), command['monthly_limit'], token=token)
+    if action=='voyager_fulltext' and fulltext is not None:
+        return 'voyager_view', fulltext.acquire({k:v for k,v in command.items() if k!='action'},
+                                                token=token, cancelled=cancelled)
     if action=='voyager_page':return 'voyager_page',voyager.recent(token=token,before=command.get('before'))
     if action=='voyager_history':return 'voyager_history',voyager.query_history(command.get('request_id'),command.get('query_id'),token=token,offset=command.get('offset',0))
     if action=='voyager_open':return 'voyager_view',voyager.view(command.get('request_id'),token=token)
@@ -123,12 +126,15 @@ def serve(resolved):
     deliveries = DeliveryService(service)
     materials = MaterialsService(service.home,token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
+    from hostrun.voyager_fulltext import FulltextService
+    fulltext = FulltextService(voyager, materials)
     voyager_current = None
     from hostrun.voyager_subscriptions import Subscriptions
     subscriptions = Subscriptions(service.home)
     subscription_busy = set()
     web_jobs = {}
     voyager_busy = set()
+    fulltext_jobs = {}
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
     from hostrun.schedule_runtime import ScheduleRuntime
@@ -206,7 +212,9 @@ def serve(resolved):
 
     def execute_voyager(command):
         try:
-            kind,data=voyager_command(voyager,command,token=token)
+            cancel = fulltext_jobs.get(command.get('request_id'))
+            kind,data=voyager_command(voyager,command,token=token,fulltext=fulltext,
+                                      cancelled=cancel.is_set if cancel else None)
             with dispatch_lock:
                 if voyager_current==command.get('request_id'):emit(kind,data)
         except CommandError as exc:
@@ -214,8 +222,11 @@ def serve(resolved):
         except Exception:emit('notice','检索未能完成，已保留执行预算与缺口，请核实后继续。')
         finally:
             with dispatch_lock:
-                voyager_busy.discard(command.get('request_id'));state()
-                if voyager_current==command.get('request_id'):emit('voyager_view',voyager.view(voyager_current,token=token))
+                voyager_busy.discard(command.get('request_id'))
+                fulltext_jobs.pop(command.get('request_id'), None)
+                if not exiting.is_set():
+                    state()
+                    if voyager_current==command.get('request_id'):emit('voyager_view',voyager.view(voyager_current,token=token))
 
     def capture_web(command, cancelled):
         try:
@@ -287,14 +298,19 @@ def serve(resolved):
                         except Exception:
                             emit('voyager_source_settings_error', '无法读取或保存本机检索来源配置，请重试。')
                         continue
-                    elif action=='voyager_execute':
+                    elif action in ('voyager_execute','voyager_fulltext'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if cmd.get('request_id') in voyager_busy:raise CommandError('execution_busy','Retrieval request is already running')
                         voyager_current=cmd.get('request_id');voyager_busy.add(voyager_current)
+                        if action=='voyager_fulltext':
+                            fulltext_jobs[voyager_current]=threading.Event()
                         threading.Thread(target=execute_voyager,args=(dict(cmd),),daemon=True).start()
+                        state()
                     elif action in ('voyager_create','voyager_open','voyager_cancel','voyager_history','voyager_page'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=voyager_command(voyager,cmd,token=token)
+                        if action=='voyager_cancel' and cmd.get('request_id') in fulltext_jobs:
+                            fulltext_jobs[cmd['request_id']].set()
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
                     elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve'):
@@ -316,6 +332,7 @@ def serve(resolved):
                     elif action == 'exit':
                         exiting.set()
                         for cancel in web_jobs.values():cancel.set()
+                        for cancel in fulltext_jobs.values():cancel.set()
                         scheduler.stopped=True
                         for turn in service.recoverable_turns(token=token):
                             while turn['status'] == 'running':
