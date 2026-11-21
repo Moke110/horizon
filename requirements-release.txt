@@ -16,3 +16,23 @@ PyYAML==6.0.2
 pypdf==7.1.1
 feedparser==6.0.14
 feedparser-sgmllib==2.1.0
+
+# Static web extraction
+certifi==2026.10.23
+charset-normalizer==3.5.2
+courlan==1.5.0
+dateparser==1.5.1
+htmldate==1.11.0
+justext==3.0.2
+lxml==6.1.3
+lxml-html-clean==0.4.6
+python-dateutil==4.0.0
+pytz==2026.6
+regex==2026.11.19
+trafilatura==2.3.1
+tzdata==2026.6
+tzlocal==5.4.5
+urllib3==2.8.0
+
+playwright==1.65.2
+greenlet==3.2.4

@@ -14,3 +14,8 @@ pypdf==7.1.1
 # On Windows WeasyPrint additionally needs the GTK3 runtime.
 #   WeasyPrint>=60
 feedparser==6.0.14
+
+# Static web extraction
+trafilatura==2.3.1
+
+playwright==1.65.2

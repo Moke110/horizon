@@ -33,6 +33,8 @@
   *.pyd                            # 扩展模块：官方 embeddable zip 平铺在 python.exe 旁；
                                    # 完整发行版布局则放在 DLLs/ 下（两种都接受）
   Lib/site-packages/               # PyYAML、pypdf 及其依赖
+  browser/browser-inventory.json  # Chromium 版本、修订号、包内路径及文件 SHA-256
+  browser/chromium-*/chrome-win64/ # 公开动态网页获取使用的固定 Chromium 版本
 ```
 
 `python313._pth` 是隔离模式（isolated embeddable）的唯一 `sys.path` 来源，必须含 `python313.zip`、`.`、`..` 与 `Lib\site-packages`，每项恰好一次。`..` 相对 `runtime/` 指向代码根：包装器 `cd` 到 `<code>` 后执行 `runtime\python.exe -m hostrun.cli`，隔离模式不会把当前目录（`sys.path[0]`）放进搜索路径，缺 `..` 时 `import hostrun`/`common` 会在真实安装中失败。`scripts/prepare_runtime.py` 保留 embeddable zip 原有的 `python313.zip`/`.` 条目并补齐、去重这两项；同一运行时目录重复组装不会累积重复条目。

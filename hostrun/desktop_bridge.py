@@ -120,6 +120,7 @@ def serve(resolved):
     from hostrun.voyager_subscriptions import Subscriptions
     subscriptions = Subscriptions(service.home)
     subscription_busy = set()
+    web_jobs = {}
     voyager_busy = set()
     from hostrun.context_versions import query_versions
     app.version_provider = query_versions
@@ -162,7 +163,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_materials(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -209,6 +210,21 @@ def serve(resolved):
                 voyager_busy.discard(command.get('request_id'));state()
                 if voyager_current==command.get('request_id'):emit('voyager_view',voyager.view(voyager_current,token=token))
 
+    def capture_web(command, cancelled):
+        try:
+            result = materials.register_web(command,token=token,cancel=cancelled)
+            with dispatch_lock:
+                if not cancelled.is_set() and not exiting.is_set():
+                    package = materials.get_package(result['material_id'],token=token)
+                    emit('private_pdf',None)
+                    emit('web_material',package)
+        except Exception:
+            if not cancelled.is_set():emit('notice','网页获取失败，请检查原链接')
+        finally:
+            with dispatch_lock:
+                web_jobs.pop(command['operation_id'],None)
+                if not exiting.is_set():state()
+
     def update_subscription(identity):
         try:
             subscriptions.refresh(identity)
@@ -231,6 +247,20 @@ def serve(resolved):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action=='materials_web':
+                        if exiting.is_set() or web_jobs:
+                            raise CommandError('web_busy','已有网页正在获取')
+                        command={k:v for k,v in cmd.items() if k!='action'}
+                        operation=command.get('operation_id')
+                        if not isinstance(operation,str) or not operation:
+                            raise CommandError('invalid_command','缺少网页获取标识')
+                        cancel=threading.Event()
+                        web_jobs[operation]=cancel
+                        threading.Thread(target=capture_web,args=(command,cancel),daemon=True).start()
+                        state()
+                    elif action=='materials_web_cancel':
+                        cancel=web_jobs.get(cmd.get('operation_id'))
+                        if cancel:cancel.set()
                     elif action=='subscription_add':
                         subscriptions.configure(cmd['kind'],cmd['url'])
                         state()
@@ -269,6 +299,7 @@ def serve(resolved):
                         emit('notice', '诊断报告已导出：' + str(report))
                     elif action == 'exit':
                         exiting.set()
+                        for cancel in web_jobs.values():cancel.set()
                         scheduler.stopped=True
                         for turn in service.recoverable_turns(token=token):
                             while turn['status'] == 'running':
