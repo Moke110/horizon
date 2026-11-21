@@ -213,6 +213,12 @@ Open **知识库 → 知识卡片** and enter a title and content. Add aliases, 
 
 **编辑（读取完整版本）** pins the draft to a committed version. If another edit was saved first, the panel keeps your draft and shows its differences from the latest version. Review the changes before reapplying the draft or discarding it. Archived cards stay readable and leave the active known set. Reopening Horizon restores committed cards and their versions. Reading and rating leave knowledge unchanged.
 
+### Knowledge Themes
+
+Open **命题** in the sidebar to record a judgement and its applicability conditions. Add related cards and evidence as needed. Each supporting or opposing entry records a reason, a saved material, a locator and an excerpt. Themes with one direction or no evidence show **证据不足**. Adding a source leaves the judgement and earlier evidence as recorded.
+
+Choose **打开来源** to read the pinned page or paragraph. Use an exact locator such as **第 2 页** or **p6** when the same excerpt appears in multiple places. Archived Themes remain readable and leave the active known set.
+
 ### Explicit retrieval scopes
 
 Open **范围检索** to preserve an original research scope, bilingual alternative queries, required/excluded terms and source restrictions. Choose an initial foundation/recent search or an incremental overlapping window, with publication or discovery time as the basis. Defaults are 900 seconds, 20 queries, 100 candidates and 20 full texts per execution segment; reaching any limit retains partial results and gaps. Continue grants a new segment while preserving cumulative use and uncertain prior work. Successful query cursors are shown separately from gaps. Temporary scopes do not create Frontiers; a Frontier plan records the Frontier and its version instead. Creating a plan only stores it; **开始实际检索（访问来源）** runs source access. Enter `arxiv` or `europepmc` in the source list to search arXiv or Europe PMC. Both are built in and require an internet connection. If one source fails, inspect its gap alongside the results from other sources. Use `crossref` for anonymous Crossref searches and `openalex` with an API key from a verified OpenAlex account. Save the key under **范围检索 → 检索来源 API**. OpenAlex checks the account’s remaining daily budget before searching. Each candidate retains its source ID, DOI when supplied, and up to 100 reference identifiers. Counts come from the source and may exceed the listed references.

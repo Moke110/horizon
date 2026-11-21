@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -428,13 +429,16 @@ class MaterialsService(MaterialLifecycle):
             raise CommandError('invalid_material', 'Material is not a PDF')
         return self._read_blob(result['snapshot']['original_hash'])
 
-    def list_summaries(self, *, token, archived=False):
+    def list_summaries(self, *, token, archived=False, include_version=False):
         self._authorize(token)
         with self._connect() as db:
-            rows = db.execute("SELECT material_id,json_extract(result,'$.title'),json_extract(result,'$.source.label') "
+            rows = db.execute("SELECT material_id,json_extract(result,'$.title'),json_extract(result,'$.source.label'),"
+                              "json_extract(result,'$.version') "
                               "FROM voyager_materials WHERE COALESCE(json_extract(result,'$.archived'),0)=? "
                               "ORDER BY rowid DESC", (archived,))
-            return [dict(material_id=mid,title=title,source={'label':label}) for mid,title,label in rows]
+            return [dict(material_id=mid, title=title, source={'label': label},
+                         **({'version': version} if include_version else {}))
+                    for mid,title,label,version in rows]
 
     def list_materials(self,*,token,archived=False):
         self._authorize(token)
@@ -455,15 +459,11 @@ class MaterialsService(MaterialLifecycle):
         result['original_text'] = self._read_blob(result['snapshot']['content_hash']).decode('utf8')
         return result
 
-    def knowledge_reference(self, db, material_id, excerpt, *, card_id, token):
-        """Verify and bind a citation on the caller's transaction."""
-        self._authorize(token)
-        material = _record(db, material_id)
+    def _bind_reference(self, db, material, owner):
+        """Bind a verified citation on the caller's transaction."""
+        material_id = material['material_id']
         snapshot = material['snapshot']
         content_hash = snapshot['content_hash']
-        body = self._read_blob(content_hash).decode('utf8')
-        if ' '.join(excerpt.split()) not in ' '.join(body.split()):
-            raise CommandError('invalid_source', '摘录不在所选资料的快照中')
         reference = {
             'material_id': material_id,
             'material_version': material['version'],
@@ -473,12 +473,111 @@ class MaterialsService(MaterialLifecycle):
         }
         if 'snapshot_id' in snapshot:
             reference['snapshot_id'] = snapshot['snapshot_id']
-        owner = f"card:{card_id}:{content_hash}"
+        owner_id = f"{owner}:{content_hash}"
         db.execute("INSERT INTO voyager_material_references VALUES(?,?,?,?) "
                    "ON CONFLICT(material_id,owner_id) DO NOTHING",
-                   (material_id, owner, content_hash, snapshot.get('original_hash')))
+                   (material_id, owner_id, content_hash, snapshot.get('original_hash')))
         return reference
+
+    def knowledge_reference(self, db, material_id, excerpt, *, card_id, token):
+        """Verify and bind a Knowledge Card citation on the caller's transaction."""
+        self._authorize(token)
+        material = _record(db, material_id)
+        body = self._read_blob(material['snapshot']['content_hash']).decode('utf8')
+        if ' '.join(excerpt.split()) not in ' '.join(body.split()):
+            raise CommandError('invalid_source', '摘录不在所选资料的快照中')
+        return self._bind_reference(db, material, f"card:{card_id}")
+
+    def theme_reference(self, db, citation, *, theme_id, token):
+        """Verify and bind a Theme evidence citation on the caller's transaction."""
+        self._authorize(token)
+        material = _record(db, citation['material_id'])
+        version = citation.get('material_version')
+        if version is not None and material['version'] != version:
+            raise CommandError('version_conflict', '资料版本已更新，请重新核对快照')
+        body = self._read_blob(material['snapshot']['content_hash']).decode('utf8')
+        anchor = _citation_anchor(material, body, citation['excerpt'], citation['locator'])
+        reference = self._bind_reference(db, material, f"theme:{theme_id}")
+        return {**reference, 'anchor': anchor, 'source_label': material['source'].get('label')}
+
+    @serialized_material_write
+    def citation_view(self, citation, owner_id, *, token):
+        """Open the pinned snapshot page or paragraph behind one citation."""
+        self._authorize(token)
+        material_id = citation['material_id']
+        with self._connect() as db:
+            db.execute("BEGIN")
+            row = db.execute("SELECT content_hash FROM voyager_material_references "
+                             "WHERE material_id=? AND owner_id=?", (material_id, owner_id)).fetchone()
+            if row is None:
+                raise CommandError('not_found', 'Unknown material reference')
+            content_hash = row[0]
+            removed = db.execute("SELECT 1 FROM voyager_removed_materials "
+                                 "WHERE material_id=?", (material_id,)).fetchone() is not None
+        if content_hash != citation['content_hash']:
+            raise CommandError('snapshot_changed', '引用与已绑定的快照摘要不符')
+        result = {
+            'schema_version': 1,
+            'status': 'removed' if removed else 'available',
+            'material_id': material_id,
+            'material_version': citation.get('material_version'),
+            'content_hash': content_hash,
+            'title': citation['title'],
+            'source': {
+                'kind': citation.get('source_kind'),
+                'label': citation.get('source_label'),
+            },
+            'locator': citation['locator'],
+            'excerpt': citation['excerpt'],
+            'anchor': citation['anchor'],
+            'segment': None,
+            'segment_truncated': False,
+        }
+        if removed:
+            return result
+        body = self._read_blob(content_hash).decode('utf8')
+        anchor = citation['anchor']
+        segment_start, segment_end = anchor['start'], anchor['end']
+        segment = body[segment_start:segment_end]
+        match = _excerpt_pattern(citation['excerpt']).search(segment)
+        if match is None:
+            raise CommandError('invalid_source', '摘录不在所选资料的快照中')
+        if len(segment) > 4000:
+            start = max(0, min(match.start() - 600, len(segment) - 4000))
+            segment = segment[start:start + 4000]
+            result['segment_truncated'] = True
+        result['segment'] = segment
+        return result
 
     @staticmethod
     def removed_references(db):
         return {row[0] for row in db.execute("SELECT material_id FROM voyager_removed_materials")}
+
+
+def _excerpt_pattern(excerpt):
+    return re.compile(r'\s+'.join(re.escape(word) for word in excerpt.split()))
+
+
+def _citation_anchor(material, body, excerpt, locator):
+    """Resolve an excerpt to a particular saved page or paragraph."""
+    anchors = (material.get('pdf') or {}).get('anchors') or (material.get('web') or {}).get('anchors')
+    if not anchors:
+        anchors = [
+            dict(id=f'p{index}', start=match.start(), end=match.end())
+            for index, match in enumerate(re.finditer(r'[^\r\n]+', body), 1)
+            if match.group().strip()
+        ]
+    locator = locator.strip().lower()
+    page = re.fullmatch(r'(?:page\s*:?[ \t]*|第\s*)([0-9]{1,7})\s*(?:页)?', locator)
+    if page:
+        anchors = [anchor for anchor in anchors if anchor.get('page') == int(page[1])]
+    elif re.fullmatch(r'p[0-9]+', locator):
+        anchors = [anchor for anchor in anchors if anchor.get('id') == locator]
+    pattern = _excerpt_pattern(excerpt)
+    matches = [anchor for anchor in anchors
+               if pattern.search(body, anchor['start'], anchor['end'])]
+    if not matches:
+        raise CommandError('invalid_source', '所选快照页或段落不包含该摘录')
+    if len(matches) > 1:
+        raise CommandError('ambiguous_source', '摘录出现在多处，请填写快照页码或段落编号')
+    return {key: matches[0][key] for key in ('id', 'page', 'start', 'end') if key in matches[0]}
