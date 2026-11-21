@@ -1,6 +1,38 @@
 from hostrun.voyager_doi_sources import OpenAlexProvider
 
 
+def test_crossref_keeps_score_order_when_requesting_next_page(tmp_path, monkeypatch):
+    import io
+    import json
+    from urllib.parse import parse_qs, urlsplit
+    from hostrun.voyager_doi_sources import CrossrefProvider
+
+    class Response(io.BytesIO):
+        status = 200
+
+    requests = []
+
+    def open_page(request, timeout):
+        params = parse_qs(urlsplit(request.full_url).query)
+        requests.append(params)
+        index = len(requests)
+        if params.get('sort') != ['score']:
+            index = 0
+        return Response(json.dumps({'message': {
+            'items': [{'DOI': f'10.1234/paper-{index}', 'title': ['Paper']}],
+            'next-cursor': f'opaque-{index}',
+        }}).encode())
+
+    monkeypatch.setattr('urllib.request.urlopen', open_page)
+    monkeypatch.setattr(CrossrefProvider, '_next', 0)
+    provider = CrossrefProvider(rate_directory=tmp_path)
+    query = dict(term='wave discovery', cursor=None, limit=1, timeout_seconds=5, window={'basis': 'discovered'})
+    first = provider.search(query)
+    second = provider.search(dict(query, cursor=first['next_cursor']))
+    assert [page['candidates'][0]['doi'] for page in (first, second)] == ['10.1234/paper-1', '10.1234/paper-2']
+    assert [request['cursor'] for request in requests] == [['*'], ['opaque-1']]
+
+
 def test_unconfigured_openalex_stops_before_search(monkeypatch):
     monkeypatch.delenv('OPENALEX_API_KEY', raising=False)
     assert OpenAlexProvider().search({}) == {'error_code': 'unconfigured'}

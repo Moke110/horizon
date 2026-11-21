@@ -92,20 +92,23 @@ def test_user_scope_constraints_queries_budgets_survive_replay_and_restart(tmp_p
     assert VoyagerService(tmp_path,token='s').get(created['request_id'],token='s')==created
 
 class OnePage:
-    def __init__(self):self.calls=[]
+    def __init__(self, published_at=20):
+        self.calls=[]
+        self.published_at=published_at
     def search(self,query):
         self.calls.append(query)
-        return {'candidates':[{'source':'arxiv','source_id':'paper-1','title':'解释 research','abstract':'bounded','url':'https://arxiv.org/abs/1','published_at':20,'discovered_at':150}], 'exhausted':True,'next_cursor':None,'receipt':'local-page-1'}
+        return {'candidates':[{'source':'arxiv','source_id':'paper-1','title':'解释 research','abstract':'bounded','url':'https://arxiv.org/abs/1','published_at':self.published_at,'discovered_at':150}], 'exhausted':True,'next_cursor':None,'receipt':'local-page-1'}
 
 
-def test_public_execution_preserves_old_newly_discovered_candidate_and_actual_query(tmp_path):
-    source=OnePage();service=VoyagerService(tmp_path,token='s',providers={'arxiv':source},clock=lambda:150)
+@pytest.mark.parametrize('published_at', [20, -525312000])
+def test_public_execution_preserves_old_newly_discovered_candidate_and_actual_query(tmp_path,published_at):
+    source=OnePage(published_at);service=VoyagerService(tmp_path,token='s',providers={'arxiv':source},clock=lambda:150)
     command=request();command['scope']['alternatives']=[];command['window']['mode']='incremental'
     planned=service.create(command,token='s')
     result=service.execute({'schema_version':1,'operation_id':'run','request_id':planned['request_id'],'expected_version':1},token='s')
     assert result['status']=='complete'
     assert result['used']['queries']==1 and result['used']['candidates']==1
-    assert result['candidates'][0]['published_at']==20 and result['candidates'][0]['discovered_at']==150
+    assert result['candidates'][0]['published_at']==published_at and result['candidates'][0]['discovered_at']==150
     assert source.calls[0]['window']['effective_from_at']==90
     assert source.calls[0]['must_include']==['解释'] and source.calls[0]['exclude']==['广告']
     assert result['queries'][0]['attempts'][0]['actual_query']==source.calls[0]

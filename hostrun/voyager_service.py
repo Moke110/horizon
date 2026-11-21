@@ -14,6 +14,7 @@ import uuid
 from hostrun.agent_service import CommandError
 from hostrun.embedded_agent import load_source_keys, save_source_key
 from hostrun.managed_database import database_connection
+from hostrun.voyager_sources import valid_candidate_timestamps
 from common import file_lock
 
 DEFAULT_LIMITS={'seconds':900,'queries':20,'candidates':100,'fulltexts':20}
@@ -256,7 +257,7 @@ class VoyagerService:
             cursor=page.get('next_cursor')
             if (page['exhausted'] and cursor is not None) or (not page['exhausted'] and (not isinstance(cursor,str) or not cursor or cursor==query['cursor'])):raise CommandError('invalid_provider_response','Provider pagination did not make progress')
             for row in rows:
-                if not isinstance(row,dict) or any(not isinstance(row.get(k),str) or not row[k].strip() for k in ('source','source_id','title','url')) or any(row.get(k) is not None and (type(row[k]) is not int or row[k]<0) for k in ('published_at','discovered_at')):raise CommandError('invalid_provider_response','Candidate metadata is invalid')
+                if not isinstance(row,dict) or any(not isinstance(row.get(k),str) or not row[k].strip() for k in ('source','source_id','title','url')) or not valid_candidate_timestamps(row):raise CommandError('invalid_provider_response','Candidate metadata is invalid')
                 text=(row['title']+' '+row.get('abstract','')).casefold()
                 if row['source']!=query['source'] or any(t.casefold() not in text for t in query['must_include']) or any(t.casefold() in text for t in query['exclude']):continue
                 stamp=row.get(value['window']['basis']+'_at');start=lease['actual_query']['window']['effective_from_at']
