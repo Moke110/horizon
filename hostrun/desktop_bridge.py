@@ -14,6 +14,7 @@ from hostrun.diagnostics import record_event, export_report
 from hostrun.agent_delivery import DeliveryService
 from hostrun.voyager_materials import MaterialsService
 from hostrun.voyager_service import VoyagerService
+from hostrun.frontier import FrontierService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -63,6 +64,21 @@ def material_command(materials, command, *, token):
     if command.get('action') == 'materials_collect_orphans':
         return materials.collect_orphan_snapshots(token=token)
     raise CommandError('invalid_command','Unknown materials action')
+
+
+def frontier_command(frontier, command, *, token):
+    """Route desktop Knowledge Base commands through FrontierService's public seam."""
+    action = command.get("action")
+    if action == "frontier_list":
+        return "frontier_list", frontier.list(token=token)
+    if action == "frontier_open":
+        return "frontier_view", frontier.view(command.get("frontier_id"), token=token)
+    methods = {"frontier_create": frontier.create, "frontier_update": frontier.update,
+               "frontier_delete": frontier.delete}
+    if action not in methods:
+        raise CommandError("invalid_command", "Unknown Frontier action")
+    value = methods[action]({k: v for k, v in command.items() if k != "action"}, token=token)
+    return "frontier_view", value
 
 
 def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
@@ -140,6 +156,7 @@ def serve(resolved):
     deliveries = DeliveryService(service)
     materials = MaterialsService(service.home,token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
+    frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     from hostrun.voyager_fulltext import FulltextService
     fulltext = FulltextService(voyager, materials)
     voyager_current = None
@@ -190,7 +207,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),'frontiers':frontier.list(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -327,6 +344,10 @@ def serve(resolved):
                             fulltext_jobs[cmd['request_id']].set()
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
+                    elif action in ('frontier_create','frontier_update','frontier_delete','frontier_open','frontier_list'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=frontier_command(frontier,cmd,token=token)
+                        emit(kind,data)
                     elif action in ('materials_archive_list','materials_delete_impact','materials_delete','materials_collect_orphans'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         result = material_command(materials, cmd, token=token)
@@ -439,6 +460,10 @@ def serve(resolved):
                 with dispatch_lock:
                     state()
                     if voyager_current==data:emit('voyager_view',voyager.view(data,token=token))
+                continue
+            if kind == 'frontier_changed':
+                with dispatch_lock:
+                    state()
                 continue
             if kind == 'children':
                 state()

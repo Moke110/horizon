@@ -2,6 +2,7 @@ data/
 __pycache__/
 *.pyc
 .pytest_cache/
+/tmp/
 pytest-of-*/
 .scratch/
 # Install workspace pointer and privately installed CLI (ADR 0007).

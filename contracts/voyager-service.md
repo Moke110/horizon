@@ -1,10 +1,14 @@
 # Voyager explicit scope service
 
-`hostrun.voyager_service.VoyagerService` owns temporary explicit retrieval requests in the stable home database through managed database connections. It does not create Frontiers or infer verified retrieval coverage from model prose or scheduling execution declarations.
+`hostrun.voyager_service.VoyagerService` owns temporary explicit and Frontier-bound retrieval requests in the stable home database through managed database connections. It reads committed Frontiers but does not create them, and it does not infer verified retrieval coverage from model prose or scheduling execution declarations.
 
 ## Public boundary
 
 All retrieval mutations require a launch token, schema_version 1, a unique operation_id and (after creation) request_id and expected_version. Replay is checked before version/budget checks; identical operations return their durable receipt without a second provider call or charge. Conflicting reuse is rejected. Receipt, budget change and event commit together. Provider IO never holds a database connection.
+
+The request `scope` is either the backward-compatible temporary explicit object or a Frontier reference `{frontier_id, expected_version?}`. The knowledge provider resolves the committed Frontier into a persisted snapshot with `kind: "frontier"`, `frontier_id`, `frontier_version`, `text`, `alternatives`, `must_include`, `exclude` and `sources`. Later Frontier edits do not rewrite an existing request's snapshot. Creation and subsequent provider execution require a `following` Frontier; paused, resolved or deleted Frontiers stop future retrieval without deleting earlier requests, candidates or materials. This uses the existing Frontier lifecycle, not a new scheduling subsystem.
+
+Creating a retrieval request and executing it are separate operations: `create` records the plan and its queries without contacting a provider, and `execute` performs actual source access under the request budgets. Retrieval does not depend on model configuration. When a desktop task exists, `create` may include its `task_id`; binding validates that task. A Voyager child accepts only a same-task authenticated committed Frontier scope or the legacy explicit temporary scope.
 
 `create` preserves scope.text, user/planner alternatives, must_include, exclude and source identifiers. There are at most 128 expanded queries. Hard constraints remain on every actual query and accepted candidate. Initial searches separate foundation (effective lower bound zero) and recent queries; incremental searches use the original lower bound minus overlap. UTC timestamps are integer Unix seconds. Windows are half-open [effective_from_at, until_at). Original user bounds are retained separately. Publication and discovery timestamps are independent; missing selected timestamps do not prove inclusion.
 

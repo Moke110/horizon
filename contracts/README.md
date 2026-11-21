@@ -7,6 +7,8 @@
 
 > editor / writer 的 agent 任务包（`editor-task.json`、`writer-task.json`）与校验规则见 [`agent-tasks.md`](agent-tasks.md)。
 
+> 桌面知识库的本地 Frontier（关注问题）与 Voyager 范围快照见 [`knowledge.md`](knowledge.md)；Voyager 的公开边界仍以 [`voyager-service.md`](voyager-service.md) 为准。
+
 两个顶层位置由统一解析（`hostrun.layout`）决定：**代码目录** `--code`（默认仓库根，运行时区为 `<code>/.horizon/`）与**资料目录** `--archive`（默认 `<code>/../horizon-archive`）。资料目录只放 `originals/`（原文）与 `pushes/`（推送件）；运行状态一律在运行时区。子进程通过 `HORIZON_CODE` / `HORIZON_ARCHIVE` / `HORIZON_RUNTIME` 继承同一次解析；旧 `--home` 已退役，传入即报错并提示 `install migrate`：
 
 ```
