@@ -60,15 +60,22 @@ class OpenAlexProvider(AcademicTransport):
     interval = 1.0
     endpoint = 'https://api.openalex.org'
 
+    def __init__(self, rate_directory=None, *, key=None):
+        super().__init__(rate_directory)
+        self.key = key
+
+    def _key(self):
+        return self.key if self.key is not None else os.environ.get('OPENALEX_API_KEY', '')
+
     def search(self, query):
-        if not os.environ.get('OPENALEX_API_KEY'):
+        if not self._key():
             return {'error_code': 'unconfigured'}
         return self._fetch(self.endpoint, query)
 
     def _fetch_locked(self, address, query):
         from urllib.request import Request, urlopen
         from urllib.error import HTTPError, URLError
-        key = os.environ.get('OPENALEX_API_KEY')
+        key = self._key()
         if not key:
             return {'error_code': 'unconfigured'}
         deadline = time.monotonic() + query['timeout_seconds']

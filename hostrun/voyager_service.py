@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import tempfile
 import json
+import os
 import re
 from urllib.parse import urlsplit
 from pathlib import Path
@@ -11,10 +12,12 @@ import time
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.embedded_agent import load_source_keys, save_source_key
 from hostrun.managed_database import database_connection
 from common import file_lock
 
 DEFAULT_LIMITS={'seconds':900,'queries':20,'candidates':100,'fulltexts':20}
+SOURCE_KEY_ENV = {'openalex': 'OPENALEX_API_KEY', 'tavily': 'TAVILY_API_KEY'}
 
 
 class ExplicitScopeProvider:
@@ -39,15 +42,36 @@ class VoyagerService:
         if not isinstance(token,str) or not token:raise ValueError('A launch token is required')
         self.home=Path(home);self._token=token;self.scope_provider=scope_provider or ExplicitScopeProvider()
         self._subscription_sources = providers is None
+        self._keyed_sources = {}
         if providers is None:
             from hostrun.voyager_sources import default_providers
             from hostrun.voyager_doi_sources import CrossrefProvider, OpenAlexProvider
             providers = default_providers()
             from hostrun.voyager_tavily import TavilyProvider
-            providers['tavily'] = TavilyProvider(self.home)
-            providers.update(crossref=CrossrefProvider(), openalex=OpenAlexProvider())
+            providers['crossref'] = CrossrefProvider()
+            self._keyed_sources = {
+                'tavily': lambda key: TavilyProvider(self.home, key=key),
+                'openalex': lambda key: OpenAlexProvider(key=key),
+            }
         self.providers=dict(providers);self.clock=clock;self.on_change=on_change or (lambda event:None)
         with self._connect() as db:self.initialize_database(db)
+
+    def source_settings(self, *, token):
+        self._authorize(token)
+        saved = load_source_keys(self.home)
+        return {source: 'saved' if saved.get(source) else 'environment' if os.environ.get(env) else 'missing'
+                for source, env in SOURCE_KEY_ENV.items()}
+
+    def save_source_setting(self, source, key, *, token):
+        self._authorize(token)
+        if not isinstance(source, str) or source not in SOURCE_KEY_ENV:
+            raise CommandError('invalid_source', '不支持配置此来源')
+        if key is not None:
+            if not isinstance(key, str) or not re.fullmatch(r'[!-~]{1,1024}', key.strip()):
+                raise CommandError('invalid_key', '请输入有效的 API Key')
+            key = key.strip()
+        save_source_key(self.home, source, key)
+        return self.source_settings(token=token)
 
     def _notify(self,value):
         try:self.on_change({'schema_version':1,'request_id':value['request_id'],'version':value['version'],'status':value['status']})
@@ -335,13 +359,19 @@ class VoyagerService:
                     provider = SubscriptionProvider(subscriptions,identity)
                 except ValueError:
                     pass
-            if provider is None:
+            keyed_provider = self._keyed_sources.get(query['source'])
+            if provider is None and keyed_provider is None:
                 def unavailable(current):next(q for q in current['queries'] if q['query_id']==query['query_id']).update(status='unconfigured',error='unconfigured')
                 value,_=self._change({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'expected_version':value['version']},'source_unconfigured',unavailable,token=token);continue
             value=self.reserve({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'query_id':query['query_id'],'expected_version':value['version']},token=token)
             if value['status']!='running':break
             lease=value['inflight']
-            try:page=provider.search(lease['actual_query'])
+            try:
+                if keyed_provider:
+                    source = query['source']
+                    key = load_source_keys(self.home).get(source) or os.environ.get(SOURCE_KEY_ENV[source], '')
+                    provider = keyed_provider(key)
+                page = provider.search(lease['actual_query'])
             except Exception:page={'error_code':'provider_failed'}
             try:value=self.record({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'expected_version':value['version'],'reservation_id':lease['reservation_id'],'page':page},token=token)
             except CommandError:

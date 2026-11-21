@@ -54,6 +54,10 @@ def material_command(materials, command, *, token):
 def voyager_command(voyager, command, *, token):
     """Route desktop scope commands through Voyager's authenticated public seam."""
     action=command.get('action')
+    if action=='voyager_source_settings':
+        return 'voyager_source_settings', voyager.source_settings(token=token)
+    if action=='voyager_save_source_key' and 'key' in command:
+        return 'voyager_source_settings', voyager.save_source_setting(command.get('source'), command['key'], token=token)
     if action=='voyager_page':return 'voyager_page',voyager.recent(token=token,before=command.get('before'))
     if action=='voyager_history':return 'voyager_history',voyager.query_history(command.get('request_id'),command.get('query_id'),token=token,offset=command.get('offset',0))
     if action=='voyager_open':return 'voyager_view',voyager.view(command.get('request_id'),token=token)
@@ -271,6 +275,15 @@ def serve(resolved):
                             subscription_busy.add(identity)
                             threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
                             state()
+                    elif action in ('voyager_source_settings', 'voyager_save_source_key'):
+                        try:
+                            kind, data = voyager_command(voyager, cmd, token=token)
+                            emit(kind, data)
+                        except CommandError as exc:
+                            emit('voyager_source_settings_error', str(exc))
+                        except Exception:
+                            emit('voyager_source_settings_error', '无法读取或保存本机检索来源配置，请重试。')
+                        continue
                     elif action=='voyager_execute':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if cmd.get('request_id') in voyager_busy:raise CommandError('execution_busy','Retrieval request is already running')

@@ -6,6 +6,78 @@ def request(operation='create'):
     return {'schema_version':1,'operation_id':operation,'scope':{'text':'可解释人工智能','alternatives':['explainable artificial intelligence'],'must_include':['解释'],'exclude':['广告'],'sources':['arxiv']},'window':{'mode':'initial','basis':'discovered','from_at':100,'until_at':200,'overlap_seconds':10}}
 
 
+def test_desktop_source_settings_persist_and_never_read_back_credentials(tmp_path, monkeypatch):
+    from hostrun import embedded_agent
+    from hostrun.desktop_bridge import voyager_command
+
+    monkeypatch.delenv('OPENALEX_API_KEY', raising=False)
+    monkeypatch.setenv('TAVILY_API_KEY', 'launch-only-key')
+    service = VoyagerService(tmp_path, token='s')
+    status_command = {'action': 'voyager_source_settings'}
+    save_command = {'action': 'voyager_save_source_key', 'source': 'openalex',
+                    'key': 'private-openalex-test-key'}
+    assert voyager_command(service, status_command, token='s') == (
+        'voyager_source_settings', {'openalex': 'missing', 'tavily': 'environment'})
+    with pytest.raises(PermissionError):
+        voyager_command(service, save_command, token='invalid')
+    assert voyager_command(service, save_command, token='s') == (
+        'voyager_source_settings', {'openalex': 'saved', 'tavily': 'environment'})
+
+    embedded_agent.configure(tmp_path, provider='custom', model='model', api_key='model-key')
+    reopened = VoyagerService(tmp_path, token='s')
+    assert voyager_command(reopened, status_command, token='s')[1] == {
+        'openalex': 'saved', 'tavily': 'environment'}
+    assert embedded_agent.load_model_config(tmp_path) == {
+        'provider': 'custom', 'model': 'model', 'apiKey': 'model-key', 'baseUrl': ''}
+    assert voyager_command(reopened, {**save_command, 'key': None}, token='s')[1]['openalex'] == 'missing'
+
+
+def test_saved_source_keys_reach_both_providers_without_exposing_them(tmp_path, monkeypatch, capsys):
+    import io
+    import json
+    import urllib.request
+    from hostrun import model_config
+    from hostrun.desktop_bridge import voyager_command
+
+    monkeypatch.setenv('OPENALEX_API_KEY', 'ignored-openalex-key')
+    monkeypatch.setenv('TAVILY_API_KEY', 'ignored-tavily-key')
+    service = VoyagerService(tmp_path, token='s')
+    source_keys = {'openalex': 'saved-openalex-key', 'tavily': 'saved-tavily-key'}
+    for source, key in source_keys.items():
+        voyager_command(service, {'action': 'voyager_save_source_key', 'source': source, 'key': key}, token='s')
+
+    calls = []
+
+    def openalex_response(req, timeout):
+        calls.append(('openalex', req.full_url, req.get_header('Authorization')))
+        return io.BytesIO(b'{"rate_limit":{"daily_remaining_usd":0,"endpoint_costs_usd":{"search":0.001}}}')
+
+    class EmptyTavilyAccount:
+        def open(self, req, timeout):
+            calls.append(('tavily', req.full_url, req.get_header('Authorization')))
+            return io.BytesIO(b'{}')
+
+    monkeypatch.setattr(urllib.request, 'urlopen', openalex_response)
+    monkeypatch.setattr(urllib.request, 'build_opener', lambda *args: EmptyTavilyAccount())
+    command = request()
+    command['scope'].update(sources=list(source_keys), alternatives=[])
+    command['window']['mode'] = 'incremental'
+    reopened = VoyagerService(tmp_path, token='s')
+    _, planned = voyager_command(reopened, {'action': 'voyager_create', **command}, token='s')
+    _, result = voyager_command(reopened, {'action': 'voyager_execute', 'schema_version': 1,
+        'operation_id': 'run', 'request_id': planned['request_id'], 'expected_version': planned['version']}, token='s')
+    assert sorted(calls) == [
+        ('openalex', 'https://api.openalex.org/rate-limit', 'Bearer saved-openalex-key'),
+        ('tavily', 'https://api.tavily.com/usage', 'Bearer saved-tavily-key'),
+    ]
+    assert {gap['reason'] for gap in result['gaps']} == {'budget_unknown'}
+    assert not any(key in json.dumps(result) for key in source_keys.values())
+
+    monkeypatch.setattr('sys.argv', ['model_config', str(tmp_path)])
+    assert model_config.main() == 0
+    assert json.loads(capsys.readouterr().out)['config'] == {}
+
+
 def test_user_scope_constraints_queries_budgets_survive_replay_and_restart(tmp_path):
     service=VoyagerService(tmp_path,token='s')
     created=service.create(request(),token='s')
