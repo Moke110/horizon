@@ -300,5 +300,8 @@ the same DOI. A real HTTP 404 reopened as awaiting full text with no original
 body. A source-environment run also recovered a usable PDF from an OpenAlex
 open location after a publisher XML redirect failed. The installed Unpaywall
 settings passed save, reopen and removal without returning the contact.
-Real Unpaywall DOI lookup remains pending. See
+After the Explorer saved their contact and explicitly authorized one query,
+the installed Unpaywall locator returned HTTP 200 and two open-location
+links for DOI `10.1371/journal.pcbi.1003285`. The contact was absent from
+the locator receipt and diagnostic output. See
 [V10](https://github.com/Moke110/horizon/issues/201).
