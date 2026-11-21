@@ -17,6 +17,7 @@ type EvidenceView={operation_id?:string;schema_version:number;status:string;mate
 type ThemeDraft={judgement:string;conditions:string;relatedCards:RelatedCard[];evidence:EvidenceInput[]};
 type ThemeDiffRow={field:string;label:string;mine:string;theirs:string};
 type Pending={kind:'load';theme_id:string;operation_id:string}|{kind:'save';operation_id:string;theme_id?:string}|{kind:'conflict';theme_id:string;operation_id:string};
+type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 
 const statusLabel:Record<string,string>={active:'有效',archived:'已归档'};
 const sufficiencyLabel:Record<string,string>={balanced:'支持与反对证据并存',single_sided:'证据不足（仅单向）',unsupported:'证据不足（暂无证据）'};
@@ -43,7 +44,7 @@ const themeDiff=(draft:ThemeDraft,committed:Theme,materialName:(id:string)=>stri
   return rows(draft).flatMap((row,index)=>sameValue(row.raw,rows(latest)[index].raw)?[]:[{field:row.field,label:row.label,mine:row.mine,theirs:rows(latest)[index].mine}]);
 };
 
-export function ThemePanel({themes,materials,cards,selected,viewEvent,commandError,onCommand}:{themes:ThemeSummary[];materials:MaterialOption[];cards:CardOption[];selected:Theme|null;viewEvent:ThemeViewEvent|null;commandError:ThemeCommandError|null;onCommand:(c:unknown)=>void}){
+export function ThemePanel({themes,materials,cards,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted}:{themes:ThemeSummary[];materials:MaterialOption[];cards:CardOption[];selected:Theme|null;viewEvent:ThemeViewEvent|null;commandError:ThemeCommandError|null;onCommand:(c:unknown)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;onCommitted?:(theme_id:string,version:number)=>void}){
   const [judgement,setJudgement]=useState(''),[conditions,setConditions]=useState('');
   const [relatedCards,setRelatedCards]=useState<RelatedCard[]>([]),[evidence,setEvidence]=useState<EvidenceInput[]>([]);
   const [editing,setEditing]=useState<{theme_id:string;version:number}|null>(null);
@@ -54,6 +55,8 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   const pending=useRef<Pending|null>(null);
   const citationPending=useRef<string|null>(null);
   const archivePending=useRef<{operation_id:string;theme_id:string}|null>(null);
+  const committed=useRef(onCommitted);
+  committed.current=onCommitted;
   const send=(action:string,extra:object={},operation_id=crypto.randomUUID())=>onCommand({action,schema_version:1,operation_id,...extra});
   const draft=():ThemeDraft=>({judgement,conditions,relatedCards,evidence});
   const clearDraft=()=>{setEditing(null);setLatest(null);setJudgement('');setConditions('');setRelatedCards([]);setEvidence([]);};
@@ -62,15 +65,19 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
     setEditing({theme_id:theme.theme_id,version:theme.version});
     setJudgement(next.judgement);setConditions(next.conditions);setRelatedCards(next.relatedCards);setEvidence(next.evidence);setLatest(null);
   };
-  const load=(theme:ThemeSummary)=>{
+  const load=(theme:Pick<ThemeSummary,'theme_id'>)=>{
     const operation_id=crypto.randomUUID();
     pending.current={kind:'load',theme_id:theme.theme_id,operation_id};
     citationPending.current=null;
     setLoading(true);setSaving(false);setLatest(null);setCitation(null);setMessage('正在读取完整已提交版本…');
     send('theme_open',{theme_id:theme.theme_id},operation_id);
   };
+  const openId=openRequest?.kind==='open'?openRequest.id:'';
+  const creating=openRequest?.kind==='create';
+  const staleDraft=!!openId&&editing?.theme_id!==openId;
   const save=()=>{
     if(loading||saving||latest)return;
+    if(staleDraft){setMessage('当前草稿属于另一个命题；请重新载入本记录后再保存。');return;}
     if(!judgement.trim()){setMessage('请填写判断。');return;}
     if(evidence.some(entry=>!entry.reason.trim()||!entry.source.material_id||!entry.source.locator.trim()||!entry.source.excerpt.trim())){
       setMessage('每条证据都需要支持或反对的方向、理由，以及已保存资料的定位和摘录。');return;
@@ -127,15 +134,16 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
       if(work.theme_id!==selected.theme_id||work.operation_id!==selected.read_operation_id)return;
       pending.current=null;setLoading(false);setSaving(false);
       if(work.kind==='conflict'){setLatest(selected);setMessage(`保存未提交：该命题已更新到版本 ${selected.version}。下方显示草稿与当前已提交内容的差异；不会自动覆盖，草稿已保留。`);return;}
-      if(selected.status==='archived'){setMessage('已归档的命题为只读。');return;}
+      if(selected.status==='archived'){setEditing(null);setLatest(null);setMessage('已归档的命题为只读。');return;}
       populate(selected);
       setMessage(`已载入版本 ${selected.version}，保存将按该版本校验。`);
       return;
     }
     if(viewEvent.operation_id!==work.operation_id||selected.operation_id!==work.operation_id)return;
     if(work.theme_id&&work.theme_id!==selected.theme_id)return;
-    pending.current=null;setSaving(false);clearDraft();
-    setMessage(`已保存为版本 ${selected.version}。`);
+    pending.current=null;setSaving(false);populate(selected);
+    setMessage(work.theme_id?`已保存为版本 ${selected.version}。`:`已创建为版本 ${selected.version}。`);
+    committed.current?.(selected.theme_id,selected.version);
   },[viewEvent,selected]);
   useEffect(()=>{
     if(!viewEvent||viewEvent.source!=='view'||!isFullTheme(selected))return;
@@ -144,6 +152,7 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
     archivePending.current=null;
     if(editing?.theme_id===work.theme_id)clearDraft();
     setMessage(`已归档为版本 ${selected.version}；判断、条件、来源与关系保留，归档的命题在面板中只读。`);
+    committed.current?.(selected.theme_id,selected.version);
   },[viewEvent,selected,editing]);
   useEffect(()=>{
     if(!commandError?.operation_id)return;
@@ -186,6 +195,16 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
       setMessage(`来源未打开：${commandError.message||commandError.code}。`);
     }
   },[commandError]);
+  useEffect(()=>{
+    if(!openRequest)return;
+    if(openRequest.kind==='create'){
+      pending.current=null;archivePending.current=null;citationPending.current=null;
+      setLoading(false);setSaving(false);setLatest(null);setCitation(null);clearDraft();
+      setMessage('填写判断、适用条件与证据后创建命题；保存会直接提交。');
+      return;
+    }
+    load({theme_id:openRequest.id});
+  },[openRequest?.nonce]);
   const materialName=(id:string)=>materials.find(m=>m.material_id===id)?.title||selected?.evidence.find(e=>e.source.material_id===id)?.source.title||id;
   const cardName=(id:string)=>cards.find(c=>c.card_id===id)?.title||id;
   const conflict=latest?themeDiff(draft(),latest,materialName,cardName):[];
@@ -196,8 +215,9 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
     const card=cards.find(candidate=>candidate.card_id===id);
     return {card_id:id,version:existing?.version??card?.version??1};
   }));
-  return <div className="trace"><h2>命题</h2><p>命题是跨来源的判断：写明适用条件，用支持或反对的证据记录立场；证据只引用已保存资料的不可变快照。</p>
-  <form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
+  const locked=!creating&&isFullTheme(selected)&&selected.status==='archived'&&!editing;
+  return <div className={`trace${embedded?' workbench-panel':''}`}>{!embedded&&<h2>命题</h2>}<p>命题是跨来源的判断：写明适用条件，用支持或反对的证据记录立场；证据只引用已保存资料的不可变快照。</p>
+  {!locked&&!staleDraft&&<form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
   <label>判断<textarea required maxLength={4000} value={judgement} onChange={e=>setJudgement(e.target.value)}/></label>
   <label>适用条件（每行一个）<textarea maxLength={2000} value={conditions} onChange={e=>setConditions(e.target.value)}/></label>
   <label>关联知识卡片<select multiple value={relatedCards.map(relation=>relation.card_id)} onChange={e=>toggleRelated(Array.from(e.target.selectedOptions,option=>option.value))}>
@@ -224,8 +244,9 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   {!materials.length&&!evidence.length&&<p>可在「资料」保存来源，再到这里引用证据。</p>}
   </fieldset>
   <p>证据为空或只有单一方向也可保存，命题会标记为「证据不足」。</p>
-  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建命题'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>{pending.current=null;setSaving(false);clearDraft();setMessage('已取消修改。');}}>取消修改</button>}
-  </fieldset></form>
+  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建命题'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
+  </fieldset></form>}
+  {locked&&<p>已归档的命题以只读方式显示；判断、条件、证据与来源保留。</p>}
   {message&&<p role="status">{message}</p>}
   {citation&&<section ref={citationReader} tabIndex={-1} className="child-result" aria-label="证据来源"><h3>{citation.title}</h3>
     <p>{citation.status==='removed'?'原资料已永久移除':citation.source.label||'已保存资料'} · 资料版本 {citation.material_version} · 定位：{citation.locator}</p>
@@ -239,7 +260,7 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   <button type="button" disabled={loading||saving||latest.status==='archived'} onClick={()=>{setEditing({theme_id:latest.theme_id,version:latest.version});setLatest(null);setMessage(`已把草稿改为基于最新版本 ${latest.version}；请核对后保存。`);}}>保留草稿，基于最新版本重试</button>
   <button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该命题已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</button>
   </section>}
-  {isFullTheme(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
+  {!creating&&isFullTheme(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
   <p>{statusLabel[selected.status]||selected.status} · 版本 {selected.version} · {sufficiencyLabel[selected.evidence_sufficiency]||selected.evidence_sufficiency}</p>
   <p>{selected.judgement}</p>
   <p>适用条件：{selected.conditions.join('、')||'无'} · 关联知识卡片：{selected.related_cards.map(relation=>`${cardName(relation.card_id)}（v${relation.version}）`).join('、')||'无'}</p>
@@ -249,11 +270,11 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   {!selected.evidence.length&&<p>暂无证据。</p>}
   {selected.status!=='archived'&&<button type="button" disabled={loading||saving} onClick={()=>archive(selected)}>归档命题</button>}
   </section>}
-  <h3>命题列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的命题仍会列出并标明状态。</p>{!themes.length&&<p>尚无命题。填写上方表单创建第一个命题。</p>}
+  {showList&&<><h3>命题列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的命题仍会列出并标明状态。</p>{!themes.length&&<p>尚无命题。填写上方表单创建第一个命题。</p>}
   {themes.map(theme=><section className="child-result" key={theme.theme_id}><h3>{theme.judgement}</h3>
   <p>{sufficiencyLabel[theme.evidence_sufficiency]||theme.evidence_sufficiency} · {theme.evidence_count} 条证据 · {theme.related_card_count} 张关联卡片 · {statusLabel[theme.status]||theme.status} · 版本 {theme.version}</p>
   <button disabled={loading||saving} onClick={()=>load(theme)}>{theme.status==='archived'?'查看完整版本（只读）':'编辑（读取完整版本）'}</button>
   {theme.status!=='archived'&&<button disabled={loading||saving} onClick={()=>archive(theme)}>归档</button>}
-  </section>)}
+  </section>)}</>}
   </div>;
 }

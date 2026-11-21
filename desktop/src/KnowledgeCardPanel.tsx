@@ -42,8 +42,9 @@ const cardDiff=(draft:CardDraft,committed:KnowledgeCard,materialName:(id:string)
 const isFullCard=(value:KnowledgeCard|null|undefined):value is KnowledgeCard=>!!value&&typeof value.card_id==='string'&&Array.isArray(value.recall_terms)&&Array.isArray(value.sources);
 
 type Pending={kind:'load';card_id:string;operation_id:string}|{kind:'save';operation_id:string;card_id?:string}|{kind:'conflict';card_id:string;operation_id:string};
+type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 
-export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandError,onCommand}:{cards:CardSummary[];materials:MaterialSummary[];selected:KnowledgeCard|null;viewEvent:CardViewEvent|null;commandError:CardCommandError|null;onCommand:(c:unknown)=>void}){
+export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted}:{cards:CardSummary[];materials:MaterialSummary[];selected:KnowledgeCard|null;viewEvent:CardViewEvent|null;commandError:CardCommandError|null;onCommand:(c:unknown)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;onCommitted?:(card_id:string,version:number)=>void}){
   const [title,setTitle]=useState(''),[content,setContent]=useState(''),[aliases,setAliases]=useState(''),[recallTerms,setRecallTerms]=useState('');
   const [sources,setSources]=useState<SourceInput[]>([]),[relations,setRelations]=useState<string[]>([]),[questionable,setQuestionable]=useState(false);
   const [editing,setEditing]=useState<{card_id:string;version:number}|null>(null);
@@ -51,18 +52,24 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
   const pending=useRef<Pending|null>(null);
   const archivePending=useRef<{operation_id:string;card_id:string}|null>(null);
+  const committed=useRef(onCommitted);
+  committed.current=onCommitted;
   const send=(operation_id:string,action:string,extra:object={})=>onCommand({action,schema_version:1,operation_id,...extra});
   const draft=():CardDraft=>({title,content,aliases,recallTerms,sources,relations,questionable});
   const clearDraft=()=>{setEditing(null);setLatest(null);setTitle('');setContent('');setAliases('');setRecallTerms('');setSources([]);setRelations([]);setQuestionable(false);};
   const populate=(card:KnowledgeCard)=>{const next=draftFrom(card);setEditing({card_id:card.card_id,version:card.version});setTitle(next.title);setContent(next.content);setAliases(next.aliases);setRecallTerms(next.recallTerms);setSources(next.sources);setRelations(next.relations);setQuestionable(next.questionable);setLatest(null);};
-  const load=(card:CardSummary)=>{
+  const load=(card:Pick<CardSummary,'card_id'>)=>{
     const operation_id=crypto.randomUUID();
     pending.current={kind:'load',card_id:card.card_id,operation_id};
     setLoading(true);setSaving(false);setLatest(null);setMessage('正在读取完整已提交版本…');
     send(operation_id,'card_open',{card_id:card.card_id});
   };
+  const openId=openRequest?.kind==='open'?openRequest.id:'';
+  const creating=openRequest?.kind==='create';
+  const staleDraft=!!openId&&editing?.card_id!==openId;
   const save=()=>{
     if(loading||saving||latest)return;
+    if(staleDraft){setMessage('当前草稿属于另一条知识卡片；请重新载入本记录后再保存。');return;}
     const payload={title,content,aliases:lines(aliases),recall_terms:lines(recallTerms),sources,relations,questionable};
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,card_id:editing?.card_id};
@@ -85,7 +92,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     if(work.kind==='load'){
       if(work.card_id!==selected.card_id||work.operation_id!==selected.read_operation_id)return;
       pending.current=null;setLoading(false);setSaving(false);
-      if(selected.status==='archived'){setMessage('已归档的知识卡片为只读。');return;}
+      if(selected.status==='archived'){setEditing(null);setLatest(null);setMessage('已归档的知识卡片为只读。');return;}
       populate(selected);
       setMessage(`已载入版本 ${selected.version}，保存将按该版本校验。`);
       return;
@@ -98,8 +105,10 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     }
     if(viewEvent.operation_id!==work.operation_id||selected.operation_id!==work.operation_id)return;
     if(work.card_id&&work.card_id!==selected.card_id)return;
-    pending.current=null;setSaving(false);clearDraft();
-    setMessage(`已保存为版本 ${selected.version}。`);
+    pending.current=null;setSaving(false);setLatest(null);
+    setEditing({card_id:selected.card_id,version:selected.version});
+    setMessage(work.card_id?`已保存为版本 ${selected.version}。`:`已创建为版本 ${selected.version}。`);
+    committed.current?.(selected.card_id,selected.version);
   },[viewEvent,selected]);
   useEffect(()=>{
     if(!viewEvent||viewEvent.source!=='view'||!isFullCard(selected))return;
@@ -108,6 +117,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     archivePending.current=null;
     if(editing?.card_id===work.card_id)clearDraft();
     setMessage(`已归档为版本 ${selected.version}；记录、来源与关系保留，归档的卡片在面板中只读。`);
+    committed.current?.(selected.card_id,selected.version);
   },[viewEvent,selected,editing]);
   useEffect(()=>{
     if(!commandError?.operation_id)return;
@@ -139,12 +149,22 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
       setMessage(`归档未完成：${commandError.message||commandError.code||'请检查后重试'}。`);
     }
   },[commandError]);
+  useEffect(()=>{
+    if(!openRequest)return;
+    if(openRequest.kind==='create'){
+      pending.current=null;archivePending.current=null;setLoading(false);setSaving(false);setLatest(null);clearDraft();
+      setMessage('填写标题和内容后创建知识卡片；保存会直接提交。');
+      return;
+    }
+    load({card_id:openRequest.id});
+  },[openRequest?.nonce]);
   const materialName=(id:string)=>materials.find(m=>m.material_id===id)?.title||selected?.sources.find(s=>s.material_id===id)?.title||id;
   const cardName=(id:string)=>cards.find(c=>c.card_id===id)?.title||id;
   const conflict=latest?cardDiff(draft(),latest,materialName,cardName):[];
   const changeSource=(index:number,fields:Partial<SourceInput>)=>setSources(current=>current.map((source,i)=>i===index?{...source,...fields}:source));
-  return <div className="trace"><h2>知识卡片</h2>
-  <form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
+  const locked=!creating&&isFullCard(selected)&&selected.status==='archived'&&!editing;
+  return <div className={`trace${embedded?' workbench-panel':''}`}>{!embedded&&<h2>知识卡片</h2>}
+  {!locked&&!staleDraft&&<form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
   <label>标题<input required disabled={loading} value={title} onChange={e=>setTitle(e.target.value)}/></label>
   <label>内容<textarea required disabled={loading} value={content} onChange={e=>setContent(e.target.value)}/></label>
   <label>别名（每行一个）<textarea disabled={loading} value={aliases} onChange={e=>setAliases(e.target.value)}/></label>
@@ -168,8 +188,9 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   </select></label>
   <label><input type="checkbox" disabled={loading} checked={questionable} onChange={e=>setQuestionable(e.target.checked)}/> 标为存疑</label>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
-  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>{pending.current=null;setSaving(false);clearDraft();setMessage('已取消修改。');}}>取消修改</button>}
-  </fieldset></form>
+  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
+  </fieldset></form>}
+  {locked&&<p>已归档的知识卡片以只读方式显示；不会创建或覆盖任何记录。</p>}
   {message&&<p role="status">{message}</p>}
   {latest&&<section className="child-result" role="alert"><h3>版本冲突：草稿与当前已提交版本 {latest.version} 的差异</h3>
   <p>你的保存没有覆盖他人已提交的内容。逐项核对后再决定：采用最新版本作为基线会保留你的草稿文字，但提交时会写入一个新的版本。</p>
@@ -177,16 +198,17 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <button type="button" disabled={loading||saving||latest.status==='archived'} onClick={()=>{setEditing({card_id:latest.card_id,version:latest.version});setLatest(null);setMessage(`已把草稿改为基于最新版本 ${latest.version}；请核对后保存。`);}}>保留草稿，基于最新版本重试</button>
   <button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该卡片已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</button>
   </section>}
-  {isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
+  {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
   <p>{selected.title} · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 检索词：{selected.recall_terms.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
   <p>{provenanceLabel(selected)}{selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}
+  {selected.status!=='archived'&&<div className="workbench-actions"><button type="button" disabled={loading||saving} onClick={()=>archive(selected)}>归档知识卡片</button></div>}
   </section>}
-  <h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
+  {showList&&<><h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
   {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{card.questionable?' · 存疑':''} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
   <button disabled={loading||saving} onClick={()=>load(card)}>{card.status==='archived'?'查看完整版本（只读）':'编辑（读取完整版本）'}</button>
   {card.status!=='archived'&&<button disabled={loading||saving} onClick={()=>archive(card)}>归档</button>}
-  </section>)}
+  </section>)}</>}
   </div>;
 }

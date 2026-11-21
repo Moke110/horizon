@@ -262,14 +262,20 @@ class KnowledgeCardService:
         self._notify(card)
         return card
 
+    @classmethod
+    def query_all_in_transaction(cls, db):
+        """Read every committed card, newest row first, on the caller's transaction."""
+        rows = db.execute("SELECT result FROM knowledge_cards ORDER BY rowid DESC").fetchall()
+        return [json.loads(row[0]) for row in rows]
+
     def list(self, *, token):
         """List all committed cards, including archived ones with their status."""
         self._authorize(token)
         with self._connect() as db:
             db.execute("BEGIN")
-            rows = db.execute("SELECT result FROM knowledge_cards ORDER BY rowid DESC").fetchall()
+            cards = self.query_all_in_transaction(db)
             removed = self.materials.removed_references(db)
-        return [self._summary(self._project_sources(json.loads(row[0]), removed)) for row in rows]
+        return [self._summary(self._project_sources(card, removed)) for card in cards]
 
     def query(self, *, token, card_ids=None, include_archived=False):
         """Read committed cards for Voyager and the Editor, carrying versions.
@@ -292,9 +298,7 @@ class KnowledgeCardService:
         with self._connect() as db:
             db.execute("BEGIN")
             if identifiers is None:
-                rows = db.execute(
-                    "SELECT result FROM knowledge_cards ORDER BY rowid DESC").fetchall()
-                cards = [json.loads(row[0]) for row in rows]
+                cards = self.query_all_in_transaction(db)
             else:
                 cards = [self._read(db, card_id) for card_id in identifiers]
             removed = self.materials.removed_references(db)

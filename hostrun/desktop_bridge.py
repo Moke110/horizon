@@ -17,6 +17,7 @@ from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.knowledge_themes import KnowledgeThemeService
+from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -74,7 +75,10 @@ def frontier_command(frontier, command, *, token):
     if action == "frontier_list":
         return "frontier_list", frontier.list(token=token)
     if action == "frontier_open":
-        return "frontier_view", frontier.view(command.get("frontier_id"), token=token)
+        value = frontier.view(command.get("frontier_id"), token=token)
+        if isinstance(command.get("operation_id"), str):
+            value = {**value, "read_operation_id": command["operation_id"]}
+        return "frontier_view", value
     methods = {"frontier_create": frontier.create, "frontier_update": frontier.update,
                "frontier_delete": frontier.delete}
     if action not in methods:
@@ -135,6 +139,22 @@ def theme_command(themes, command, *, token):
     value = methods[action]({k: v for k, v in command.items() if k != "action"},
                             token=token)
     return "theme_view", value
+
+
+def workbench_command(workbench, command, *, token):
+    """Route the read-only Knowledge Workbench search through its public seam."""
+    if command.get("action") != "knowledge_search":
+        raise CommandError("invalid_command", "Unknown Knowledge Workbench action")
+    operation_id = command.get("operation_id")
+    if operation_id is not None and (
+            not isinstance(operation_id, str) or not operation_id.strip()):
+        raise CommandError("invalid_command", "operation_id must be text")
+    data = workbench.search(
+        command.get("query", ""), token=token,
+        kind=command.get("kind"), scope=command.get("scope", "active"),
+        related_to=command.get("related_to"),
+        limit=command.get("limit", 40), offset=command.get("offset", 0))
+    return "knowledge_search", {"operation_id": operation_id, **data}
 
 
 def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
@@ -215,6 +235,7 @@ def serve(resolved):
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
     knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=knowledge_cards,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
+    knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=knowledge_cards,themes=knowledge_themes,frontiers=frontier)
     from hostrun.voyager_fulltext import FulltextService
     fulltext = FulltextService(voyager, materials)
     voyager_current = None
@@ -415,6 +436,10 @@ def serve(resolved):
                                     'theme_open','theme_list','theme_query','theme_source'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=theme_command(knowledge_themes,cmd,token=token)
+                        emit(kind,data)
+                    elif action == 'knowledge_search':
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=workbench_command(knowledge_workbench,cmd,token=token)
                         emit(kind,data)
                     elif action in ('materials_archive_list','materials_delete_impact','materials_delete','materials_collect_orphans'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')

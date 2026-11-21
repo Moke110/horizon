@@ -199,6 +199,12 @@ Temporary model failures use bounded retries. Trace shows authentication, config
 
 Use **Export diagnostics** in the desktop header to create a local report folder. It contains bounded lifecycle/task/error metadata, versions and task-state summaries. It excludes API keys, configuration files, conversation and document text, databases and Pi transcripts; nothing is uploaded automatically. Reports are stored under the data home’s `diagnostics/reports/` directory. If the GUI cannot start, the installed runtime can export with `runtime/python.exe -m hostrun.diagnostics --code <installation> --output <report-directory>`.
 
+### Knowledge workbench
+
+Open **知识库** in the desktop app. The left pane searches local knowledge and the right pane opens the selected record for reading, editing, or inspecting evidence. Search accepts single Chinese characters, longer Chinese phrases, and mixed Chinese and English. Full-width Latin letters and case match their ordinary forms. An empty search lists the selected set.
+
+**当前有效** shows active Knowledge Cards and Themes and following Frontiers. Use the type filter to narrow the list, and the related-record filter to find records directly linked to a specific card or Theme. Choose **归档与停用** for archived Cards and Themes or paused, resolved, and deleted Frontiers. **待确认** is a separate view. Select a Theme and use **打开来源** in its evidence to open the cited portion of the saved snapshot without leaving the workbench.
+
 ### Knowledge Base Frontiers
 
 Open **知识库** to create a Frontier: a focus question, original research scope, bilingual alternative queries, required and excluded terms, source identifiers, and an initial status of **关注中** (following), **已暂停** (paused) or **已解决** (resolved). Relations stay empty in this stage; an empty list is valid. Creating or editing a Frontier commits directly, without a Keeper approval step.
@@ -215,7 +221,7 @@ Open **知识库 → 知识卡片** and enter a title and content. Add aliases, 
 
 ### Knowledge Themes
 
-Open **命题** in the sidebar to record a judgement and its applicability conditions. Add related cards and evidence as needed. Each supporting or opposing entry records a reason, a saved material, a locator and an excerpt. Themes with one direction or no evidence show **证据不足**. Adding a source leaves the judgement and earlier evidence as recorded.
+In **知识库**, select **命题** or create a new one to record a judgement and its applicability conditions. Add related cards and evidence as needed. Each supporting or opposing entry records a reason, a saved material, a locator and an excerpt. Themes with one direction or no evidence show **证据不足**. Adding a source leaves the judgement and earlier evidence as recorded.
 
 Choose **打开来源** to read the pinned page or paragraph. Use an exact locator such as **第 2 页** or **p6** when the same excerpt appears in multiple places. Archived Themes remain readable and leave the active known set.
 
