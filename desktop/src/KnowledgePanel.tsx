@@ -19,6 +19,7 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   const [mode,setMode]=useState('initial'),[basis,setBasis]=useState('published');
   const [from,setFrom]=useState(localInput(new Date(new Date().getFullYear(),0,1))),[until,setUntil]=useState(localInput(new Date())),[overlap,setOverlap]=useState(86400);
   const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[creating,setCreating]=useState(''),[acting,setActing]=useState(''),[message,setMessage]=useState('');
+  const [reason,setReason]=useState('');
   const pending=useRef<{kind:'load';frontier_id:string;operation_id:string}|{kind:'save';operation_id:string;frontier_id?:string}|null>(null);
   const createPending=useRef<{operation_id:string;frontier_id:string}|null>(null);
   const actionPending=useRef<{operation_id:string;frontier_id:string;kind:'status'|'delete'}|null>(null);
@@ -29,7 +30,7 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   const isCreateDraft=openRequest?.kind==='create';
   const staleDraft=!!openId&&editing?.frontier_id!==openId;
   const scopePayload=()=>({text:scope,alternatives:lines(alternatives),sources:sources.split(',').map(v=>v.trim()).filter(Boolean)});
-  const clearDraft=()=>{setEditing(null);setQuestion('');setScope('');setAlternatives('');setMust('');setExclude('');setSources('arxiv');setStatus('following');};
+  const clearDraft=()=>{setEditing(null);setQuestion('');setScope('');setAlternatives('');setMust('');setExclude('');setSources('arxiv');setStatus('following');setReason('');};
   const populate=(view:Frontier)=>{setEditing({frontier_id:view.frontier_id,version:view.version,status:view.status});setQuestion(view.question);setScope(view.scope.text);setAlternatives(view.scope.alternatives.join('\n'));setMust(view.hard_constraints.must_include.join('\n'));setExclude(view.hard_constraints.exclude.join('\n'));setSources(view.scope.sources.join(','));setStatus(view.status==='deleted'?'following':view.status);};
   const load=(f:Pick<FrontierSummary,'frontier_id'>)=>{
     const operation_id=crypto.randomUUID();
@@ -40,7 +41,7 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   const save=()=>{
     if(loading||saving)return;
     if(staleDraft){setMessage('当前草稿属于另一个 Frontier；请重新载入本记录后再保存。');return;}
-    const payload={question,status,scope:scopePayload(),hard_constraints:{must_include:lines(must),exclude:lines(exclude)}};
+    const payload={question,status,scope:scopePayload(),hard_constraints:{must_include:lines(must),exclude:lines(exclude)},...(reason.trim()?{reason:reason.trim()}:{})};
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,frontier_id:editing?.frontier_id};
     setSaving(true);
@@ -64,6 +65,7 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
     if(work.frontier_id&&work.frontier_id!==selected.frontier_id)return;
     pending.current=null;setSaving(false);
     setEditing({frontier_id:selected.frontier_id,version:selected.version,status:selected.status});
+    setReason('');
     setMessage(work.frontier_id?`已保存为版本 ${selected.version}。`:`已创建为版本 ${selected.version}。`);
     committed.current?.(selected.frontier_id,selected.version);
   },[viewEvent,selected]);
@@ -159,6 +161,8 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   <label>必须包含（每行一个）<textarea disabled={loading} value={must} onChange={e=>setMust(e.target.value)}/></label>
   <label>排除词（每行一个）<textarea disabled={loading} value={exclude} onChange={e=>setExclude(e.target.value)}/></label>
   <label>来源标识（逗号分隔）<input required disabled={loading} value={sources} onChange={e=>setSources(e.target.value)}/></label>
+  <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：调整研究范围"/></label>
+  <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
   <button type="submit" disabled={loading||saving}>{editing?'保存修改':'创建 Frontier'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </form></>}
   {locked&&<p>已删除的 Frontier 以只读方式显示；历史检索与资料仍然保留。</p>}

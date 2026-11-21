@@ -16,6 +16,7 @@ from hostrun.voyager_materials import MaterialsService
 from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.knowledge_history import KnowledgeHistoryService
 from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 from hostrun.model_catalog import providers
@@ -155,6 +156,27 @@ def workbench_command(workbench, command, *, token):
         related_to=command.get("related_to"),
         limit=command.get("limit", 40), offset=command.get("offset", 0))
     return "knowledge_search", {"operation_id": operation_id, **data}
+
+
+def knowledge_history_command(services, command, *, token):
+    """Route history, undo preview and undo across the three knowledge owners."""
+    if not isinstance(command, dict):
+        raise CommandError("invalid_command", "Unknown knowledge history action")
+    history = KnowledgeHistoryService(services)
+    action = command.get("action")
+    if action == "knowledge_history":
+        return "knowledge_history", history.history(command, token=token)
+    if action == "knowledge_undo_preview":
+        return "knowledge_undo_preview", history.preview(command, token=token)
+    if action == "knowledge_undo":
+        record = history.undo(command, token=token)
+        return "knowledge_undo", {
+            "operation_id": command.get("operation_id"),
+            "kind": command.get("kind"),
+            "id": command.get("id"),
+            "record": record,
+        }
+    raise CommandError("invalid_command", "Unknown knowledge history action")
 
 
 def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
@@ -440,6 +462,12 @@ def serve(resolved):
                     elif action == 'knowledge_search':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=workbench_command(knowledge_workbench,cmd,token=token)
+                        emit(kind,data)
+                    elif action in ('knowledge_history','knowledge_undo_preview','knowledge_undo'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=knowledge_history_command(
+                            {'card': knowledge_cards, 'theme': knowledge_themes,
+                             'frontier': frontier}, cmd, token=token)
                         emit(kind,data)
                     elif action in ('materials_archive_list','materials_delete_impact','materials_delete','materials_collect_orphans'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')

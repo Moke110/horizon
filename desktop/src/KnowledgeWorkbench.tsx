@@ -2,6 +2,7 @@ import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
+import {KnowledgeHistoryPanel,type HistoryKind,type HistoryRecord} from './KnowledgeHistoryPanel';
 
 type MaterialOption={material_id:string;title:string;version?:number};
 type EntityType='card'|'theme'|'frontier';
@@ -85,13 +86,16 @@ export function KnowledgeWorkbench({
   const [relationTarget,setRelationTarget]=useState('');
   const [page,setPage]=useState(0);
   const [active,setActive]=useState<ActiveSelection|null>(null);
+  const [historyOpen,setHistoryOpen]=useState(false);
   const [pageData,setPageData]=useState<SearchPage|null>(null);
   const [loading,setLoading]=useState(true);
   const [searchError,setSearchError]=useState('');
   const results=useRef<HTMLUListElement>(null);
   const detailHeading=useRef<HTMLHeadingElement>(null);
+  const historyButton=useRef<HTMLButtonElement>(null);
   const latestSearch=useRef<SearchRequest|null>(null);
   const focusAfterSearch=useRef(false);
+  const skipHeadingFocus=useRef(false);
 
   const searchNow=(values:SearchValues,offset:number,background=false)=>{
     const target=targetOf(values.relationTarget);
@@ -173,10 +177,15 @@ export function KnowledgeWorkbench({
     setRelationTarget('');
     setPage(0);
     setActive(null);
+    setHistoryOpen(false);
     searchNow({query:'',type:initialType,scope:'active',relationTarget:''},0);
   },[initialType]);
 
-  useEffect(()=>{if(active)detailHeading.current?.focus();},[active?.nonce]);
+  useEffect(()=>{
+    if(!active)return;
+    if(skipHeadingFocus.current){skipHeadingFocus.current=false;return;}
+    detailHeading.current?.focus();
+  },[active?.nonce]);
 
   const pageCount=Math.max(1,Math.ceil((pageData?.total||0)/PAGE_SIZE));
   const currentPage=Math.min(page,pageCount-1);
@@ -210,8 +219,12 @@ export function KnowledgeWorkbench({
       ?{kind:'create',nonce:active.nonce}
       :{kind:'open',nonce:active.nonce,id:active.id||'',version:active.version??1};
   };
-  const openResult=(row:SearchResult)=>setActive({type:row.kind,mode:'open',id:row.id,version:row.version,nonce:crypto.randomUUID()});
+  const openResult=(row:SearchResult)=>{
+    setHistoryOpen(false);
+    setActive({type:row.kind,mode:'open',id:row.id,version:row.version,nonce:crypto.randomUUID()});
+  };
   const startCreate=(kind:EntityType)=>{
+    setHistoryOpen(false);
     const values:SearchValues={query:'',type:kind,scope:'active',relationTarget:''};
     focusAfterSearch.current=false;
     setType(kind);
@@ -234,6 +247,17 @@ export function KnowledgeWorkbench({
       setPage(0);
       searchNow(values,0,true);
     }
+  };
+  const undoApplied=(kind:HistoryKind,id:string,record:HistoryRecord)=>{
+    skipHeadingFocus.current=true;
+    setActive(current=>{
+      if(!current||current.mode!=='open'||current.type!==kind||current.id!==id)return current;
+      return {...current,version:typeof record.version==='number'?record.version:current.version,nonce:crypto.randomUUID()};
+    });
+  };
+  const closeHistory=()=>{
+    setHistoryOpen(false);
+    window.setTimeout(()=>historyButton.current?.focus(),0);
   };
   const changeType=(next:TypeFilter)=>{focusAfterSearch.current=false;setType(next);setPage(0);searchNow({query,type:next,scope,relationTarget},0);};
   const changeScope=(next:ScopeFilter)=>{focusAfterSearch.current=false;setScope(next);setPage(0);searchNow({query,type,scope:next,relationTarget},0);};
@@ -322,11 +346,15 @@ export function KnowledgeWorkbench({
             <h2 ref={detailHeading} tabIndex={-1}>{activeTitle||'知识库记录'}</h2>
             <p>{active.mode==='create'?'保存会直接创建并提交':`${STATUS_LABEL[activeStatus]||activeStatus||'已提交'}${activeVersion?` · 版本 v${activeVersion}`:''}`}</p>
           </div>
-          <button type="button" onClick={()=>setActive(null)}>关闭</button>
+          <div className="workbench-detail-actions">
+            {active.mode==='open'&&active.id&&<button ref={historyButton} type="button" aria-expanded={historyOpen} aria-controls="knowledge-history" onClick={()=>{if(historyOpen)closeHistory();else setHistoryOpen(true);}}>{historyOpen?'收起版本历史':'版本历史'}</button>}
+            <button type="button" onClick={()=>{setHistoryOpen(false);setActive(null);}}>关闭</button>
+          </div>
         </header>
         {active.type==='card'&&<KnowledgeCardPanel key={active.nonce} cards={cards} materials={materials} selected={activeCard} viewEvent={cardViewEvent} commandError={cardError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('card')} onCommitted={committed('card')}/>}
         {active.type==='theme'&&<ThemePanel key={active.nonce} themes={themes} materials={materials} cards={cards} selected={activeTheme} viewEvent={themeViewEvent} commandError={themeError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('theme')} onCommitted={committed('theme')}/>}
         {active.type==='frontier'&&<KnowledgePanel key={active.nonce} frontiers={frontiers} selected={activeFrontier} viewEvent={frontierViewEvent} commandError={frontierError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('frontier')} onCommitted={committed('frontier')}/>}
+        {historyOpen&&active.mode==='open'&&active.id&&<KnowledgeHistoryPanel key={`${active.type}:${active.id}`} kind={active.type} id={active.id} currentVersion={activeVersion} onCommand={onCommand} onUndoApplied={undoApplied} onClose={closeHistory}/>}
       </>:<div className="workbench-empty">
         <h2>知识库工作台</h2>
         <p>从左侧选择一条已提交记录，在右侧读取完整版本并编辑、保存或检查来源；也可以新建知识卡片、命题或关注问题。</p>

@@ -50,13 +50,14 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const [editing,setEditing]=useState<{card_id:string;version:number}|null>(null);
   const [latest,setLatest]=useState<KnowledgeCard|null>(null);
   const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
+  const [reason,setReason]=useState('');
   const pending=useRef<Pending|null>(null);
   const archivePending=useRef<{operation_id:string;card_id:string}|null>(null);
   const committed=useRef(onCommitted);
   committed.current=onCommitted;
   const send=(operation_id:string,action:string,extra:object={})=>onCommand({action,schema_version:1,operation_id,...extra});
   const draft=():CardDraft=>({title,content,aliases,recallTerms,sources,relations,questionable});
-  const clearDraft=()=>{setEditing(null);setLatest(null);setTitle('');setContent('');setAliases('');setRecallTerms('');setSources([]);setRelations([]);setQuestionable(false);};
+  const clearDraft=()=>{setEditing(null);setLatest(null);setTitle('');setContent('');setAliases('');setRecallTerms('');setSources([]);setRelations([]);setQuestionable(false);setReason('');};
   const populate=(card:KnowledgeCard)=>{const next=draftFrom(card);setEditing({card_id:card.card_id,version:card.version});setTitle(next.title);setContent(next.content);setAliases(next.aliases);setRecallTerms(next.recallTerms);setSources(next.sources);setRelations(next.relations);setQuestionable(next.questionable);setLatest(null);};
   const load=(card:Pick<CardSummary,'card_id'>)=>{
     const operation_id=crypto.randomUUID();
@@ -70,7 +71,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const save=()=>{
     if(loading||saving||latest)return;
     if(staleDraft){setMessage('当前草稿属于另一条知识卡片；请重新载入本记录后再保存。');return;}
-    const payload={title,content,aliases:lines(aliases),recall_terms:lines(recallTerms),sources,relations,questionable};
+    const payload={title,content,aliases:lines(aliases),recall_terms:lines(recallTerms),sources,relations,questionable,...(reason.trim()?{reason:reason.trim()}:{})};
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,card_id:editing?.card_id};
     setSaving(true);setLatest(null);
@@ -107,6 +108,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     if(work.card_id&&work.card_id!==selected.card_id)return;
     pending.current=null;setSaving(false);setLatest(null);
     setEditing({card_id:selected.card_id,version:selected.version});
+    setReason('');
     setMessage(work.card_id?`已保存为版本 ${selected.version}。`:`已创建为版本 ${selected.version}。`);
     committed.current?.(selected.card_id,selected.version);
   },[viewEvent,selected]);
@@ -188,6 +190,8 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   </select></label>
   <label><input type="checkbox" disabled={loading} checked={questionable} onChange={e=>setQuestionable(e.target.checked)}/> 标为存疑</label>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
+  <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
+  <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
   <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </fieldset></form>}
   {locked&&<p>已归档的知识卡片以只读方式显示；不会创建或覆盖任何记录。</p>}

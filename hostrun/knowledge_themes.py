@@ -31,6 +31,7 @@ from pathlib import Path
 
 from hostrun.agent_service import CommandError
 from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 from hostrun.voyager_materials import MaterialsService
 
@@ -171,6 +172,19 @@ def _sufficiency(evidence):
 class KnowledgeThemeService:
     """Authenticated public CRUD and reads for local Themes."""
 
+    # Evidence and relation arrays stay atomic and conservative: a later edit to
+    # either whole field is an overlap, not a merge.
+    HISTORY = {
+        "kind": "theme",
+        "table": "knowledge_themes",
+        "operations": "knowledge_theme_operations",
+        "events": "knowledge_theme_events",
+        "id_field": "theme_id",
+        "event_type": "knowledge_theme.undo",
+        "editable": (("judgement",), ("conditions",), ("related_cards",),
+                     ("evidence",)),
+    }
+
     def __init__(self, home, *, token, cards=None, materials=None,
                  clock=time.time, on_change=None):
         if not isinstance(token, str) or not token:
@@ -233,6 +247,32 @@ class KnowledgeThemeService:
                             "version": theme["version"], "status": theme["status"]})
         except Exception:
             pass  # A disconnected viewer cannot undo committed work.
+
+    def history_removed(self, db):
+        """Material ids whose pinned snapshots were permanently removed."""
+        return self.materials.removed_references(db)
+
+    def history_project(self, theme, removed):
+        """Project a stored snapshot without reporting removed sources live."""
+        return self._project_sources(theme, removed)
+
+    @staticmethod
+    def history_undoable(record):
+        return record.get("status") == "active"
+
+    def apply_history_undo(self, db, record, fields):
+        """Apply trusted historical editable fields, reusing pinned evidence."""
+        updated = json.loads(json.dumps(record))
+        for path, value in fields.items():
+            set_path(updated, path, value)
+        if ("related_cards",) in fields:
+            existing = {(entry["card_id"], entry["version"]) for entry in record["related_cards"]}
+            introduced = [entry for entry in updated["related_cards"]
+                          if (entry["card_id"], entry["version"]) not in existing]
+            self._relations(db, introduced)
+        updated["evidence_sufficiency"] = _sufficiency(updated["evidence"])
+        updated["known"] = True
+        return updated
 
     @staticmethod
     def _fields(command, *, allow_assigned_id):
@@ -314,6 +354,7 @@ class KnowledgeThemeService:
     def create(self, command, *, token):
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_theme")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "create")
@@ -477,6 +518,7 @@ class KnowledgeThemeService:
     def update(self, command, *, token):
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_theme")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "update")
@@ -520,6 +562,7 @@ class KnowledgeThemeService:
         """Archive a Theme explicitly; the row and its history remain readable."""
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_theme")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "archive")
