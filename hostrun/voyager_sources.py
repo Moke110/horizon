@@ -4,6 +4,7 @@ import tempfile
 from common import file_lock
 import hashlib
 import json
+import re
 import socket
 import threading
 import time
@@ -179,6 +180,10 @@ class EuropePMCProvider(AcademicTransport):
                 published_at=published, discovered_at=int(time.time()), source_type=source_type,
                 peer_review_status='unknown', missing_fields=missing,
             ))
+            if isinstance(item.get('pmcid'), str) and re.fullmatch(r'PMC[0-9]{1,20}', item['pmcid']):
+                rows[-1]['pmcid'] = item['pmcid']
+            if isinstance(item.get('doi'), str) and len(item['doi'].encode()) <= 512:
+                rows[-1]['doi'] = item['doi']
         cursor = payload.get('nextCursorMark')
         if not rows or cursor == query.get('cursor') or len(rows) < min(query['limit'], 100):
             cursor = None
@@ -203,7 +208,7 @@ class ArxivProvider(AcademicTransport):
         root = ET.fromstring(body)
         if root.tag != '{http://www.w3.org/2005/Atom}feed':
             return {'error_code': 'provider_failed'}
-        ns = {'a': 'http://www.w3.org/2005/Atom'}
+        ns = {'a': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
         rows = []
         for entry in root.findall('a:entry', ns):
 
@@ -213,6 +218,9 @@ class ArxivProvider(AcademicTransport):
             if not ident:
                 return {'error_code': 'provider_failed'}
             rows.append(dict(source='arxiv', source_id=ident, title=field('title') or '[missing title]', abstract=field('summary'), url='https://arxiv.org/abs/' + ident, published_at=timestamp(field('published')), discovered_at=int(time.time()), source_type='preprint', peer_review_status='unknown', is_preprint=True, missing_fields=[key for key, value in [('title', field('title')), ('abstract', field('summary')), ('published_at', field('published'))] if not value]))
+            doi = entry.findtext('arxiv:doi', '', ns).strip()
+            if doi and len(doi.encode()) <= 512:
+                rows[-1]['doi'] = doi
         if len(rows) > min(query['limit'], 100):
             return {'error_code': 'provider_failed'}
         count = len(rows)

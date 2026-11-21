@@ -1,13 +1,14 @@
 import React, {useEffect, useState} from 'react';
 
 const sources = [
-  {id: 'openalex', label: 'OpenAlex', help: '使用已验证邮箱的 OpenAlex 账号创建 API Key。每次检索前会核对当日额度。'},
-  {id: 'tavily', label: 'Tavily', help: '使用免费的 Researcher 套餐，关闭 PAYG，并为 API Key 设置有限的 Monthly Limit。'},
+  {id: 'openalex', label: 'OpenAlex', field: 'API Key', help: '使用已验证邮箱的 OpenAlex 账号创建 API Key。每次检索前会核对当日额度。'},
+  {id: 'tavily', label: 'Tavily', field: 'API Key', help: '使用免费的 Researcher 套餐，关闭 PAYG，并为 API Key 设置有限的 Monthly Limit。'},
+  {id: 'unpaywall', label: 'Unpaywall', field: '联系邮箱', help: '可选。Unpaywall 用邮箱识别开放全文查询的调用方。'},
 ] as const;
 
 type Source = typeof sources[number]['id'];
 type SourceState = 'missing' | 'saved' | 'environment';
-type SourceSettings = Record<Source, SourceState> & {tavily_monthly_limit?: number};
+type SourceSettings = Partial<Record<Source, SourceState>> & {tavily_monthly_limit?: number};
 const statusText: Record<SourceState, string> = {
   missing: '未配置',
   saved: '已保存密钥',
@@ -60,7 +61,7 @@ export function VoyagerSourceSettings() {
   return (
     <details>
       <summary>检索来源 API</summary>
-      <p>密钥保存在本机。下次检索时验证账号权限和额度。</p>
+      <p>密钥和联系邮箱保存在本机。使用来源时验证权限和额度。</p>
       {sources.map(source => (
         <form key={source.id} onSubmit={event => {
           event.preventDefault();
@@ -71,14 +72,14 @@ export function VoyagerSourceSettings() {
             form.reset();
           }
         }}>
-          <label>{source.label} API Key
+          <label>{source.label} {source.field}
             <input name="key" type="password" autoComplete="off" maxLength={1024} required disabled={busy || !status} />
           </label>
           <p>{source.help}</p>
-          {status && <p role="status">{statusText[status[source.id]]}</p>}
+          {status && <p role="status">{status[source.id] === 'saved' && source.id === 'unpaywall' ? '已保存邮箱' : statusText[status[source.id] ?? 'missing']}</p>}
           <button disabled={busy || !status}>保存 {source.label}</button>
           {status?.[source.id] === 'saved' &&
-            <button type="button" disabled={busy} onClick={() => save(source.id, null)}>移除已保存的 {source.label} 密钥</button>}
+            <button type="button" disabled={busy} onClick={() => save(source.id, null)}>移除 {source.label} {source.field}</button>}
         </form>
       ))}
       {status?.tavily === 'saved' && (

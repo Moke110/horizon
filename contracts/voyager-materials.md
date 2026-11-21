@@ -65,3 +65,22 @@ hash identifies the rendered HTML in dynamic mode. Browser rendering uses a
 fresh profile, blocks navigation to a different top-level source, and passes
 network fetches through the public HTTPS boundary. The capture worker owns a
 nested Windows Job and uses a capture-scoped temporary directory.
+
+For an academic Voyager candidate, `voyager_fulltext` reserves one acquisition
+from the active segment, then checks source-native documents, OpenAlex OA
+metadata, Unpaywall by DOI when configured, and the public landing page.
+Each attempted stage records its outcome and response status. Unpaywall contact
+details stay in private source settings and are omitted from material records.
+Academic PDFs use the same bounded worker as manual imports. JATS XML uses the
+article body and accepts standard DOCTYPE declarations without fetching DTDs
+or resolving entities. Academic HTML must show evidence of an article body.
+
+An available result records separate content and original digests. A failed
+capture creates a `pending_fulltext` material with its attempt trail and empty
+body. For the same DOI or source work ID, repeated extracted text merges provenance
+without mutating its snapshot. Changed text or a distinct publisher notice
+creates a version. Explicit publisher DOI relationships and arXiv revision
+identifiers are retained, and citation counts can exceed the supplied IDs.
+Both an available and a pending material can be inspected from the Voyager
+receipt. Replaying the same acquisition returns its stored result. An
+interrupted reservation with an unknown remote outcome stays charged.
