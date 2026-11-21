@@ -214,3 +214,5 @@ HTML or XML. Horizon checks source-native documents, open-access DOI locators,
 and the public landing page. To enable Unpaywall, save a contact email under
 **范围检索 → 检索来源 API**. **查看资料与获取记录** opens the saved snapshot and
 its provenance or shows why the material is still waiting for full text.
+
+For an academic item awaiting full text, open its source record in **Materials** to supplement it with a readable PDF, abandon it, or explicitly authorize abstract-only analysis for its original task. The abstract carries a full-text limitation. A late supplement from a scheduled task waits in the same plan's queue. It neither changes the covered interval nor resumes a paused plan.

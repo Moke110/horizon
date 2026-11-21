@@ -17,8 +17,8 @@ let win: BrowserWindow; let ready=false; const pending:unknown[]=[];
 const send=(event:unknown)=>{if(ready)win.webContents.send('event',event);else pending.push(event);};
 createInterface({input:bridge}).on('line',line=>{try {const e=JSON.parse(line); if(e.kind==='private_pdf'){selectOriginal(e.data);return;} if(e.kind==='exit_ready'){quitNow();}else if(e.kind==='activate'){win?.restore();win?.show();win?.focus();}else send(e);}catch{}}).on('close',quitNow);
 ipcMain.on('command',async(event,value)=>{
- if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register')return;
- if(value?.action==='choose_pdf'){
+ if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
+ if(value?.action==='choose_pdf'||value?.action==='choose_pending_pdf'){
   const choice=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'PDF',extensions:['pdf']}]});
   if(choice.canceled)return;
   try {
@@ -30,7 +30,10 @@ ipcMain.on('command',async(event,value)=>{
     let read=0;
     while(read<data.length){const result=await file.read(data,read,data.length-read,read);if(!result.bytesRead)throw Error();read+=result.bytesRead;}
     const title=basename(choice.filePaths[0]);
-    value={action:'materials_pdf_register',operation_id:randomUUID(),schema_version:1,title,source_label:title,pdf_base64:data.toString('base64')};
+    value=value.action==='choose_pending_pdf'
+    ? {action:'materials_pending_resolve',decision:'supplement',operation_id:randomUUID(),schema_version:1,
+       material_id:value.material_id,expected_version:value.expected_version,pdf_base64:data.toString('base64')}
+    : {action:'materials_pdf_register',operation_id:randomUUID(),schema_version:1,title,source_label:title,pdf_base64:data.toString('base64')};
    }finally{await file.close();}
   }catch{send({kind:'notice',data:'请选择可读取且不超过 10 MiB 的 PDF 文件。'});return;}
  }

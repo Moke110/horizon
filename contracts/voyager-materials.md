@@ -84,3 +84,11 @@ identifiers are retained, and citation counts can exceed the supplied IDs.
 Both an available and a pending material can be inspected from the Voyager
 receipt. Replaying the same acquisition returns its stored result. An
 interrupted reservation with an unknown remote outcome stays charged.
+
+### 待全文资料
+
+资料页保留原始来源和失败记录。探索者可补充可读取的 PDF 或放弃该资料。补充登记同一资料实体的新快照版本，旧快照保持可读。放弃保留出处并停止对同一检索候选的再次全文获取。
+
+摘要授权需显式确认并绑定原检索、资料和任务。读回时只向该任务呈现授权摘要及「未核对全文」限制。待全文及授权摘要均不构成正式报道的正文证据。
+
+正式计划原任务的迟到全文进入该计划的持久串行队列。计划仍需处于启用状态，且没有当前计划执行或未完成的原任务对话；上传不会恢复暂停的计划或任务。续接在原任务新建独立对话轮次，不改变计划覆盖进度，也不自动重发报道。显式临时检索缺少持久计划绑定时，补充只登记资料。

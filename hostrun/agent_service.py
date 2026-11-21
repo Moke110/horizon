@@ -298,18 +298,7 @@ class AgentService:
                 if previous[0] != request: raise CommandError('operation_conflict','operation_id conflicts')
                 return json.loads(previous[1])
             if action == 'begin':
-                text = command.get('text')
-                if not isinstance(text,str) or not text.strip(): raise CommandError('invalid_command','text is required')
-                row = db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(command.get('task_id'),)).fetchone()
-                if not row: raise CommandError('not_found','Unknown task')
-                task = json.loads(row[0])
-                if type(command.get('expected_version')) is not int or command['expected_version'] != task['version']: raise CommandError('version_conflict','Task version changed')
-                active = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(task['task_id'],))]
-                if any(t['status'] not in ('completed','cancelled') for t in active): raise CommandError('unfinished_turn','Continue or abandon the unfinished turn before sending another message')
-                if not task['messages']: task['title'] = text[:24]
-                task['messages'].append({'role':'You','text':text}); task['version'] += 1
-                turn = {'schema_version':1,'turn_id':operation,'operation_id':operation,'entity_id':operation,'task_id':task['task_id'],'session_id':task['session_id'],'input_version':task['version'],'version':1,'status':'running','text':text,'result':'','error':'','attempts':[]}
-                db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?',(json.dumps(task),task['task_id']))
+                turn = self._begin_turn(db, command, operation)
             else:
                 row = db.execute('SELECT result FROM agent_turns WHERE turn_id=?',(command.get('turn_id'),)).fetchone()
                 if not row: raise CommandError('not_found','Unknown turn')
@@ -357,12 +346,32 @@ class AgentService:
                         task = json.loads(db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(turn['task_id'],)).fetchone()[0])
                         task['messages'].append({'role':'Horizon','text':result}); task['version'] += 1
                         db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?',(json.dumps(task),task['task_id']))
-            turn['operation_id'] = operation
-            turn['entity_id'] = turn['turn_id']
-            encoded = json.dumps(turn)
-            db.execute('INSERT INTO agent_turns VALUES(?,?,?) ON CONFLICT(turn_id) DO UPDATE SET result=excluded.result',(turn['turn_id'],turn['task_id'],encoded))
-            db.execute('INSERT INTO agent_operations VALUES(?,?,?)',(operation,request,encoded))
-            db.execute('INSERT INTO agent_events(operation_id,event) VALUES(?,?)',(operation,json.dumps({'schema_version':1,'type':'agent.turn_'+action,'task_id':turn['task_id'],'turn_id':turn['turn_id'],'operation_id':operation})))
+            self._persist_turn(db, turn, operation, request, action=action)
             self._transaction_observer('before_commit')
         self._transaction_observer('after_commit')
         return turn
+
+    @staticmethod
+    def _begin_turn(db, command, operation):
+        text = command.get('text')
+        if not isinstance(text,str) or not text.strip(): raise CommandError('invalid_command','text is required')
+        row = db.execute('SELECT result FROM agent_tasks WHERE task_id=?',(command.get('task_id'),)).fetchone()
+        if not row: raise CommandError('not_found','Unknown task')
+        task = json.loads(row[0])
+        if type(command.get('expected_version')) is not int or command['expected_version'] != task['version']: raise CommandError('version_conflict','Task version changed')
+        active = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(task['task_id'],))]
+        if any(t['status'] not in ('completed','cancelled') for t in active): raise CommandError('unfinished_turn','Continue or abandon the unfinished turn before sending another message')
+        if not task['messages']: task['title'] = text[:24]
+        task['messages'].append({'role':'You','text':text}); task['version'] += 1
+        turn = {'schema_version':1,'turn_id':operation,'operation_id':operation,'entity_id':operation,'task_id':task['task_id'],'session_id':task['session_id'],'input_version':task['version'],'version':1,'status':'running','text':text,'result':'','error':'','attempts':[]}
+        db.execute('UPDATE agent_tasks SET result=? WHERE task_id=?',(json.dumps(task),task['task_id']))
+        return turn
+
+    @staticmethod
+    def _persist_turn(db, turn, operation, request, *, action):
+        turn['operation_id'] = operation
+        turn['entity_id'] = turn['turn_id']
+        encoded = json.dumps(turn)
+        db.execute('INSERT INTO agent_turns VALUES(?,?,?) ON CONFLICT(turn_id) DO UPDATE SET result=excluded.result',(turn['turn_id'],turn['task_id'],encoded))
+        db.execute('INSERT INTO agent_operations VALUES(?,?,?)',(operation,request,encoded))
+        db.execute('INSERT INTO agent_events(operation_id,event) VALUES(?,?)',(operation,json.dumps({'schema_version':1,'type':'agent.turn_'+action,'task_id':turn['task_id'],'turn_id':turn['turn_id'],'operation_id':operation})))

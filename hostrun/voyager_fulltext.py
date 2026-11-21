@@ -233,6 +233,9 @@ class FulltextService:
         receipt_id = 'academic:' + hashlib.sha256(operation.encode()).hexdigest()
         already_reserved = any(work['work_id'] == operation for work in
             self.voyager.get(request_id, token=token).get('fulltext_work', []))
+        if not already_reserved and self.materials.academic_disposition(
+                request_id, command.get('candidate_source'), command.get('candidate_id'), token=token):
+            raise CommandError('invalid_transition', '此资料已放弃或已有补充全文')
         reservation = self.voyager.reserve_fulltext(command, token=token)
         current = self.voyager.get(request_id, token=token)
         item = next((work for work in current.get('fulltext_work', []) if work['work_id'] == operation), None)

@@ -58,14 +58,21 @@ def tick(service, *, now, token, occupied=0):
     claimed=[]
     with service._connect() as db:
         initialize(db);db.execute('BEGIN IMMEDIATE')
+        from hostrun.voyager_late_fulltext import initialize as initialize_followups
+        initialize_followups(db)
+        late_rows = db.execute("""SELECT schedule_id, operation_id FROM voyager_late_fulltext
+            WHERE state='claimed'""").fetchall()
         rows=db.execute('SELECT schedule_id,result FROM agent_schedules ORDER BY rowid').fetchall()
         settings=db.execute('SELECT result FROM agent_scheduler_settings WHERE id=1').fetchone()
         limit=json.loads(settings[0])['main'] if settings else 2
         turns={json.loads(r[0])['turn_id']:json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns')}
         active=occupied+sum(bool((run:=json.loads(encoded)['active_run'])) and turns.get(run.get('turn_id'),{'status':'running'})['status']=='running' for _,encoded in rows)
+        late_active = {sid: turns.get(oid, {}).get('status') for sid, oid in late_rows
+                       if turns.get(oid, {}).get('status') not in (None,'completed','cancelled')}
+        active += sum(status == 'running' for status in late_active.values())
         for identity,encoded in rows:
             plan=json.loads(encoded)
-            if plan['status']!='active' or now<plan['next_at']:continue
+            if plan['status']!='active' or identity in late_active or now<plan['next_at']:continue
             until=plan['next_at']+((now-plan['next_at'])//plan['interval_seconds'])*plan['interval_seconds']
             plan['pending_until']=max(plan.get('pending_until',plan['covered_until']),until)
             if plan['active_run'] is None and active>=limit: continue

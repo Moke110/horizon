@@ -46,8 +46,11 @@ def material_command(materials, command, *, token):
         decision['action'] = command.get('decision')
         value = materials.resolve_pdf(decision, token=token)
         return materials.get_package(value['material_id'], token=token)
+    if command.get('action') == 'materials_pending_resolve':
+        from hostrun.voyager_pending import resolve
+        return materials.get_package(resolve(materials, command, token=token), token=token, task_id=command.get('task_id'))
     if command.get('action') == 'materials_open':
-        return materials.get_package(command.get('material_id'),token=token)
+        return materials.get_package(command.get('material_id'), token=token, task_id=command.get('task_id'))
     raise CommandError('invalid_command','Unknown materials action')
 
 
@@ -139,7 +142,7 @@ def serve(resolved):
     app.version_provider = query_versions
     from hostrun.schedule_runtime import ScheduleRuntime
     from hostrun import agent_scheduling
-    scheduler = ScheduleRuntime(service, token, resolved, app.version_provider)
+    scheduler = ScheduleRuntime(service, token, resolved, app.version_provider, materials=materials)
     chats = service.list_tasks(token=token)
     current, response = 0, ''
     lock = threading.Lock()
@@ -313,7 +316,7 @@ def serve(resolved):
                             fulltext_jobs[cmd['request_id']].set()
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
-                    elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve'):
+                    elif action in ('materials_register','materials_open','materials_pdf_register','materials_pdf_resolve','materials_pending_resolve'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         package = material_command(materials,cmd,token=token)
                         if package.get('pdf'):

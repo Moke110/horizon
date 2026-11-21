@@ -168,6 +168,11 @@ class VoyagerService:
                     for phase in ('foundation','recent') if window['mode']=='initial' else ('incremental',):
                         queries.append({'query_id':str(uuid.uuid5(uuid.UUID(identity),str(len(queries)))),'source':source,'term':term,'phase':phase,'must_include':scope['must_include'],'exclude':scope['exclude'],'status':'pending','cursor':None,'attempts':[]})
             value={'schema_version':1,'request_id':identity,'scope':scope,'window':window,'queries':queries,'limits':limits,'version':1,'status':'planned','used':{k:0 for k in DEFAULT_LIMITS},'candidates':[],'successful_cursors':{},'gaps':[]}
+            task_id = command.get('task_id')
+            if task_id is not None:
+                if not isinstance(task_id, str) or not db.execute('SELECT 1 FROM agent_tasks WHERE task_id=?', (task_id,)).fetchone():
+                    raise CommandError('not_found', 'Unknown Voyager task')
+                value['task_id'] = task_id
             return self._save(db,value,command,encoded,'voyager.request_created')
 
     def _change(self,command,action,mutate,*,token):

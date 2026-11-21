@@ -4,15 +4,22 @@ import threading
 import time
 from hostrun import agent_scheduling as schedules
 from hostrun.desktop_worker import DesktopWorker
+from hostrun import voyager_late_fulltext
 
 class ScheduleRuntime:
-    def __init__(self, service, token, resolved, version_provider):
+    def __init__(self, service, token, resolved, version_provider, *, materials=None):
         self.service,self.token,self.resolved,self.version_provider=service,token,resolved,version_provider
+        self.materials = materials
         self.workers={}
         self.stopped=False
 
     def task_ids(self):
-        return {p['active_run'].get('task_id') for p in schedules.list_schedules(self.service,token=self.token) if p['active_run']}
+        scheduled = {p['active_run'].get('task_id') for p in schedules.list_schedules(self.service,token=self.token) if p['active_run']}
+        if self.materials is None:
+            return scheduled
+        with self.service._connect() as db:
+            voyager_late_fulltext.initialize(db)
+            return scheduled | {row[0] for row in db.execute("SELECT task_id FROM voyager_late_fulltext WHERE state='claimed'")}
 
     def step(self, *, now=None, foreground_busy=False):
         changed=False
@@ -49,13 +56,23 @@ class ScheduleRuntime:
             if turn is None and plan['status']!='active':continue
             if turn is None:turn=schedules.bind_run(self.service,run,token=self.token)
             if turn['status']!='running' or len(self.workers)+int(foreground_busy)>=limit:continue
-            worker=DesktopWorker();worker.home=self.service.home;worker.resolved=self.resolved
-            worker.events=queue.Queue();worker.answers=queue.Queue();worker.closed=False;worker.cancelled=threading.Event();worker.process=None
-            worker.service=self.service;worker.service_token=self.token;worker.version_provider=self.version_provider
-            worker.task_id=turn['task_id'];worker.input_version=turn['input_version'];worker.turn=turn
-            thread=threading.Thread(target=worker.run_agent,args=(turn['text'],turn['session_id']),daemon=True)
-            self.workers[run['run_id']]=(worker,thread);thread.start();changed=True
+            self._start_worker(run['run_id'], turn)
+            changed = True
+        if self.materials is not None:
+            for identity, turn in voyager_late_fulltext.claim(
+                    self.service, self.materials, token=self.token, occupied=int(foreground_busy)):
+                if identity not in self.workers and len(self.workers)+int(foreground_busy)<limit:
+                    self._start_worker(identity, turn)
+                    changed = True
         return changed
+
+    def _start_worker(self, identity, turn):
+        worker=DesktopWorker();worker.home=self.service.home;worker.resolved=self.resolved
+        worker.events=queue.Queue();worker.answers=queue.Queue();worker.closed=False;worker.cancelled=threading.Event();worker.process=None
+        worker.service=self.service;worker.service_token=self.token;worker.version_provider=self.version_provider
+        worker.task_id=turn['task_id'];worker.input_version=turn['input_version'];worker.turn=turn
+        thread=threading.Thread(target=worker.run_agent,args=(turn['text'],turn['session_id']),daemon=True)
+        self.workers[identity]=(worker,thread);thread.start()
 
     def stop(self):
         self.stopped=True

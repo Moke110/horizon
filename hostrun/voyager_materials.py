@@ -268,6 +268,19 @@ class MaterialsService:
         text, anchors = build_text_and_anchors(pages)
         return dict(text=text, pdf=dict(status=status, reason=reason, page_count=len(pages), anchors=anchors, ocr=False))
 
+    def academic_disposition(self, request_id, source, source_id, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            row = db.execute('''SELECT json_extract(result,'$.academic.status')
+                FROM voyager_materials
+                WHERE json_extract(result,'$.academic.status') IN ('abandoned','supplemented')
+                  AND EXISTS (SELECT 1 FROM json_each(result,'$.academic.provenance') AS origin
+                    WHERE json_extract(origin.value,'$.request_id')=?
+                      AND json_extract(origin.value,'$.source')=?
+                      AND json_extract(origin.value,'$.source_id')=?)
+                LIMIT 1''', (request_id, source, source_id)).fetchone()
+        return row[0] if row else None
+
     def academic_receipt(self, operation, *, token):
         self._authorize(token)
         with self._connect() as db:
@@ -313,6 +326,10 @@ class MaterialsService:
                 if previous[0] != request:
                     raise CommandError('operation_conflict', 'operation_id conflicts')
                 return json.loads(previous[1])
+            request_row = db.execute('SELECT result FROM voyager_requests WHERE request_id=?', (request_id,)).fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='voyager_requests'").fetchone() else None
+            task_id = json.loads(request_row[0]).get('task_id') if request_row else None
+            if task_id:
+                provenance['task_id'] = task_id
             versions = db.execute("""SELECT result FROM voyager_materials
                 WHERE json_extract(result,'$.academic.identity')=? ORDER BY rowid DESC""", (identity,)).fetchall()
             existing = [json.loads(row[0]) for row in versions]
@@ -409,9 +426,14 @@ class MaterialsService:
         self._authorize(token)
         with self._connect() as db:return [json.loads(r[0]) for r in db.execute('SELECT result FROM voyager_materials ORDER BY rowid DESC')]
 
-    def get_package(self,material_id,*,token):
+    def get_package(self, material_id, *, token, task_id=None):
         self._authorize(token)
         with self._connect() as db:row=db.execute('SELECT result FROM voyager_materials WHERE material_id=?',(material_id,)).fetchone()
         if row is None:raise CommandError('not_found','Unknown material')
-        result=json.loads(row[0]);result['original_text']=self._read_blob(result['snapshot']['content_hash']).decode('utf8')
+        result = json.loads(row[0])
+        if academic := result.get('academic'):
+            academic['abstract_authorizations'] = [
+                record for record in academic.get('abstract_authorizations', [])
+                if task_id is not None and record['task_id'] == task_id]
+        result['original_text'] = self._read_blob(result['snapshot']['content_hash']).decode('utf8')
         return result
