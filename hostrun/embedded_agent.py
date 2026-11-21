@@ -43,10 +43,22 @@ def save_source_key(home, source, key):
         _save_model_config(home, data, expected=snapshot)
 
 
-def _model_snapshot(home):
+def _read_legacy_credentials(path, *, repair=False):
+    try:
+        data = read_json(path) or {}
+        if not isinstance(data, dict):
+            raise ValueError("model configuration must be an object")
+        return data
+    except ValueError:
+        if repair:
+            return {}
+        raise
+
+
+def _model_snapshot(home, *, repair_legacy=False):
     from hostrun.cleanup import load_managed_model_config
     managed, data, identity = load_managed_model_config(home)
-    data = (data if managed else read_json(config_path(home))) or {}
+    data = (data or {}) if managed else _read_legacy_credentials(config_path(home), repair=repair_legacy)
     if not isinstance(data, dict):
         raise ValueError("model configuration must be an object")
     return data, identity
@@ -58,11 +70,11 @@ def configure(home: Path, *, provider: str, model: str, api_key: str, base_url: 
         raise HostRunError("模型服务、模型名称和 API Key 均不能为空")
     if base_url and not base_url.startswith(("https://", "http://localhost:", "http://127.0.0.1:")):
         raise HostRunError("模型地址必须使用 HTTPS（本机服务可以使用 HTTP）")
-    snapshot = _model_snapshot(home)
+    snapshot = _model_snapshot(home, repair_legacy=True)
     data = dict(snapshot[0])
     data.pop('models', None)
     data.update(provider=provider, model=model, apiKey=api_key, baseUrl=base_url.strip())
-    _save_model_config(home, data, expected=snapshot)
+    _save_model_config(home, data, expected=snapshot, repair_legacy=True)
     return {"provider": provider, "model": model, "configured": True}
 
 
@@ -112,7 +124,7 @@ def discover_and_configure(home, *, provider, api_key, base_url='', expected=Non
     _save_model_config(home, data, expected=snapshot)
     return models
 
-def _save_model_config(home, data, *, expected=None):
+def _save_model_config(home, data, *, expected=None, repair_legacy=False):
     from hostrun.cleanup import save_managed_model_config
     if save_managed_model_config(home, data, expected=expected):
         return
@@ -120,7 +132,7 @@ def _save_model_config(home, data, *, expected=None):
     path = config_path(home)
     ensure_dir(path.parent)
     with file_lock(path.with_suffix('.lock')):
-        if expected is not None and (read_json(path) or {}) != expected[0]:
+        if expected is not None and _read_legacy_credentials(path, repair=repair_legacy) != expected[0]:
             raise HostRunError('凭据配置已更改，请重试')
         fd, name = tempfile.mkstemp(dir=path.parent, prefix='model-', suffix='.tmp')
         try:
