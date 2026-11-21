@@ -280,3 +280,25 @@ ran one Search basic request in 2.95 seconds, recorded one credit and its
 receipt, and reopened five metadata-only results. The candidate cap stopped
 the retrieval segment with the partial result retained. See
 [V4](https://github.com/Moke110/horizon/issues/195).
+
+## Voyager selection and full text — 2026-11-21
+
+Windows x64 candidate `0.1.0-voyager.8` from `4208ba0` installed and
+verified all 20,600 files. ZIP SHA-256
+`1876f151805bc11e230dda93ac8e38c072d785d110afd45bfb6b2cd0ae37f33c`.
+Desktop typecheck and build passed. The related Python suite ran 100 passing
+tests with two skips. In the installed runtime, a real Crossref request
+retained eight new candidates with scope terms and source receipts, preserved
+the remaining search gap at the query limit, and reopened the same view.
+Repeated discovery, scope linkage and repost treatment are covered by
+controlled tests. See [V6](https://github.com/Moke110/horizon/issues/197).
+
+Using controlled discovery metadata and real network bodies, the installed
+full-text service captured an arXiv PDF, NCBI JATS XML and PLOS HTML. It
+reopened each snapshot and retained the XML and HTML as separate versions of
+the same DOI. A real HTTP 404 reopened as awaiting full text with no original
+body. A source-environment run also recovered a usable PDF from an OpenAlex
+open location after a publisher XML redirect failed. The installed Unpaywall
+settings passed save, reopen and removal without returning the contact.
+Real Unpaywall DOI lookup remains pending. See
+[V10](https://github.com/Moke110/horizon/issues/201).
