@@ -33,15 +33,19 @@ A Knowledge Card or Theme the Explorer kept during review but excluded from retr
 _Avoid_: draft, pending card, disabled card
 
 **Theme（命题）**:
-A claim across sources synthesized from evidence and related Knowledge Cards.
+A judgment with conditions for when it applies, optional related Knowledge Cards and directional evidence.
 _Avoid_: finding, summary, note
 
 **Evidence（证据）**:
-One directional entry under a Theme, supported by one or more reports.
+An entry that supports or opposes a Theme, with a reason and a source citation.
 _Avoid_: citation, quote, source
 
+**Source citation（来源引用）**:
+A reference to an immutable material snapshot with an excerpt and the page or paragraph that can be opened.
+_Avoid_: Report
+
 **Report（报道）**:
-A traceable citation of a source in an explanation. The existing paper adapter identifies it by paper, push, page and quote.
+A personalized explanation produced for the Explorer. Legacy paper records used report fields to store source references.
 _Avoid_: paper, papers table, excerpt
 
 **Review（综述）**:

@@ -16,6 +16,7 @@ from hostrun.voyager_materials import MaterialsService
 from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from pathlib import Path
@@ -106,6 +107,36 @@ def card_command(cards, command, *, token):
     return "card_view", value
 
 
+def theme_command(themes, command, *, token):
+    """Route desktop Theme commands through the public knowledge service."""
+    action = command.get("action")
+    if action == "theme_list":
+        return "theme_list", themes.list(token=token)
+    if action == "theme_query":
+        return "theme_query", themes.query(
+            token=token, theme_ids=command.get("theme_ids"),
+            include_archived=command.get("include_archived", False))
+    if action == "theme_open":
+        theme = themes.view(command.get("theme_id"), token=token)
+        if isinstance(command.get("operation_id"), str):
+            theme["read_operation_id"] = command["operation_id"]
+        return "theme_view", theme
+    if action == "theme_source":
+        source = themes.open_evidence(command.get("theme_id"), command.get("evidence_id"),
+                                      expected_version=command.get("expected_version"), token=token)
+        if isinstance(command.get("operation_id"), str):
+            source["operation_id"] = command["operation_id"]
+        return "theme_source", source
+    methods = {"theme_create": themes.create,
+               "theme_update": themes.update,
+               "theme_archive": themes.archive}
+    if action not in methods:
+        raise CommandError("invalid_command", "Unknown Theme action")
+    value = methods[action]({k: v for k, v in command.items() if k != "action"},
+                            token=token)
+    return "theme_view", value
+
+
 def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
     """Route desktop scope commands through Voyager's authenticated public seam."""
     action=command.get('action')
@@ -183,6 +214,7 @@ def serve(resolved):
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
+    knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=knowledge_cards,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
     from hostrun.voyager_fulltext import FulltextService
     fulltext = FulltextService(voyager, materials)
     voyager_current = None
@@ -233,7 +265,7 @@ def serve(resolved):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token),'frontiers':frontier.list(token=token),'cards':knowledge_cards.list(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':knowledge_cards.list(token=token),'themes':knowledge_themes.list(token=token),
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -379,6 +411,11 @@ def serve(resolved):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=card_command(knowledge_cards,cmd,token=token)
                         emit(kind,data)
+                    elif action in ('theme_create','theme_update','theme_archive',
+                                    'theme_open','theme_list','theme_query','theme_source'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=theme_command(knowledge_themes,cmd,token=token)
+                        emit(kind,data)
                     elif action in ('materials_archive_list','materials_delete_impact','materials_delete','materials_collect_orphans'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         result = material_command(materials, cmd, token=token)
@@ -502,6 +539,10 @@ def serve(resolved):
                     state()
                 continue
             if kind == 'card_changed':
+                with dispatch_lock:
+                    state()
+                continue
+            if kind == 'theme_changed':
                 with dispatch_lock:
                     state()
                 continue
