@@ -23,8 +23,13 @@ def load_model_config(home):
     return {key: value for key, value in data.items() if key != 'voyagerKeys'}
 
 
-def load_source_keys(home):
-    return _model_snapshot(home)[0].get('voyagerKeys', {})
+def load_source_configuration(home):
+    keys = dict(_model_snapshot(home)[0].get('voyagerKeys', {}))
+    tavily = keys.get('tavily')
+    if isinstance(tavily, dict):
+        keys['tavily'] = tavily['key']
+        return keys, tavily['monthlyLimit']
+    return keys, None
 
 
 def save_source_key(home, source, key):
@@ -34,13 +39,30 @@ def save_source_key(home, source, key):
     if key is None:
         source_keys.pop(source, None)
     else:
-        source_keys[source] = key
+        previous = source_keys.get(source)
+        if not isinstance(previous, dict) or key != previous.get('key'):
+            source_keys[source] = key
     if source_keys:
         data['voyagerKeys'] = source_keys
     else:
         data.pop('voyagerKeys', None)
     if data != snapshot[0]:
         _save_model_config(home, data, expected=snapshot)
+
+
+def save_tavily_budget(home, monthly_limit):
+    snapshot = _model_snapshot(home)
+    data = dict(snapshot[0])
+    keys = dict(data.get('voyagerKeys', {}))
+    current = keys.get('tavily')
+    key = current['key'] if isinstance(current, dict) else current
+    if not key:
+        return False
+    keys['tavily'] = key if monthly_limit is None else {'key': key, 'monthlyLimit': monthly_limit}
+    if keys != data['voyagerKeys']:
+        data['voyagerKeys'] = keys
+        _save_model_config(home, data, expected=snapshot)
+    return True
 
 
 def _read_legacy_credentials(path, *, repair=False):

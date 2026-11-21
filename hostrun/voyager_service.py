@@ -12,7 +12,7 @@ import time
 import uuid
 
 from hostrun.agent_service import CommandError
-from hostrun.embedded_agent import load_source_keys, save_source_key
+from hostrun.embedded_agent import load_source_configuration, save_source_key, save_tavily_budget
 from hostrun.managed_database import database_connection
 from hostrun.voyager_sources import valid_candidate_timestamps
 from common import file_lock
@@ -51,17 +51,20 @@ class VoyagerService:
             from hostrun.voyager_tavily import TavilyProvider
             providers['crossref'] = CrossrefProvider()
             self._keyed_sources = {
-                'tavily': lambda key: TavilyProvider(self.home, key=key),
-                'openalex': lambda key: OpenAlexProvider(key=key),
+                'tavily': lambda key, monthly_limit: TavilyProvider(self.home, key=key, monthly_limit=monthly_limit),
+                'openalex': lambda key, _: OpenAlexProvider(key=key),
             }
         self.providers=dict(providers);self.clock=clock;self.on_change=on_change or (lambda event:None)
         with self._connect() as db:self.initialize_database(db)
 
     def source_settings(self, *, token):
         self._authorize(token)
-        saved = load_source_keys(self.home)
-        return {source: 'saved' if saved.get(source) else 'environment' if os.environ.get(env) else 'missing'
-                for source, env in SOURCE_KEY_ENV.items()}
+        saved, monthly_limit = load_source_configuration(self.home)
+        settings = {source: 'saved' if saved.get(source) else 'environment' if os.environ.get(env) else 'missing'
+                    for source, env in SOURCE_KEY_ENV.items()}
+        if monthly_limit is not None:
+            settings['tavily_monthly_limit'] = monthly_limit
+        return settings
 
     def save_source_setting(self, source, key, *, token):
         self._authorize(token)
@@ -72,6 +75,16 @@ class VoyagerService:
                 raise CommandError('invalid_key', '请输入有效的 API Key')
             key = key.strip()
         save_source_key(self.home, source, key)
+        return self.source_settings(token=token)
+
+    def save_tavily_budget_setting(self, paygo_disabled, monthly_limit, *, token):
+        self._authorize(token)
+        enabled = paygo_disabled is True and type(monthly_limit) is int and 0 < monthly_limit <= 2**53 - 1
+        cleared = paygo_disabled is False and monthly_limit is None
+        if not (enabled or cleared):
+            raise CommandError('invalid_budget', '请确认已关闭按量付费，并填写正整数月度上限')
+        if not save_tavily_budget(self.home, monthly_limit):
+            raise CommandError('unconfigured', '请先在 App 中保存 Tavily API Key')
         return self.source_settings(token=token)
 
     def _notify(self,value):
@@ -370,8 +383,9 @@ class VoyagerService:
             try:
                 if keyed_provider:
                     source = query['source']
-                    key = load_source_keys(self.home).get(source) or os.environ.get(SOURCE_KEY_ENV[source], '')
-                    provider = keyed_provider(key)
+                    keys, monthly_limit = load_source_configuration(self.home)
+                    key = keys.get(source) or os.environ.get(SOURCE_KEY_ENV[source], '')
+                    provider = keyed_provider(key, monthly_limit)
                 page = provider.search(lease['actual_query'])
             except Exception:page={'error_code':'provider_failed'}
             try:value=self.record({'schema_version':1,'operation_id':str(uuid.uuid4()),'request_id':value['request_id'],'expected_version':value['version'],'reservation_id':lease['reservation_id'],'page':page},token=token)
