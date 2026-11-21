@@ -175,6 +175,8 @@ In **Materials**, choose **导入 PDF** to import a local PDF up to 10 MiB. Sele
 
 In **Materials**, enter a public HTTPS URL and select **获取网页正文**. The saved material shows the source link, acquisition time and numbered paragraphs from the saved snapshot. You can reopen it offline. An access failure keeps the link and reason available for review.
 
+Use **归档资料** to move a material into **已归档资料** while retaining its snapshots and citations. Before permanent deletion, review the references and retrievals listed under **查看永久删除影响**, then confirm. **回收无引用快照** reclaims blobs that are no longer used by any surviving version or citation.
+
 For a page that renders its public article with JavaScript, select **使用浏览器渲染公开动态页** before capture. Voyager candidates also have a browser capture action. Dynamic capture uses the Chromium bundled in the Windows package.
 
 ### Desktop development

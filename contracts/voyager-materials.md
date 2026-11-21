@@ -38,8 +38,8 @@ business row can commit before that unlink and digest verification complete.
 and returns original_text plus distinct summary (initially null). GUI renders
 original text literally, separately from generated summaries. Material records
 have no session/task foreign key: conversation lifecycle does not own originals.
-This ticket adds no conversation-delete API, generated summarizer, web ingestion
-or destructive material collection. Missing/corrupt originals are reported, not
+Material records and citation identities do not cascade with a conversation or
+Frontier deletion. Missing/corrupt originals are reported, not
 regenerated from summaries. No public command mutates a published snapshot.
 
 Desktop PDF import uses the native file picker and accepts at most 10 MiB.
@@ -84,3 +84,27 @@ identifiers are retained, and citation counts can exceed the supplied IDs.
 Both an available and a pending material can be inspected from the Voyager
 receipt. Replaying the same acquisition returns its stored result. An
 interrupted reservation with an unknown remote outcome stays charged.
+
+## Archive, citations and snapshot reclamation
+
+`archive_material(material_id)` removes the record from active lists. The
+archived list is returned by `list_summaries(archived=True)` and
+`list_materials(archived=True)`. Archived packages and citation text remain
+readable. `register_reference(material_id, owner_id, content_hash)` verifies the
+expected current snapshot and binds an immutable report citation owner to that
+version. `resolve_reference(material_id, owner_id)` reads the verified referenced
+text and returns a stable removed marker after permanent deletion. Both use the
+authenticated service seam.
+
+Permanent deletion requires an archived material and the exact
+`deletion_impact` confirmation, which binds its current snapshot, affected
+citation owners and associated retrieval IDs. Changes invalidate that
+confirmation. Deletion preserves the material ID and citation tombstones while
+discarding material data and its replay payloads.
+
+`collect_orphan_snapshots` removes only validated content-addressed text or
+original blobs absent from live materials, their version receipts, and live
+citation bindings. Publishers and collection share a per-home cross-process
+lock across blob publication and SQLite commit. Managed storage verifies each
+file against its enrolled identity before collection. The service leaves
+unrecognized or damaged entries untouched.
