@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS voyager_material_references(
 CREATE TABLE IF NOT EXISTS voyager_removed_materials(
     material_id TEXT PRIMARY KEY, confirmation TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS voyager_removed_academic_versions(
+    identity TEXT PRIMARY KEY, entity_id TEXT NOT NULL, version INTEGER NOT NULL
+);
 """
 _BLOB_NAME = re.compile(r'[0-9a-f]{64}\.txt')
 
@@ -154,6 +157,12 @@ class MaterialLifecycle:
             if not record.get('archived') or not hmac.compare_digest(confirmation, _impact(db, record)['confirmation']):
                 raise CommandError('confirmation_required', '删除影响已变更，请重新核对')
             db.execute('INSERT INTO voyager_removed_materials VALUES(?,?)', (material_id, confirmation))
+            academic_identity = record.get('academic', {}).get('identity')
+            if academic_identity:
+                db.execute('INSERT INTO voyager_removed_academic_versions VALUES(?,?,?) '
+                           'ON CONFLICT(identity) DO UPDATE SET version=excluded.version '
+                           'WHERE excluded.version>voyager_removed_academic_versions.version',
+                           (academic_identity, record['entity_id'], record['version']))
             db.execute("UPDATE voyager_material_operations SET request='removed', result=? "
                        "WHERE json_extract(result,'$.material_id')=?", (json.dumps({'material_id': material_id,
                            'academic': {'status': 'removed'}}), material_id))

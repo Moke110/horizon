@@ -336,13 +336,18 @@ class MaterialsService(MaterialLifecycle):
                 kind = capture['kind'] if capture else 'missing'
                 extraction = {'xml': 'jats_body.v1', 'pdf': 'pypdf.7.1.1', 'missing': 'unavailable.v1'}
                 algorithm = extractor_version() if kind == 'html' else extraction[kind]
+                removed = db.execute('SELECT entity_id, version FROM voyager_removed_academic_versions WHERE identity=?',
+                                     (identity,)).fetchone()
+                entity_id = existing[0]['entity_id'] if existing else removed[0] if removed else material_id
+                current_version = max((item['version'] for item in existing), default=0)
+                if removed:
+                    current_version = max(current_version, removed[1])
                 snapshot = dict(snapshot_id=str(uuid.uuid4()), content_hash=text_hash, hash_algorithm='sha256',
                                 extraction_version=algorithm, byte_length=len(text))
                 if original_hash:
                     snapshot['original_hash'] = original_hash
                 result = dict(schema_version=1, material_id=material_id,
-                    entity_id=existing[0]['entity_id'] if existing else material_id,
-                    version=len(existing)+1, title=candidate['title'][:500], summary=None,
+                    entity_id=entity_id, version=current_version+1, title=candidate['title'][:500], summary=None,
                     source=dict(kind='academic', label=origin, source_id=source_id, received_at=found_at),
                     snapshot=snapshot, academic=dict(identity=identity, format=kind, notice_type=notice_type,
                         status='available' if capture else 'pending_fulltext', attempts=attempts,

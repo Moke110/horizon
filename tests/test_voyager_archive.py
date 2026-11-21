@@ -92,6 +92,29 @@ def test_pdf_edits_retain_the_cited_version_and_older_operation_snapshots(tmp_pa
     assert service.get_package(mid, token=token)['original_text'] == 'Second readable version'
 
 
+def test_reimport_does_not_reuse_deleted_academic_versions(tmp_path):
+    token = 'desktop'
+    service = MaterialsService(tmp_path, token=token)
+    candidate = dict(source='crossref', source_id='work', doi='10.1234/work',
+                     title='Proceedings', url='https://example.org/proceedings')
+
+    def register(operation, body):
+        capture = dict(kind='xml', original=body.encode(), text=body, url=candidate['url'])
+        return service.register_academic(operation, 'request', candidate, capture, [], token=token)
+
+    first = register('one', 'Version one')
+    second = register('two', 'Version two')
+    for material in (first, second):
+        mid = material['material_id']
+        service.archive_material(mid, token=token)
+        confirmed = service.deletion_impact(mid, token=token)
+        service.delete_material(mid, confirmed['confirmation'], token=token)
+    restored = register('three', 'Version two')
+    assert restored['entity_id'] == first['entity_id']
+    assert restored['version'] == 3
+    assert restored['material_id'] != second['material_id']
+
+
 @pytest.mark.skipif(os.name != 'nt', reason='managed Windows snapshot identity boundary')
 def test_managed_reclamation_releases_enrolled_blob_for_reregistration(tmp_path, monkeypatch):
     from hostrun.cleanup import initialize_layout, prepare_instance

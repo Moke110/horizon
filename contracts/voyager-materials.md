@@ -100,7 +100,8 @@ Permanent deletion requires an archived material and the exact
 `deletion_impact` confirmation, which binds its current snapshot, affected
 citation owners and associated retrieval IDs. Changes invalidate that
 confirmation. Deletion preserves the material ID and citation tombstones while
-discarding material data and its replay payloads.
+discarding material data and its replay payloads. Academic reimports retain
+the entity ID and continue numbering above every removed or surviving version.
 
 `collect_orphan_snapshots` removes only validated content-addressed text or
 original blobs absent from live materials, their version receipts, and live
