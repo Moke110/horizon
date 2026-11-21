@@ -204,7 +204,7 @@ class AgentService:
                 if not isinstance(value, str) or len(value) > 100000:
                     raise CommandError('invalid_command', 'Child result exceeds bounded context')
         else:
-            if command.get('role') not in ('development_reader', 'development_summarizer'):
+            if command.get('role') not in ('development_reader', 'development_summarizer', 'voyager'):
                 raise CommandError('invalid_command', 'Unsupported child role')
             text = command.get('input_text')
             if not isinstance(text, str) or not text.strip() or len(text) > 16000:
