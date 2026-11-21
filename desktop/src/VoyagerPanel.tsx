@@ -43,9 +43,10 @@ export function VoyagerPanel({requests,busy,selected,history,onCommand}:{request
    <button key={q.query_id} onClick={()=>onCommand({action:'voyager_history',request_id:selected.request_id,query_id:q.query_id,offset:0})}>查询依据 · {q.term}</button>)}
  <p>来源网址：{c.url}</p>
  {c.url?.startsWith('https://')&&<>
- <button onClick={()=>onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url:c.url,dynamic:false})}>获取此候选的网页正文</button>
+ <button disabled={busy.includes(selected.request_id)||selected.status==='planned'||selected.status==='cancelled'} onClick={()=>command('voyager_fulltext',{candidate_source:c.source,candidate_id:c.source_id})}>获取候选开放全文</button>
  <button onClick={()=>onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url:c.url,dynamic:true})}>用浏览器获取此候选的正文</button>
  </>}
+ {selected.fulltext_work?.filter((item:any)=>item.candidate_source===c.source&&item.candidate_id===c.source_id).map((item:any)=><p key={item.work_id}>{item.status==='succeeded'?'已取得全文':item.status==='failed'?'待全文':label(item.status)}{item.evidence_ref?.startsWith('material:')&&<button onClick={()=>onCommand({action:'materials_open',material_id:item.evidence_ref.slice(9)})}>查看资料与获取记录</button>}</p>)}
  {c.doi&&<p>DOI：{c.doi}</p>}
  {Array.isArray(c.reference_ids)&&<details><summary>来源提供的引用关系</summary>
  <p>参考文献：已列出 {c.reference_ids.length} 个标识，来源报告 {c.reference_count??'未知'} 条。被引用次数：{c.cited_by_count??'未知'}。</p>

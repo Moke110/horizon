@@ -63,18 +63,23 @@ class VoyagerService:
         saved, monthly_limit = load_source_configuration(self.home)
         settings = {source: 'saved' if saved.get(source) else 'environment' if os.environ.get(env) else 'missing'
                     for source, env in SOURCE_KEY_ENV.items()}
+        if saved.get('unpaywall'):
+            settings['unpaywall'] = 'saved'
         if monthly_limit is not None:
             settings['tavily_monthly_limit'] = monthly_limit
         return settings
 
     def save_source_setting(self, source, key, *, token):
         self._authorize(token)
-        if not isinstance(source, str) or source not in SOURCE_KEY_ENV:
+        if not isinstance(source, str) or (source not in SOURCE_KEY_ENV and source != 'unpaywall'):
             raise CommandError('invalid_source', '不支持配置此来源')
         if key is not None:
             if not isinstance(key, str) or not re.fullmatch(r'[!-~]{1,1024}', key.strip()):
                 raise CommandError('invalid_key', '请输入有效的 API Key')
             key = key.strip()
+            if source == 'unpaywall' and (len(key) > 254 or not re.fullmatch(
+                    r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", key)):
+                raise CommandError('invalid_contact', '请输入有效的联系邮箱')
         save_source_key(self.home, source, key)
         return self.source_settings(token=token)
 
@@ -237,8 +242,9 @@ class VoyagerService:
             return
         rows=page.get('candidates')
         if not isinstance(rows,list) or len(rows)>10000:raise CommandError('invalid_provider_response','Candidate page is too large')
-        sizes={'source':80,'source_id':512,'title':2048,'abstract':32768,'url':4096,'doi':512,'journal':512,'source_type':64,'peer_review_status':64}
-        allowed=set(sizes)|{'published_at','discovered_at','authors','is_preprint','is_retracted','missing_fields','reference_ids','reference_count','cited_by_count'}
+        sizes={'source':80,'source_id':512,'title':2048,'abstract':32768,'url':4096,'doi':512,'journal':512,'source_type':64,'peer_review_status':64,'pmcid':40}
+        allowed=set(sizes)|{'published_at','discovered_at','authors','is_preprint','is_retracted','missing_fields',
+                            'reference_ids','reference_count','cited_by_count','native_fulltext_urls','related_dois'}
         total=0
         for row in rows:
             if not isinstance(row,dict) or set(row)-allowed:raise CommandError('invalid_provider_response','Invalid candidate fields')
@@ -249,7 +255,7 @@ class VoyagerService:
             for key in ('reference_count', 'cited_by_count'):
                 if row.get(key) is not None and (type(row[key]) is not int or not 0 <= row[key] <= 2**53-1):
                     raise CommandError('invalid_provider_response','Invalid citation count')
-            for key,count,limit in (('authors',100,256),('missing_fields',16,64),('reference_ids',100,512)):
+            for key,count,limit in (('authors',100,256),('missing_fields',16,64),('reference_ids',100,512),('native_fulltext_urls',10,4096),('related_dois',10,512)):
                 values=row.get(key,[])
                 if not isinstance(values,list) or len(values)>count or any(not isinstance(v,str) or len(v.encode('utf-8'))>limit for v in values):raise CommandError('invalid_provider_response','Candidate list exceeds its bound')
                 total+=sum(len(v.encode('utf-8')) for v in values)
@@ -342,7 +348,9 @@ class VoyagerService:
         """Charge one body acquisition before its owner performs external IO."""
         def mutate(value):
             if value['status']=='cancelled' or not value.get('segments'):raise CommandError('invalid_transition','No active retrieval allowance')
-            self._account_time(value);reason=self._limit_reason(value)
+            self._account_time(value)
+            segment=value['segments'][-1]
+            reason=next((key+'_budget' for key in ('seconds','fulltexts') if segment['used'][key]>=segment['limits'][key]),None)
             if reason:value.update(status='partial',stop_reason=reason);return
             if not any((row['source'],row['source_id'])==(command.get('candidate_source'),command.get('candidate_id')) for row in value['candidates']):raise CommandError('not_found','Candidate is not part of this retrieval')
             value['segments'][-1]['used']['fulltexts']+=1;value['used']['fulltexts']+=1
@@ -358,8 +366,8 @@ class VoyagerService:
             work=next((row for row in value.get('fulltext_work',[]) if row['work_id']==command.get('work_id')),None)
             if not work or work['status']!='reserved':raise CommandError('invalid_transition','Body reservation is not pending')
             status=command.get('status');reference=command.get('evidence_ref')
-            if status not in ('succeeded','failed') or (status=='succeeded' and (not isinstance(reference,str) or not reference or len(reference)>512 or any(c in reference for c in ('\n','\r')))):raise CommandError('invalid_receipt','A bounded owner reference is required')
-            work.update(status=status,evidence_ref=reference if status=='succeeded' else None)
+            if status not in ('succeeded','failed') or ((status=='succeeded' or reference is not None) and (not isinstance(reference,str) or not reference or len(reference)>512 or any(c in reference for c in ('\n','\r')))):raise CommandError('invalid_receipt','A bounded owner reference is required')
+            work.update(status=status,evidence_ref=reference)
             if self._limit_reason(value):value.update(status='partial',stop_reason=self._limit_reason(value))
             elif status=='failed':value.update(status='partial',stop_reason='fulltext_failed')
             elif not self._limit_reason(value) and all(q['status']=='complete' for q in value['queries']) and all(work['status']=='succeeded' for work in value.get('fulltext_work',[])):value.update(status='complete',stop_reason=None)

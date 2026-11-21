@@ -208,3 +208,9 @@ For optional web discovery, select source `tavily` and save your own key under *
 If Tavily reports a null PAYG or key limit, open **Tavily 免费预算**, confirm PAYG is disabled in the Tavily console and enter the key's Monthly Limit. Horizon still checks the remaining free credits and stops if Tavily reports PAYG usage or a positive PAYG limit. Changing the saved key clears the confirmation.
 
 In **范围检索 → 订阅更新**, add a public HTTPS RSS/Atom feed or a section URL, then select **刷新订阅**. A successful round shows the new or changed entries and the last success time. The panel shows up to ten entries from the latest round. To search saved versions, copy the displayed `sub_…` source identifier into the scope and select discovery time. Section discovery stays within the supplied host and path and follows at most two next-page links per round.
+
+Select **获取候选开放全文** to look for an academic candidate’s original PDF,
+HTML or XML. Horizon checks source-native documents, open-access DOI locators,
+and the public landing page. To enable Unpaywall, save a contact email under
+**范围检索 → 检索来源 API**. **查看资料与获取记录** opens the saved snapshot and
+its provenance or shows why the material is still waiting for full text.
