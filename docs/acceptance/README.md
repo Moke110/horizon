@@ -274,7 +274,9 @@ references and reported 45. Crossref listed 40 and reported 45. See
 
 Tavily authenticated and reported free Researcher plan credits and zero PAYG
 usage. Its usage response returned null for both the key and PAYG caps. The
-Explorer verified their Tavily dashboard settings and approved the in-app
-confirmation and monthly limit. Live Search basic remains pending while the
-Explorer sets the allowance in the new candidate. See
+Explorer verified their Tavily dashboard settings, then saved the PAYG
+confirmation and monthly limit in the new candidate. Its installed runtime
+ran one Search basic request in 2.95 seconds, recorded one credit and its
+receipt, and reopened five metadata-only results. The candidate cap stopped
+the retrieval segment with the partial result retained. See
 [V4](https://github.com/Moke110/horizon/issues/195).
