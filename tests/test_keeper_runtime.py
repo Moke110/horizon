@@ -7,6 +7,8 @@ gate and the read-only desktop bridge events.
 """
 
 import json
+import shutil
+import sys
 import threading
 import time
 import uuid
@@ -158,6 +160,33 @@ def test_runtime_returns_insufficient_evidence_with_a_real_child(tmp_path):
     assert child['status'] == 'succeeded'
     document = json.loads(child['result'])
     assert document['status'] == 'returned' and 'no source' in document['reason']
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows embedded Pythonw import rules')
+def test_runtime_uses_candidate_worker_with_pythonw_from_another_install(tmp_path):
+    base = Path(sys.base_prefix)
+    if not (base / 'pythonw.exe').is_file():
+        pytest.skip('This Windows interpreter does not provide Pythonw')
+    alternate = tmp_path / 'other-install'
+    alternate.mkdir()
+    pythonw = alternate / 'pythonw.exe'
+    shutil.copyfile(base / 'pythonw.exe', pythonw)
+    for library in base.glob('*.dll'):
+        shutil.copyfile(library, alternate / library.name)
+    runtime_version = f'python{sys.version_info.major}{sys.version_info.minor}'
+    (alternate / f'{runtime_version}._pth').write_text(
+        f'{base / "Lib"}\n{base / "DLLs"}\n', encoding='utf-8')
+
+    owner = Owner(tmp_path / 'data')
+    material = owner.material()
+    request = owner.request([{'changes': [owner.card_change([owner.source(material)])]}])
+    runtime = KeeperRuntime(owner.agent, token=TOKEN, python=str(pythonw))
+    reviewed = owner.keeper.review(request['request_id'], token=TOKEN, dispatch=runtime.dispatch)
+
+    assert reviewed['status'] == 'pending'
+    child, = owner.agent.list_children(owner.task['task_id'], token=TOKEN)
+    assert child['status'] == 'succeeded'
+    assert json.loads(child['result'])['status'] == 'reviewed'
 
 
 def test_revision_dispatches_a_real_child_with_feedback_on_the_original_task(tmp_path):

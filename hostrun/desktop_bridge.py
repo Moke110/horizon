@@ -546,7 +546,7 @@ def serve(resolved):
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
     knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=knowledge_cards,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
     knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=knowledge_cards,themes=knowledge_themes,frontiers=frontier)
-    keeper_runtime = KeeperRuntime(service, token=token)
+    keeper_runtime = KeeperRuntime(service, token=token, code_root=code)
     keeper_service = None
     keeper_test_enabled = keeper_test_requests_enabled()
 

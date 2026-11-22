@@ -189,7 +189,7 @@ class KeeperRuntime:
         self.agent = agent
         self.token = token
         self.python = python or sys.executable
-        self.code_root = Path(code_root or Path(__file__).resolve().parents[1])
+        self.code_root = Path(code_root or Path(__file__).resolve().parents[1]).resolve()
         self.timeout = timeout
         self._cancelled = threading.Event()
         self._lock = threading.Lock()
@@ -330,7 +330,12 @@ class KeeperRuntime:
         return {'keeper': metadata}
 
     def _run_worker(self, payload):
-        command = [self.python, '-X', 'utf8', '-m', 'hostrun.keeper_worker']
+        # Embedded Pythonw's _pth resolves modules relative to its own install.
+        # The standalone worker belongs to the desktop's selected code root.
+        worker = self.code_root / 'hostrun' / 'keeper_worker.py'
+        if not worker.is_file():
+            raise KeeperRuntimeError('Keeper worker script is missing from the desktop code root')
+        command = [self.python, '-B', '-X', 'utf8', str(worker)]
         with self._lock:
             if self._cancelled.is_set():
                 raise KeeperRuntimeError('Keeper review cancelled')

@@ -1,8 +1,9 @@
 """Deterministic, offline Keeper reviewer.
 
-The trusted desktop host starts this module in an installed Python interpreter:
+The trusted desktop host runs this exact file with its own interpreter, so no
+import path or installed package is needed:
 
-    python -X utf8 -m hostrun.keeper_worker
+    python -B -X utf8 <code_root>/hostrun/keeper_worker.py
 
 It reads one bounded UTF-8 JSON evidence document from private standard input
 and writes one reviewer result line to standard output. It never reads files,

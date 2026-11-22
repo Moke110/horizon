@@ -3,7 +3,7 @@ import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEven
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
 import {KnowledgeHistoryPanel,type HistoryKind,type HistoryRecord} from './KnowledgeHistoryPanel';
-import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,type KeeperProposalStatus,type KeeperRevisionDecision,type KeeperKeepFields,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal,keeperChangedFields,KEEPER_FEEDBACK_LIMIT,keeperFeedbackByteLength} from './KeeperProposalPanel';
+import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,type KeeperProposalStatus,type KeeperRevisionDecision,type KeeperKeepFields,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal,keeperChangedFields,hasPublishedKeeperRevision,KEEPER_FEEDBACK_LIMIT,keeperFeedbackByteLength} from './KeeperProposalPanel';
 
 type MaterialOption={material_id:string;title:string;version?:number};
 type EntityType='card'|'theme'|'frontier';
@@ -1169,7 +1169,7 @@ export function KnowledgeWorkbench({
                       {kinds.map(kind=><span key={kind}>{keeperKindLabel(kind)}</span>)}
                       {status&&<span>{status}</span>}
                       {typeof proposal.revision==='number'&&<span>修订 v{proposal.revision}</span>}
-                      {proposal.revision_notes&&<span className="workbench-badge-revision">新修订</span>}
+                      {hasPublishedKeeperRevision(proposal)&&<span className="workbench-badge-revision">新修订</span>}
                       {badge&&<span className="workbench-badge-test">{badge}</span>}
                       {typeof proposal.report_version==='number'&&<span>报道 v{proposal.report_version}</span>}
                     </span>

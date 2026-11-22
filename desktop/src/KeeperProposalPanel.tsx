@@ -155,6 +155,14 @@ export const keeperTestBadge=(proposal:KeeperProposal):string|null=>{
   if(proposal.request_id)return '测试请求';
   return proposal.provenance==='editor_test'?'测试提议':null;
 };
+/** In-progress and returned reviews can carry notes without publishing a revision. */
+export const hasPublishedKeeperRevision=(proposal:KeeperProposal|null):boolean=>{
+  if(!proposal)return false;
+  const current=proposal.revision;
+  const previous=proposal.revision_notes?.previous_revision;
+  return typeof current==='number'&&Number.isInteger(current)&&current>0
+    &&typeof previous==='number'&&Number.isInteger(previous)&&previous>0&&current>previous;
+};
 
 const isRecord=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const fieldLabel=(key:string)=>FIELD_LABEL[key]||key;
@@ -578,7 +586,8 @@ export function KeeperProposalPanel({
   const headline=proposal?keeperProposalTitle(proposal):proposalId;
   const revisionNotes=proposal&&proposal.revision_notes&&typeof proposal.revision_notes==='object'
     ?proposal.revision_notes:null;
-  const revised=!!revisionNotes&&!!proposal&&proposal.status==='pending';
+  const publishedRevision=hasPublishedKeeperRevision(proposal);
+  const revised=publishedRevision&&proposal?.status==='pending';
   const revisionLabel=proposal&&typeof proposal.revision==='number'?` v${proposal.revision}`:'';
   const feedbackText=feedback.trim();
   const feedbackBytes=keeperFeedbackByteLength(feedbackText);
@@ -642,7 +651,7 @@ export function KeeperProposalPanel({
     {proposal&&<Meta proposal={proposal}/>}
     {loading&&<p className="workbench-status keeper-loading" role="status">正在读取完整提议…</p>}
     {error&&<div className="workbench-error" role="alert"><p>{error}</p><button type="button" onClick={onRetry}>重试</button></div>}
-    {proposal&&revisionNotes&&<RevisionNotesSection proposal={proposal} notes={revisionNotes}/>}
+    {proposal&&revisionNotes&&publishedRevision&&<RevisionNotesSection proposal={proposal} notes={revisionNotes}/>}
     {terminal&&proposal&&(effectiveStatus==='returned'
       ?<ReturnedReceipt proposal={proposal} notes={revisionNotes}/>
       :<TerminalReceipt decision={effectiveDecision} proposal={proposal}/>)}
