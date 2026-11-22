@@ -408,3 +408,25 @@ The partial-coverage result displayed an OpenAlex source failure in its gaps.
 search, then usage, and blocked the second search before dispatch. The earlier
 live `.7` check consumed one free credit. The hard-stop scenario used the
 offline fixture. See [V13](https://github.com/Moke110/horizon/issues/204).
+
+## K5 knowledge history and undo — 2026-11-22
+
+The Windows x64 candidate `0.1.0-k5.1` built twice from `f446cbb` with ZIP
+SHA-256 `7341e10ab5b36033494650f01da122087c5308c7f1022035392ac3876c024078`
+and a matching 21,186-file manifest. Fresh installation and the minimal-PATH
+wrapper passed. A real `0.1.0-voyager.11` → `0.1.0-k5.1` upgrade in the same
+data home retained the earlier conversation, IANA source snapshot and Crossref
+retrieval. The upgraded knowledge base was empty before the GUI walkthrough.
+
+The Explorer confirmed the full GUI sequence. Two supplied screenshots show
+the undo preview against v2 and the completed v3 with v1 and v2 still visible.
+Database readback confirmed the Frontier and Theme links, the restored card
+content and the unchanged prior conversation and retrieval. Explicit desktop
+exit returned 0 with no remaining processes for the instance.
+
+The installed service preserved unrelated changes, rejected a stale or
+overlapping undo and replayed the original receipt. Live Crossref queries
+changed from Kepler-1625b to TRAPPIST-1 after the Frontier edit, returning six
+qualifying candidates each, with different receipts and unchanged prior
+results. The workflow used no Feishu adapter. The candidate's Windows suite
+passed 1,587 tests with 15 skips and two dependency warnings. [K5 acceptance evidence](https://github.com/Moke110/horizon/issues/209)
