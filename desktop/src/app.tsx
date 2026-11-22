@@ -2,6 +2,7 @@ import React,{useEffect,useState,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import Markdown from 'react-markdown';
 import './style.css';
+import './window-caption.css';
 import {SubscriptionPanel,type Subscription} from './SubscriptionPanel';
 import {VoyagerPanel,type VoyagerSummary} from './VoyagerPanel';
 import {SchedulePanel,type Schedule} from './SchedulePanel';
