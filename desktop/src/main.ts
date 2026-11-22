@@ -38,7 +38,12 @@ ipcMain.on('command',async(event,value)=>{
   }catch{send({kind:'notice',data:'请选择可读取且不超过 10 MiB 的 PDF 文件。'});return;}
  }
  bridge.write(JSON.stringify(value)+'\n');});
-app.whenReady().then(()=>{serveReader();win=new BrowserWindow({width:1440,height:940,minWidth:900,minHeight:620,backgroundColor:'#141416',title:'Horizon',autoHideMenuBar:true,webPreferences:{preload:join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+app.whenReady().then(()=>{serveReader();win=new BrowserWindow({
+  ...(process.platform === 'win32' ? {
+    titleBarStyle: 'hidden' as const,
+    titleBarOverlay: {color: '#141416', symbolColor: '#e8e8eb', height: 44},
+  } : {}),
+  width:1440,height:940,minWidth:900,minHeight:620,backgroundColor:'#141416',title:'Horizon',autoHideMenuBar:true,webPreferences:{preload:join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
 tray=new Tray(nativeImage.createFromBitmap(Buffer.from(Array.from({length:16*16},()=>[200,135,105,255]).flat()),{width:16,height:16}));tray.setToolTip('Horizon');tray.setContextMenu(Menu.buildFromTemplate([{label:'打开 Horizon',click:()=>{win.show();win.focus();}},{label:'退出 Horizon（暂停任务）',click:requestExit}]));tray.on('double-click',()=>{win.show();win.focus();});
 win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});
 win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());

@@ -525,3 +525,74 @@ uses the installed desktop and explicitly marked pre-Editor requests attached
 to completed Agent tasks. The local workbench and knowledge changes require
 no Feishu account. Physical Mac testing and the Mac test suite and handbook
 are tracked in the final delivery phase. [Spec 3 evidence](https://github.com/Moke110/horizon/issues/183)
+
+## Closed-spec source audit (#239)
+
+A fresh worktree of `617a2b4` on Windows on 2026-11-23 contained the three completed numbered specifications (#181–183). GitHub recorded the superseded #120–127 as closed without implementation. The following index connects the approved ticket criteria and the historical live evidence above to the tracked source entry points. Paths in the last column are relative to the checkout.
+
+| Spec and tickets | Behavior | Source entry points |
+|---|---|---|
+| #181 / #188 | Tray, exit, recoverable failure | `desktop/src/main.ts`, `agent/src/main.ts`, `hostrun/desktop_worker.py` |
+| #189 | Concurrent schedules, offline catch-up and coverage | `hostrun/agent_scheduling.py` |
+| #190 | Delivery receipts and unknown-result recovery | `hostrun/agent_delivery.py` |
+| #191 | Integrated Agent behavior | `hostrun/agent_service.py`, `agent/src/main.ts` |
+| #182 / #192 | Scope, exclusions and query budget | `hostrun/voyager_service.py` |
+| #193, #194 | arXiv/Europe PMC and DOI discovery | `hostrun/voyager_sources.py`, `hostrun/voyager_doi_sources.py` |
+| #195, #196 | Web budget and incremental subscriptions | `hostrun/voyager_tavily.py`, `hostrun/voyager_subscriptions.py` |
+| #197 | Relevance, counterevidence and coverage | `hostrun/voyager_relevance.py` |
+| #198, #199 | Text snapshots, PDF extraction and reader | `hostrun/voyager_materials.py`, `hostrun/pdf_worker.py`, `desktop/src/PdfReader.tsx` |
+| #200, #201 | Web snapshots and versioned full text | `hostrun/voyager_web.py`, `hostrun/voyager_web_renderer.py`, `hostrun/voyager_fulltext.py` |
+| #202, #203 | Waiting for full text, archive and reclamation | `hostrun/voyager_pending.py`, `hostrun/voyager_late_fulltext.py`, `hostrun/voyager_material_lifecycle.py` |
+| #204 | Integrated discovery and child evidence | `hostrun/voyager_service.py`, `hostrun/voyager_child.py` |
+| #183 / #205 | Frontier creation and real scope provider | `hostrun/frontier.py`, `hostrun/voyager_service.py` |
+| #206, #207 | Manual cards, conditions and opposing evidence | `hostrun/knowledge_cards.py`, `hostrun/knowledge_themes.py` |
+| #208, #209 | Workbench search, version history and undo | `hostrun/knowledge_workbench.py`, `hostrun/knowledge_history.py` |
+| #210, #211 | Sourced proposals and atomic decisions | `hostrun/keeper.py`, `hostrun/keeper_decisions.py` |
+| #212, #213 | Conflict revisions, merge and group undo | `hostrun/keeper_revisions.py`, `hostrun/keeper_merge.py`, `hostrun/keeper_group_undo.py` |
+
+Built Agent from its lockfile with `npm ci` and `npm run build` in `agent/`. The packaged-code entry point `npm run check` reported horizon-pi 1.5.0. Built desktop renderer/main from its lockfile with lifecycle scripts disabled for dependency installation. The clean checkout ran 12 Keeper renderer tests and the Python Agent, Frontier, Knowledge, Keeper and Voyager test modules (352 passed, two skipped). The Python environment supplied dependencies only. This run covered source behavior. It did not exercise provider credentials, interactive desktop visuals, installation or release state.
+
+All local Spec 2/3 ticket branch tips were ancestors of this checkout. The eight modified tracked files and untracked Voyager child module in the old #204 worktree matched Git blobs in ancestor `9cb5052` individually. The old #205 worktree had no tracked changes or extra implementation files under the Agent, desktop or host runtime source directories. No code transplant was required for these worktrees.
+
+### Acceptance checklist lookup
+
+Numbers below are the one-based checkbox positions under each original ticket’s Acceptance Criteria. Each row follows those positions from left to right. Named panels and readers are tracked under `desktop/src/`, Python modules under `hostrun/`. “Evidence” refers to the dated section above and the original ticket’s acceptance comments. For #189–190 and #192–213, item 6 is the behavioral verification record in that ticket and its matching `tests/test_*.py` suite. Item 7 is the ticket’s delivery record, the changed module contract in `contracts/`, and `README.md` / `README.zh-CN.md`. Package-specific items reference historical verification only.
+
+| Ticket | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| #188 | Tray and exit: main.ts, desktop_worker.py | Retry presentation: app.tsx and agent/src/main.ts | Developer-machine evidence | — | — |
+| #189 | SchedulePanel.tsx | agent_capacity.py | agent_scheduling.py serialization | agent_scheduling.py catch-up | tests/test_agent_scheduling.py |
+| #190 | agent_delivery.py enqueue | agent_delivery.py unknown outcome | DeliveryPanel.tsx recovery | agent_delivery.py cancellation | tests/test_agent_delivery.py |
+| #191 | AgentService and desktop_worker.py | Historical #131, #129, #130, #132 evidence | Package and Windows evidence in #191 | — | — |
+| #192 | voyager_service.py planning | voyager_service.py budgets | voyager_service.py cursor | VoyagerPanel.tsx | tests/test_voyager_service.py |
+| #193 | voyager_sources.py connectors | voyager_sources.py candidate normalization | voyager_sources.py rate control | voyager_service.py partial result | #193 live evidence and tests/test_voyager_sources.py |
+| #194 | voyager_doi_sources.py discovery | voyager_doi_sources.py relation metadata | voyager_doi_sources.py quota | voyager_service.py candidate merge | #194 evidence and tests/test_voyager_doi_sources.py |
+| #195 | voyager_tavily.py search | voyager_tavily.py budget | voyager_tavily.py metadata | VoyagerSourceSettings.tsx | #195 evidence and tests/test_voyager_tavily.py |
+| #196 | voyager_subscriptions.py feed discovery | voyager_subscriptions.py column discovery | voyager_subscriptions.py incremental state | SubscriptionPanel.tsx | #196 evidence and tests/test_voyager_subscriptions.py |
+| #197 | voyager_relevance.py selection | voyager_relevance.py counterevidence | voyager_service.py material identity | voyager_service.py empty selection | voyager_service.py partial coverage |
+| #198 | voyager_materials.py import | voyager_materials.py snapshot | voyager_materials.py idempotency | MaterialsPanel.tsx | voyager_material_lifecycle.py |
+| #199 | pdf_worker.py and PdfReader.tsx | tests/test_voyager_pdf.py page cases | pdf_worker.py extraction status | Historical package dependency evidence in #199 | #199 packaged PDF evidence |
+| #200 | voyager_web.py static fetch | voyager_web_renderer.py rendering | voyager_materials.py snapshots | voyager_web.py restrictions | voyager_web_renderer.py child cleanup |
+| #201 | voyager_fulltext.py retrieval | voyager_fulltext.py content checks | voyager_materials.py identity | voyager_service.py selection | #201 evidence and tests/test_voyager_fulltext.py |
+| #202 | PendingMaterialActions.tsx | voyager_pending.py authorization | voyager_pending.py abandon | voyager_late_fulltext.py enqueue | voyager_late_fulltext.py task state |
+| #203 | voyager_material_lifecycle.py archive | voyager_material_lifecycle.py reference policy | voyager_material_lifecycle.py reclaim | tests/test_voyager_archive.py | MaterialsPanel.tsx |
+| #204 | VoyagerPanel.tsx and #204 source traces | MaterialsPanel.tsx and #204 material traces | desktop_worker.py and voyager_child.py | Historical independent-install evidence in #204 | VoyagerPanel.tsx scope |
+| #205 | KnowledgePanel.tsx | frontier.py scope provider | tests/test_frontier.py versioned queries | frontier.py status transitions | KnowledgePanel.tsx edit |
+| #206 | knowledge_cards.py versions | knowledge_cards.py source status | knowledge_cards.py confirmed knowledge | knowledge_cards.py edit guards | KnowledgeCardPanel.tsx |
+| #207 | knowledge_themes.py conditions | knowledge_themes.py evidence direction | ThemePanel.tsx source opening | knowledge_themes.py reference validation | tests/test_knowledge_themes.py |
+| #208 | knowledge_workbench.py normalized search | knowledge_workbench.py filters | knowledge_workbench.py state filters | KnowledgeWorkbench.tsx | #208 desktop evidence |
+| #209 | knowledge_history.py audit | knowledge_history.py undo | KnowledgeWorkbench.tsx and #209 evidence | Historical upgrade evidence in #209 | #209 independent-home evidence |
+| #210 | keeper.py request | keeper_worker.py | KeeperProposalPanel.tsx | tests/test_keeper.py request boundary | keeper.py pending state |
+| #211 | keeper_decisions.py version binding | keeper_decisions.py transaction | keeper_decisions.py rejection | keeper_decisions.py suppression | tests/test_keeper_decisions.py |
+| #212 | keeper_revisions.py stale version | KeeperProposalPanel.tsx | keeper_revisions.py adjustment | keeper_decisions.py decision guards | tests/test_keeper_revisions.py |
+| #213 | keeper_merge.py | keeper_evidence_policy.py | keeper_group_undo.py | tests/test_keeper_group_undo.py | KeeperGroupUndoPanel.tsx and #213 desktop evidence |
+
+## Development scratch relocation (#240)
+
+On 2026-11-23 the maintainer checkout retained old test runs and staging archives in `tmp/legacy-240/` under their original basenames. Of 766 selected root entries, 493 moved completely and 273 old test directories encountered Windows access denials. Each of those 273 has both a root path and a destination; inspect both before further cleanup. Eight additional historical build/reproduction directories moved by atomic rename. Seventeen other pytest/process-test directories refused rename. No ownership, ACL or junction changes were made. Only the reproducible root CPython cache file for `common.py` was deleted.
+
+The build-only dependency directories `cleanup-tool-inputs`, `v9-static-wheels` and `v9-browser-wheels` now live under `tmp/legacy-240/install/`. Historical path mentions in acceptance evidence describe where the original run occurred. Cleanup-tool assembly now stages its wheels in a unique directory under the checkout's `tmp/`. The General Software Development Workflow in Notion records this rule for relocatable development material; the saved rule was read back.
+
+Before any further removal, review the remaining root test paths and `.pytest_cache/` with their Windows owner. Preserve registered Git worktrees and review detached source copies, older `.a*`/short-named directories, candidate/acceptance homes, `.horizon/`, the shortcut, archives, PDFs, and the runtime state directories with the maintainer. In `install/`, the remaining candidate builds can contain registrations, data homes and evidence. The `return/` and `win_test_2026-11-09/` folders may be user handoffs. The old paths and their contents are not evidence of permission to remove them.
+
+A second, elevated-shell pass used only same-volume atomic directory renames with distinct destinations under `tmp/legacy-240/remainders/`. Two residual directories moved (`.tmp-p5-full-8906e39` and `.tmp-voyager-final-9b0a0c0`). Windows denied the remaining 288 attempts with HRESULT 0x80070005, including 271 partially relocated paths and 17 rename-only paths. Per-path outcomes are in that directory’s `outcomes.csv`. All ten registered worktrees still resolved to their own top level. The moved cleanup-tool inputs, original user-return directory and Windows test handoff remained accessible.

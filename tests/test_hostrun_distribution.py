@@ -62,6 +62,7 @@ EXCLUDED_FILES = {
     "scripts/demo.py": "print('demo')\n",
     "deploy/horizon.service.in": "[Unit]\n",
     "AGENTS.md": "# dev guide\n",
+    "skills/horizon-run/AGENTS.md": "# directory guide\n",
     "GLOSSARY.md": "# glossary\n",
     "skills/horizon-run/.DS_Store": "junk",
 }

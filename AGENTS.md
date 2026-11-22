@@ -4,8 +4,8 @@ This file contains development-agent working instructions only. Keep product pos
 
 ## Development responsibilities
 
-- **Planning:** Codex handles complex work (architecture, cross-module changes, unclear requirements, or risky migrations); DeepSeek Harness handles simple, bounded work. Use the Matt Pocock workflow: `wayfinder` to map uncertain work, `grill-with-docs` to resolve decisions and record domain docs, `to-spec` to publish the agreed spec, then `to-tickets` to publish approved vertical slices and native blocking links. The skill is named `to-tickets` (plural).
-- **Implementation:** DeepSeek Harness uses `implement` to execute the approved GitHub spec and tickets. Read the issue body, comments and blockers before starting; work only on unblocked tickets, and follow the skill's testing, review and commit requirements. Record results and remaining blockers in GitHub; close a ticket only when its acceptance criteria are met. Offline tests do not replace required live acceptance.
+- **Planning:** Use the Matt Pocock workflow: `wayfinder` to map uncertain work, `grill-with-docs` to resolve decisions and record domain docs, `to-spec` to publish the agreed spec, then `to-tickets` to publish approved vertical slices and native blocking links. The skill is named `to-tickets` (plural).
+- **Implementation:** Execute the approved GitHub spec and tickets. Read the issue body, comments and blockers before starting; work only on unblocked tickets, and follow the skill's testing, review and commit requirements. Record results and remaining blockers in GitHub; close a ticket only when its acceptance criteria are met. Offline tests do not replace required live acceptance.
 - **Handoff:** Planning ends with linked GitHub issues and clear acceptance criteria/dependencies. Implementation starts when the user requests it; a planning request alone does not authorize implementation. Return changes to scope or unresolved product decisions to the planner rather than silently changing the spec.
 - **WorkBuddy:** no longer used to develop this repository. Keep project-specific WorkBuddy configuration and memory out of the workspace. This development-role change does not remove WorkBuddy as a horizon runtime host or waive its product acceptance requirements.
 
@@ -64,10 +64,59 @@ Put relocatable temporary files for development, tests, packaging and acceptance
 
 ### Skill pack
 
-Read the relevant `SKILL.md` before applying a skill. Shared Matt Pocock skills are installed under `~/.agents/skills/<name>/`; source metadata lives in `~/.agents/.skill-lock.json`. Codex and DeepSeek Harness should use their supported skill-loading mechanism against this shared source, without relying on WorkBuddy junctions. If a required skill is unavailable, report the missing integration rather than inventing its behavior.
+Read the relevant `SKILL.md` before applying a skill. Shared Matt Pocock skills are installed under `~/.agents/skills/<name>/`; source metadata lives in `~/.agents/.skill-lock.json`. Use the supported skill-loading mechanism against this shared source, without relying on WorkBuddy junctions. If a required skill is unavailable, report the missing integration rather than inventing its behavior.
 
 The planning/implementation skills above are user-invoked workflows. Follow each skill's approval gates and delegated skills (including testing and code review); do not automatically start implementation merely because its skill is installed.
 
 The per-repo configuration those skills read is `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` and `docs/agents/domain.md`. Edit those files directly; `setup-matt-pocock-skills` only needs re-running to switch issue trackers or restart the setup.
 
 Desktop process changes must follow [desktop process ownership](contracts/desktop-processes.md), including descendant cleanup and console-free startup checks.
+
+## Directory guide
+
+| File | Responsibility |
+|---|---|
+| [.gitignore](.gitignore) | Paths excluded from version control. |
+| [common.py](common.py) | Shared, domain-free helpers for all prototype modules. |
+| [GLOSSARY.md](GLOSSARY.md) | Horizon（地平线） |
+| [Horizon.cmd](Horizon.cmd) | Windows source-checkout launch command. |
+| [LICENSE](LICENSE) | Project license. |
+| [README.md](README.md) | Horizon（地平线） |
+| [README.zh-CN.md](README.zh-CN.md) | Horizon（地平线） |
+| [requirements-release.txt](requirements-release.txt) | Pinned distribution dependencies. |
+| [requirements.txt](requirements.txt) | Python development/runtime dependencies. |
+
+## Subdirectories
+
+- [.github](.github/AGENTS.md) — GitHub Actions configuration.
+- [agent](agent/AGENTS.md) — Embedded Pi runtime and Node build configuration.
+- [archive](archive/AGENTS.md) — Read and migrate the local research archive.
+- [contracts](contracts/AGENTS.md) — Versioned behavior and data contracts for public boundaries.
+- [deploy](deploy/AGENTS.md) — Systemd service and timer templates for historical Linux deployment.
+- [desktop](desktop/AGENTS.md) — Electron application and renderer build configuration.
+- [docs](docs/AGENTS.md) — Project decisions, development conventions and acceptance evidence.
+- [drafts](drafts/AGENTS.md) — Tracked initial knowledge-building examples.
+- [editor](editor/AGENTS.md) — Editorial selection and review of research items.
+- [fixtures](fixtures/AGENTS.md) — Offline research records and reproducible input examples.
+- [horizon](horizon/AGENTS.md) — Research orchestration CLI and shared domain model.
+- [hostrun](hostrun/AGENTS.md) — Desktop bridge, Agent tasks, Voyager retrieval, local knowledge and Keeper decisions.
+- [initial_build](initial_build/AGENTS.md) — Initial local knowledge construction and review.
+- [installer](installer/AGENTS.md) — Windows installation, cleanup and native runtime inputs.
+- [knowledge](knowledge/AGENTS.md) — Knowledge CLI and Feishu Bitable adapter.
+- [library](library/AGENTS.md) — Research PDF library management, reconciliation and search.
+- [pdf_ingest](pdf_ingest/AGENTS.md) — PDF ingestion and page-level evidence anchors.
+- [publisher](publisher/AGENTS.md) — Publication, alerts and interactive delivery cards.
+- [question_queue](question_queue/AGENTS.md) — Persistent research question queue and CLI.
+- [releases](releases/AGENTS.md) — Distribution channel index.
+- [retriever](retriever/AGENTS.md) — Discovery adapters and retrieval CLI.
+- [scripts](scripts/AGENTS.md) — Developer builds, compatibility probes and release tooling.
+- [skills](skills/AGENTS.md) — Host-agent runtime skills.
+- [tests](tests/AGENTS.md) — Behavioral, compatibility and integration checks.
+- [trigger](trigger/AGENTS.md) — Keyword matching and trigger evaluation.
+- [writer](writer/AGENTS.md) — Research writing, evidence review and rendering.
+
+## Verification
+
+Follow [hostrun](hostrun/AGENTS.md) to the Voyager service and its public tests, or [desktop](desktop/AGENTS.md) to the Electron build and window entry.
+
+Generated output trees are outside this directory guide. The tracked historical push and figures in `outbox/` are examples of writer output. The same exclusion applies to local temporary runs, virtual environments, downloaded dependencies, build output and Git metadata.

@@ -33,7 +33,9 @@ def main():
             print(json.dumps({'status': 'blocked', 'reason': 'input_digest_mismatch'}))
             return 2
     args.output.mkdir(parents=True)
-    with tempfile.TemporaryDirectory(dir=args.output, prefix='build-wheels-') as temporary:
+    scratch = ROOT / 'tmp'
+    scratch.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch, prefix='build-wheels-') as temporary:
         wheels = Path(temporary)
         for entry in manifest['inputs']:
             if entry['kind'] == 'wheel':

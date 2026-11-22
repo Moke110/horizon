@@ -159,6 +159,7 @@ _EXCLUDED_TOP_LEVEL_PATTERNS = tuple(
 # by prefix, which covers .git/.venv/.horizon/.dev/.pytest-* wherever they
 # appear; only the visible caches need naming here.
 EXCLUDED_ENTRY_NAMES = {
+    "AGENTS.md": "development guide for repository contributors",
     "__pycache__": "interpreter bytecode cache",
     "pytest-of-*": "pytest temporary roots",
 }
