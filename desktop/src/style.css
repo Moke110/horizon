@@ -318,3 +318,60 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .keeper-decision-actions .keeper-adjust-submit:hover{background:#4a6a60}
 @media(max-width:980px){.keeper-revision-pair{grid-template-columns:1fr}.keeper-revision-meta,.keeper-prior-provenance dl,.keeper-revision-progress dl{grid-template-columns:1fr}.keeper-revision-meta dt,.keeper-prior-provenance dt,.keeper-revision-progress dt{margin-top:5px}}
 @media(max-width:980px){.keeper-decision-targets li{display:grid;grid-template-columns:auto 1fr}.keeper-decision-name{min-width:0}.keeper-decision-version{grid-column:1/-1}.keeper-receipt dl{grid-template-columns:1fr}.keeper-receipt dt{margin-top:5px}}
+
+/* Session selection and message composition in the main window. */
+.shell {
+  --control-edge: #565963;
+  --control-surface: #28292f;
+  --control-focus: #9ab5ff;
+}
+.shell > aside { min-height: 0; overflow-y: auto; }
+.shell > aside .sessions { flex: 1 0 5rem; }
+.shell > aside :is(.nav, .sessions) button,
+.shell > main > header button,
+.suggestions button,
+.compose-footer button:not(.send) {
+  min-height: 36px;
+  border: 1px solid var(--control-edge);
+  border-radius: 8px;
+  background: var(--control-surface);
+}
+.sessions button[aria-current="true"] {
+  border-color: var(--control-focus);
+  box-shadow: inset 3px 0 var(--control-focus);
+  font-weight: 600;
+}
+.shell > aside button:enabled:hover,
+.shell > main > header button:enabled:hover,
+.suggestions button:enabled:hover,
+.compose-footer button:not(.send):enabled:hover {
+  background: #393c46;
+  border-color: #8991a3;
+}
+.shell > aside button:focus-visible,
+.shell > main > header button:focus-visible,
+.compose-wrap :is(button, select, textarea):focus-visible,
+.suggestions button:focus-visible {
+  outline: 2px solid var(--control-focus);
+  outline-offset: -2px;
+}
+.compose-wrap .composer textarea {
+  background: #202024;
+  border: 1px solid var(--control-edge);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.compose-footer { flex-wrap: wrap; margin-top: 8px; }
+.compose-footer select { min-width: 0; max-width: min(260px, 100%); }
+.shell > main > header { flex-wrap: wrap; height: auto; min-height: 60px; gap: 8px; padding-block: 8px; }
+.shell > main > header button { margin-left: 0; }
+.shell > main > header button:first-of-type { margin-left: auto; }
+@media (max-width: 1050px) {
+  .shell > aside { padding: 14px 10px; width: 190px; }
+  .shell > aside .brand { padding-bottom: 12px; }
+  .shell > aside .nav { margin: 10px 0; }
+  .shell > aside .nav button { padding: 6px 10px; }
+  .shell > main > header { padding-inline: 16px; }
+  .shell > main > .tabs { height: auto; flex-wrap: wrap; gap: 4px 12px; padding-inline: 16px; }
+  .compose-wrap { padding-inline: 16px; }
+}
