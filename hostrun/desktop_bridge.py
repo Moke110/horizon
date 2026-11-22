@@ -21,8 +21,118 @@ from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
+from hostrun.keeper_runtime import KeeperRuntime, review_event, test_principal
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
+
+_AUTHORITY_FIELDS = ('role', 'principal', 'output', 'provenance')
+
+
+def keeper_test_requests_enabled():
+    """Launch-environment gate; renderer commands cannot enable this mode."""
+    return os.environ.get('HORIZON_KEEPER_TEST_REQUESTS') == '1'
+
+
+def _reject_caller_authority(command, request=None):
+    for source in (command, request):
+        if isinstance(source, dict):
+            for field in _AUTHORITY_FIELDS:
+                if field in source:
+                    raise CommandError('invalid_command', 'Caller cannot supply ' + field)
+
+
+def keeper_bridge_command(commands, command, *, test_enabled):
+    """Route only the read actions and the explicitly gated test request."""
+    action = command.get('action')
+    if action in ('keeper_list', 'keeper_open'):
+        return commands.read(command)
+    if action == 'keeper_test_request':
+        if not test_enabled:
+            raise CommandError('invalid_command', 'Keeper test requests are disabled')
+        commands.test_request(dict(command))
+        return None
+    if action == 'keeper_request':
+        raise CommandError('invalid_command',
+                           'keeper_request is unavailable; use the explicit test request')
+    raise CommandError('invalid_command', 'Unknown Keeper action')
+
+
+class KeeperCommands:
+    """Read-only Keeper GUI queries plus explicit, asynchronous test review."""
+
+    def __init__(self, service, runtime, *, token, emit):
+        self._service = service
+        self.runtime = runtime
+        self.token = token
+        self.emit = emit
+        self._lock = threading.Lock()
+        self._jobs = set()
+
+    def read(self, command):
+        action = command.get('action')
+        keeper = self._service()
+        if action == 'keeper_list':
+            status = command.get('status')
+            if status is not None and (not isinstance(status, str) or not status.strip()):
+                raise CommandError('invalid_command', 'status must be text')
+            proposals = keeper.list(token=self.token, **({'status': status} if status else {}))
+            return 'keeper_list', {'operation_id': command.get('operation_id'),
+                                   'proposals': proposals}
+        if action == 'keeper_open':
+            proposal_id = command.get('proposal_id')
+            if not isinstance(proposal_id, str) or not proposal_id.strip():
+                raise CommandError('invalid_command', 'proposal_id is required')
+            proposal = keeper.view(proposal_id, token=self.token)
+            return 'keeper_open', {'operation_id': command.get('operation_id'),
+                                   'proposal': proposal}
+        raise CommandError('invalid_command', 'Unknown Keeper action')
+
+    def test_request(self, command):
+        request = command.get('request')
+        if not isinstance(request, dict):
+            raise CommandError('invalid_command', 'request is required')
+        request = dict(request)
+        _reject_caller_authority(command, request)
+        if 'schema_version' not in request:
+            request['schema_version'] = 1
+        operation = request.get('operation_id') or command.get('operation_id')
+        if not isinstance(operation, str) or not operation.strip():
+            raise CommandError('invalid_command', 'operation_id is required')
+        request['operation_id'] = operation
+        saved = self._service().request(request, token=self.token,
+                                        principal=test_principal())
+        request_id = saved['request_id']
+        self.emit('keeper_test_request', {'operation_id': command.get('operation_id') or operation,
+                                          'request': saved})
+        self._queue_review(request_id)
+
+    def resume_queued(self):
+        for request_id in self._service().queued(token=self.token):
+            self._queue_review(request_id)
+
+    def _queue_review(self, request_id):
+        with self._lock:
+            if request_id in self._jobs:
+                return
+            self._jobs.add(request_id)
+        threading.Thread(target=self._review, args=(request_id,), daemon=True).start()
+
+    def _review(self, request_id):
+        payload = None
+        error = ''
+        try:
+            value = self._service().review(request_id, token=self.token,
+                                           dispatch=self.runtime.dispatch)
+            payload = review_event(request_id, value)
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+        with self._lock:
+            self._jobs.discard(request_id)
+        if payload is not None:
+            self.emit('keeper_review', payload)
+        else:
+            self.emit('keeper_review_error', {'request_id': request_id,
+                                              'message': error[:1000]})
 
 
 def authenticate(incoming, token):
@@ -258,6 +368,17 @@ def serve(resolved):
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
     knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=knowledge_cards,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
     knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=knowledge_cards,themes=knowledge_themes,frontiers=frontier)
+    keeper_runtime = KeeperRuntime(service, token=token)
+    keeper_service = None
+    keeper_test_enabled = keeper_test_requests_enabled()
+
+    def keeper_service_factory():
+        nonlocal keeper_service
+        if keeper_service is None:
+            from hostrun.keeper import KeeperService
+            keeper_service = KeeperService(service, materials, knowledge_cards,
+                                           knowledge_themes, frontier, token=token)
+        return keeper_service
     from hostrun.voyager_fulltext import FulltextService
     fulltext = FulltextService(voyager, materials)
     voyager_current = None
@@ -286,6 +407,8 @@ def serve(resolved):
                 outgoing.flush()
             except (OSError, ValueError):
                 pass
+    keeper_commands = KeeperCommands(keeper_service_factory, keeper_runtime, token=token,
+                                     emit=emit)
     def refresh_chats():
         nonlocal current
         with dispatch_lock:
@@ -496,9 +619,19 @@ def serve(resolved):
                         emit('material_package', package)
                         if action == 'materials_archive':
                             emit('material_archive_list', materials.list_summaries(archived=True, token=token))
+                    elif action in ('keeper_list', 'keeper_open', 'keeper_test_request',
+                                    'keeper_request'):
+                        if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
+                        result = keeper_bridge_command(keeper_commands, cmd,
+                                                       test_enabled=keeper_test_enabled)
+                        if result is not None:
+                            emit(*result)
                     elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
-                    elif action == 'ready': ui_ready.set()
+                    elif action == 'ready':
+                        if keeper_test_enabled and not ui_ready.is_set():
+                            keeper_commands.resume_queued()
+                        ui_ready.set()
                     elif action == 'export_diagnostics':
                         report = export_report(service.home, code=code, tasks=service.list_turns(token=token))
                         emit('notice', '诊断报告已导出：' + str(report))
@@ -506,6 +639,7 @@ def serve(resolved):
                         exiting.set()
                         for cancel in web_jobs.values():cancel.set()
                         for cancel in fulltext_jobs.values():cancel.set()
+                        keeper_runtime.stop()
                         scheduler.stopped=True
                         for turn in service.recoverable_turns(token=token):
                             while turn['status'] == 'running':
@@ -618,6 +752,7 @@ def serve(resolved):
         outgoing.close()
         incoming.close()
         connection.close()
+        keeper_runtime.stop()
         scheduler.stop()
         app.closed = True; app.stop(); app.answers.put(None)
         if exit_code:

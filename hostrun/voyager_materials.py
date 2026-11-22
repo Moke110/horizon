@@ -479,6 +479,33 @@ class MaterialsService(MaterialLifecycle):
                    (material_id, owner_id, content_hash, snapshot.get('original_hash')))
         return reference
 
+    def validate_citation(self, db, citation):
+        """Read-only verification of a saved material version, excerpt and locator.
+
+        Keeper previews must never bind a reference, download a source or write
+        any material row. This method only reads the committed material and its
+        immutable snapshot, then reports the pinned metadata an owner would use.
+        """
+        material = _record(db, citation.get('material_id'))
+        version = citation.get('material_version')
+        if version is not None and material['version'] != version:
+            raise CommandError('version_conflict', '资料版本已更新，请重新核对快照')
+        body = self._read_blob(material['snapshot']['content_hash']).decode('utf8')
+        anchor = _citation_anchor(material, body, citation['excerpt'],
+                                  citation['locator'])
+        reference = {
+            'material_id': material['material_id'],
+            'material_version': material['version'],
+            'content_hash': material['snapshot']['content_hash'],
+            'source_kind': material['source']['kind'],
+            'title': material['title'],
+        }
+        if 'snapshot_id' in material['snapshot']:
+            reference['snapshot_id'] = material['snapshot']['snapshot_id']
+        reference['anchor'] = anchor
+        reference['source_label'] = material['source'].get('label')
+        return reference
+
     def knowledge_reference(self, db, material_id, excerpt, *, card_id, token):
         """Verify and bind a Knowledge Card citation on the caller's transaction."""
         self._authorize(token)

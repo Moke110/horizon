@@ -93,3 +93,50 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .knowledge-history-form label{flex:1;min-width:240px;color:#b9bbc4;font-size:12px}
 .knowledge-history-form input{display:block;width:100%;max-width:none;margin-top:5px}
 @media(max-width:980px){.knowledge-history-snapshots{grid-template-columns:1fr}.knowledge-history{padding:14px}.knowledge-history-head{flex-direction:column}.knowledge-history-actions{width:100%}}
+
+.inline-link{display:inline;margin-left:6px;padding:1px 6px;border:1px solid #44506a;border-radius:5px;color:#a9bde6;font-size:11px;background:transparent}
+.trace .inline-link:hover{background:#30343d}
+.workbench-badge-test{color:#e7c27d}
+.workbench-error-inline{margin:10px 10px 0}
+.workbench-pending-intro h2{margin-bottom:8px}
+.workbench-pending-intro p{max-width:760px}
+.keeper-proposal{overflow-wrap:anywhere}
+.keeper-proposal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid #303035}
+.keeper-proposal-head>div:first-child{min-width:0}
+.keeper-proposal-head h2{margin:6px 0 5px;font-size:21px;font-weight:560;line-height:1.45}
+.keeper-proposal-head p{margin:0;color:#8d909a;font-size:12px;line-height:1.6}
+.keeper-proposal-actions{display:flex;flex-direction:column;align-items:flex-end;gap:9px;flex-shrink:0}
+.keeper-proposal-actions>button{border:1px solid #3c3d44;padding:6px 11px;font-size:12px}
+.keeper-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.keeper-badge{border:1px solid #44506a;border-radius:5px;padding:2px 7px;color:#a9bde6;background:#202631;font-size:10.5px;line-height:1.5}
+.keeper-badge-status{border-color:#4f6a58;color:#a9d6b9;background:#1d2822}
+.keeper-badge-test{border-color:#6a5a3d;color:#e7c27d;background:#2a251c}
+.keeper-meta{border:1px solid #34343b;border-radius:10px;padding:12px 14px;background:#18181c;margin-bottom:18px}
+.keeper-meta dl{display:grid;grid-template-columns:minmax(86px,auto) minmax(0,1fr);gap:5px 14px;margin:0;font-size:12px;line-height:1.6}
+.keeper-meta dt{color:#8f929c}
+.keeper-meta dd{margin:0;overflow-wrap:anywhere}
+.keeper-loading{margin:8px 0 14px}
+.keeper-group{margin-top:20px}
+.keeper-group>h3{margin:0 0 8px;font-size:15px;font-weight:560;color:#c7c9d2}
+.keeper-change{border:1px solid #3a3a42;border-radius:10px;padding:14px;margin:10px 0;background:#1c1c20}
+.keeper-change-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.keeper-change-head strong{font-size:14px;font-weight:560;line-height:1.55}
+.keeper-action{border:1px solid #53698f;border-radius:5px;padding:1px 6px;color:#b9c9ec;font-size:10.5px}
+.keeper-change-id{color:#8d909a;font-size:11px;overflow-wrap:anywhere}
+.keeper-values{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:11px 0}
+.keeper-value{border:1px solid #34343b;border-radius:8px;padding:10px;background:#18181c;min-width:0}
+.keeper-value h4{margin:0 0 6px;font-size:12px;font-weight:550;color:#b9bbc4}
+.keeper-value-text,.keeper-value-empty{margin:0;color:#d9dbe2;font-size:12px;line-height:1.65;white-space:pre-wrap}
+.keeper-value-empty{color:#7f828c}
+.keeper-value-more summary{cursor:pointer;color:#c4c6cf;font-size:12px;line-height:1.65;white-space:pre-wrap}
+.keeper-value-more pre{margin:8px 0 0;font:inherit;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.keeper-reason{margin:10px 0 0;color:#c4c6cf;font-size:12px;line-height:1.65}
+.keeper-sources{margin-top:12px}
+.keeper-sources h4{margin:0 0 6px;font-size:12px;font-weight:550;color:#b9bbc4}
+.keeper-sources ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.keeper-source{border-left:3px solid #53698f;border-radius:0 7px 7px 0;padding:8px 10px;background:#181b22}
+.keeper-source p{margin:0;color:#a9abb5;font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}
+.keeper-source p.keeper-source-locator{color:#8d909a}
+.keeper-source blockquote{margin:6px 0 0;color:#d8dae2;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.keeper-empty{margin:16px 0 0}
+@media(max-width:980px){.keeper-proposal-head{flex-direction:column}.keeper-proposal-actions{width:100%;align-items:flex-start}.keeper-badges{justify-content:flex-start}.keeper-values{grid-template-columns:1fr}}

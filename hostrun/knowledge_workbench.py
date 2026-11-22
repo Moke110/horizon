@@ -16,8 +16,8 @@ nothing instead of listing the whole database.
 Scopes are explicit. ``active`` is the current known set: active known Cards
 and Themes, including ``questionable`` and ``source_pending`` ones, plus
 following Frontiers. ``inactive`` is archived Cards and Themes plus paused,
-resolved and deleted Frontiers. ``pending`` is reserved for the Keeper's
-unconfirmed records; until that owner exists it is always empty.
+resolved and deleted Frontiers. Pending confirmation cards are returned by
+Keeper separately from this committed-knowledge query.
 
 Relations are direct, typed and bidirectional: Card/Card and Theme/Card only,
 no transitive closure and no Frontier edges. ``related_to`` names one typed
@@ -255,7 +255,7 @@ class KnowledgeWorkbenchService:
         if query.strip() and not terms:
             return {"results": [], "total": 0, "offset": offset, "limit": limit}
         if selected_scope == "pending":
-            # No Keeper-owned record exists yet, so nothing is pending.
+            # Pending proposals are read through Keeper, outside known search.
             return {"results": [], "total": 0, "offset": offset, "limit": limit}
 
         rows = self._rows()

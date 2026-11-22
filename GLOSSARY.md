@@ -11,6 +11,8 @@
 | Knowledge Card | 知识卡片 | A knowledge unit within the Knowledge Base |
 | Theme | 命题 | An evidence-backed claim within the Knowledge Base |
 | Explorer | 探索者 | A person using Horizon |
+| Keeper | 知识库管理员 | The child role that reviews evidence, possible duplicates and relationships before the Explorer sees a proposal |
+| Confirmation card | 确认卡 | A related group of proposed knowledge changes that the Explorer reviews together |
 
 Use these names in product copy, documentation and Agent explanations. Explorer names the person, not an Agent or Windows File Explorer. Technical protocol roles such as `user` and existing identity fields such as `owner` keep their technical meanings.
 
