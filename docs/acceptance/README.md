@@ -525,3 +525,31 @@ uses the installed desktop and explicitly marked pre-Editor requests attached
 to completed Agent tasks. The local workbench and knowledge changes require
 no Feishu account. Physical Mac testing and the Mac test suite and handbook
 are tracked in the final delivery phase. [Spec 3 evidence](https://github.com/Moke110/horizon/issues/183)
+
+## Closed-spec source audit (#239)
+
+A fresh worktree of `617a2b4` on Windows on 2026-11-23 contained the three completed numbered specifications (#181–183). GitHub recorded the superseded #120–127 as closed without implementation. The following index connects the approved ticket criteria and the historical live evidence above to the tracked source entry points. Paths in the last column are relative to the checkout.
+
+| Spec and tickets | Behavior | Source entry points |
+|---|---|---|
+| #181 / #188 | Tray, exit, recoverable failure | `desktop/src/main.ts`, `agent/src/main.ts`, `hostrun/desktop_worker.py` |
+| #189 | Concurrent schedules, offline catch-up and coverage | `hostrun/agent_scheduling.py` |
+| #190 | Delivery receipts and unknown-result recovery | `hostrun/agent_delivery.py` |
+| #191 | Integrated Agent behavior | `hostrun/agent_service.py`, `agent/src/main.ts` |
+| #182 / #192 | Scope, exclusions and query budget | `hostrun/voyager_service.py` |
+| #193, #194 | arXiv/Europe PMC and DOI discovery | `hostrun/voyager_sources.py`, `hostrun/voyager_doi_sources.py` |
+| #195, #196 | Web budget and incremental subscriptions | `hostrun/voyager_tavily.py`, `hostrun/voyager_subscriptions.py` |
+| #197 | Relevance, counterevidence and coverage | `hostrun/voyager_relevance.py` |
+| #198, #199 | Text snapshots, PDF extraction and reader | `hostrun/voyager_materials.py`, `hostrun/pdf_worker.py`, `desktop/src/PdfReader.tsx` |
+| #200, #201 | Web snapshots and versioned full text | `hostrun/voyager_web.py`, `hostrun/voyager_web_renderer.py`, `hostrun/voyager_fulltext.py` |
+| #202, #203 | Waiting for full text, archive and reclamation | `hostrun/voyager_pending.py`, `hostrun/voyager_late_fulltext.py`, `hostrun/voyager_material_lifecycle.py` |
+| #204 | Integrated discovery and child evidence | `hostrun/voyager_service.py`, `hostrun/voyager_child.py` |
+| #183 / #205 | Frontier creation and real scope provider | `hostrun/frontier.py`, `hostrun/voyager_service.py` |
+| #206, #207 | Manual cards, conditions and opposing evidence | `hostrun/knowledge_cards.py`, `hostrun/knowledge_themes.py` |
+| #208, #209 | Workbench search, version history and undo | `hostrun/knowledge_workbench.py`, `hostrun/knowledge_history.py` |
+| #210, #211 | Sourced proposals and atomic decisions | `hostrun/keeper.py`, `hostrun/keeper_decisions.py` |
+| #212, #213 | Conflict revisions, merge and group undo | `hostrun/keeper_revisions.py`, `hostrun/keeper_merge.py`, `hostrun/keeper_group_undo.py` |
+
+Built Agent from its lockfile with `npm ci` and `npm run build` in `agent/`. The packaged-code entry point `npm run check` reported horizon-pi 1.5.0. Built desktop renderer/main from its lockfile with lifecycle scripts disabled for dependency installation. The clean checkout ran 12 Keeper renderer tests and the Python Agent, Frontier, Knowledge, Keeper and Voyager test modules (352 passed, two skipped). The Python environment supplied dependencies only. This run covered source behavior. It did not exercise provider credentials, interactive desktop visuals, installation or release state.
+
+All local Spec 2/3 ticket branch tips were ancestors of this checkout. The eight modified tracked files and untracked Voyager child module in the old #204 worktree matched Git blobs in ancestor `9cb5052` individually. The old #205 worktree had no tracked changes or extra implementation files under the Agent, desktop or host runtime source directories. No code transplant was required for these worktrees.
