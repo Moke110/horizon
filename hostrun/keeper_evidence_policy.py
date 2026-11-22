@@ -167,8 +167,35 @@ def change_intent(change):
     else:
         delta = _update_delta(kind, change.get("before"), change.get("after"))
         identity = change.get("id")
-    ordered = tuple(sorted(delta, key=repr))
+    ordered = tuple(sorted(delta + _source_bearing_tokens(change), key=repr))
     return {"kind": kind, "action": action, "id": identity, "delta": ordered}
+
+
+def _source_bearing_tokens(change):
+    """K9 merges and supplements are distinguished by their exact citations.
+
+    Ordinary K6/K7 intents keep their historical editable-field identity. A
+    merge or explicit source addition is a different request when its source
+    set or donor pin differs, so a rejection cannot swallow a genuinely new
+    citation set or a later K8 revision of the same survivor.
+    """
+    if change.get("kind") != "card" \
+            or not (change.get("merge_from") is not None
+                    or change.get("add_sources") is True):
+        return ()
+    marker = change.get("merge_from")
+    tokens = []
+    if marker is not None:
+        tokens.append(("merge_from", _canonical({
+            "card_id": marker.get("card_id"),
+            "version": marker.get("version")})))
+    for source in _sources(change):
+        tokens.append(("source", _canonical({
+            field: source.get(field)
+            for field in ("material_id", "material_version", "locator",
+                          "excerpt", "content_hash")
+        })))
+    return tuple(tokens)
 
 
 def intent(entry):
@@ -293,8 +320,13 @@ def _has_effect(change):
     if change.get("action") != "update":
         return True
     before, after = change.get("before") or {}, change.get("after") or {}
-    return any(before.get(field) != after.get(field)
-               for field in _EDITABLE_FIELDS[change["kind"]])
+    if any(before.get(field) != after.get(field)
+           for field in _EDITABLE_FIELDS[change["kind"]]):
+        return True
+    if change.get("merge_from") is not None:
+        return True
+    return change.get("add_sources") is True \
+        and before.get("sources") != after.get("sources")
 
 
 def review_policy(db, entries, command=None, *, require_matching_supersedes=True):

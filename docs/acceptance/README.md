@@ -496,3 +496,32 @@ processes. Installed checks with IANA source snapshots covered concurrent
 edits, stale approvals, repeated operations and cancellation. The Windows
 suite passed 1,671 tests with 15 skips and two dependency warnings. Both
 renderer regression tests passed. [K8 acceptance evidence](https://github.com/Moke110/horizon/issues/212)
+
+## K9 Keeper merges, opposing evidence and group undo — 2026-11-23
+
+The Windows x64 candidate `0.1.0-k9.1` built twice from `d6df854` with ZIP
+SHA-256 `b07ae675206ff0e71885120f37113ea4f30e96167d9c211d70de1e64676e80cf`
+and a matching 21,196-file manifest. The seven-stage installation and
+distribution wrapper passed. The installed runtime used saved WHATWG and W3C
+snapshots to verify exact duplicate supplementation, preservation of opposing
+citations, and an explicit two-card merge with inbound relation changes. A
+similar-name Card stayed independent. A failure on the second undo write left
+the group unchanged. A later manual edit blocked undo, and repeating the same
+operation returned its existing receipt.
+
+The Explorer confirmed the GUI sequence. Three screenshots showed the merge,
+the opposing sources and the independent approval and undo receipts. SQLite
+readback found all four owners at versions 1, 2 and 3, with the old approval
+preserved. The approved Theme relation kept the reviewed survivor at v1. The
+undo pinned the restored donor at v3. A separate readback and undo using a
+copy of the earlier K8.2 accepted data restored a v3 record to v4 while keeping
+the manual body and the original approval. Explicit desktop exit returned 0
+with no remaining instance processes. The Windows suite passed 1,695 tests
+with 15 skips and two dependency warnings. All 12 renderer tests passed.
+[K9 acceptance evidence](https://github.com/Moke110/horizon/issues/213)
+
+Spec 3 closes the local knowledge and Keeper stage. The Windows evidence
+uses the installed desktop and explicitly marked pre-Editor requests attached
+to completed Agent tasks. The local workbench and knowledge changes require
+no Feishu account. Physical Mac testing and the Mac test suite and handbook
+are tracked in the final delivery phase. [Spec 3 evidence](https://github.com/Moke110/horizon/issues/183)

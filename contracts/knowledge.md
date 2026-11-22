@@ -40,6 +40,20 @@ Keeper rebuilds the selected changes against current owners, preserves unrelated
 
 Reissuing the same rejected change on the same grounds returns no new card. An explicit `supersedes_proposal_id` and `new_evidence_reason` describe why the same change should be considered with new evidence. A recaptured or reordered copy of the same evidence does not satisfy that requirement.
 
+### Card merges and counterevidence
+
+An explicit Knowledge Card merge identifies the surviving Card in an update change and names the other Card and its pinned version in `fields.merge_from: {card_id, version}`. The request includes a matching delete change, which archives that Card. Active records linking to the archived Card need explicit redirects in the same approval group. The proposal shows the content, citations and relationships the survivor will retain and how the incoming relationships change. Repeated relations are combined. A redirected Theme relationship keeps the survivor version shown for review, which can precede the new Card version produced by that same approval. A similar name alone never triggers a merge.
+
+If a proposed creation matches one active Card after exact title normalization, Keeper can instead propose adding genuinely new citations to that same Card. Existing content stays in place. An explicit update can request citation additions with `fields.add_sources: true`. New citations carry reviewed material versions, locators and excerpts. A same-evidence duplicate identifies the existing Card so the request can be reconsidered.
+
+For a Keeper Theme update, an opposing citation can supplement existing evidence on the same Theme. The reviewed plan shows both sides, the pinned sources and any proposed applicability conditions. Existing citations retain their identity, source and direction. A proposal can refine the explanation for an existing citation by naming its evidence ID.
+
+### Undoing an approved group
+
+The authenticated `keeper_undo_preview` action takes `schema_version: 1`, `operation_id`, `proposal_id`, and `revision`. It reads the approved receipt with the owners' immutable histories and previews the current state and proposed restoration for every affected record. If a target has been edited since approval, the preview shows the current differences and blocks the whole undo.
+
+The authenticated `keeper_undo` action also requires the previewed ordered `expected_versions` and `preview_token`, and accepts a reason of up to 500 UTF-8 bytes. The service verifies the preview again under the owner write transaction. A successful undo commits new owner versions, events and the Keeper undo receipt together. The original approval and its history remain readable. Archived records restored by undo retain their identity, and restored Theme relationships can bind to the new versions of Cards in the same group. Historical pins to removed materials remain marked removed. Keeper versions are reversed from the group in the workbench. An identical retry returns the same undo receipt, and a stale preview or a new operation after the group has already been undone makes no changes.
+
 ## Version history and undo
 
 The authenticated desktop actions `knowledge_history`, `knowledge_undo_preview` and `knowledge_undo` emit events of the same name. Each takes `schema_version: 1`, `kind`, `id` and `operation_id`. The last two accept `target_version`, which identifies the version produced by the edit being undone. The history response carries `current_version`, `total`, `offset`, `limit` and newest-first `entries`. Each entry shows its committed version, action, Explorer, time, optional reason, and the complete snapshots before and after. The first version has no previous snapshot. Manual mutation commands accept an optional `reason` of up to 500 UTF-8 bytes. Older edits without a recorded reason remain readable.

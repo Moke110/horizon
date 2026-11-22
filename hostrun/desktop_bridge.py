@@ -17,6 +17,7 @@ from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.knowledge_history import KnowledgeHistoryService
+from hostrun.keeper_group_undo import KeeperGroupUndo
 from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 from hostrun.model_catalog import providers
@@ -48,6 +49,10 @@ def keeper_bridge_command(commands, command, *, test_enabled):
         return commands.read(command)
     if action == 'keeper_decide':
         return commands.decide(command)
+    if action == 'keeper_undo_preview':
+        return commands.undo_preview(command)
+    if action == 'keeper_undo':
+        return commands.undo(command)
     if action == 'keeper_revise':
         return commands.revise(command)
     if action == 'keeper_audit':
@@ -92,6 +97,104 @@ class KeeperCommands:
             return 'keeper_open', {'operation_id': command.get('operation_id'),
                                    'proposal': proposal}
         raise CommandError('invalid_command', 'Unknown Keeper action')
+
+    @staticmethod
+    def _undo_payload(command, *, commit):
+        """Normalize group-undo input; the principal is never caller-supplied."""
+        _reject_caller_authority(command)
+        if not isinstance(command, dict):
+            raise CommandError('invalid_command', 'Undo command must be an object')
+        allowed = {'action', 'schema_version', 'operation_id', 'proposal_id',
+                   'revision'}
+        if commit:
+            allowed |= {'expected_versions', 'preview_token', 'reason'}
+        if set(command) - allowed:
+            raise CommandError('invalid_command', 'Undo contains unsupported fields')
+        if type(command.get('schema_version')) is not int \
+                or command['schema_version'] != 1:
+            raise CommandError('unsupported_schema', 'Unsupported schema_version')
+        operation_id = command.get('operation_id')
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise CommandError('invalid_command', 'operation_id is required')
+        proposal_id = command.get('proposal_id')
+        if not isinstance(proposal_id, str) or not proposal_id.strip():
+            raise CommandError('invalid_command', 'proposal_id is required')
+        revision = command.get('revision')
+        if type(revision) is not int or revision < 1:
+            raise CommandError('invalid_command', 'revision must be a positive integer')
+        payload = {'schema_version': 1, 'operation_id': operation_id,
+                   'proposal_id': proposal_id, 'revision': revision}
+        if commit:
+            expected = command.get('expected_versions')
+            if not isinstance(expected, list) or not expected:
+                raise CommandError('invalid_command',
+                                   'expected_versions must be a nonempty list')
+            for version in expected:
+                if type(version) is not int or version < 1:
+                    raise CommandError(
+                        'invalid_command',
+                        'expected_versions entries must be positive integers')
+            token = command.get('preview_token')
+            if not isinstance(token, str) or not token or not token.isascii():
+                raise CommandError('invalid_command', 'preview_token is required')
+            payload['expected_versions'] = list(expected)
+            payload['preview_token'] = token
+            if 'reason' in command:
+                payload['reason'] = command['reason']
+        return payload
+
+    def undo_preview(self, command):
+        """Review a whole-group reversal under the trusted Explorer principal."""
+        payload = self._undo_payload(command, commit=False)
+        from hostrun.keeper import KeeperPrincipal
+        try:
+            result = KeeperGroupUndo(self._service()).preview(
+                payload, token=self.token,
+                principal=KeeperPrincipal('explorer', False))
+        except CommandError:
+            raise
+        except PermissionError as error:
+            raise CommandError('unauthorized',
+                               'Keeper undo preview was not authorized') from error
+        except Exception as error:
+            raise CommandError('keeper_failed',
+                               'Keeper undo preview could not be completed') from error
+        if not isinstance(result, dict):
+            raise CommandError('invalid_response',
+                               'Keeper undo preview returned no plan')
+        for field in ('operation_id', 'proposal_id', 'revision'):
+            if result.get(field) != payload[field]:
+                raise CommandError('invalid_response',
+                                   'Keeper undo preview does not match the request')
+        return 'keeper_undo_preview', result
+
+    def undo(self, command):
+        """Commit one whole-group reversal under the trusted Explorer principal."""
+        payload = self._undo_payload(command, commit=True)
+        from hostrun.keeper import KeeperPrincipal
+        try:
+            result = KeeperGroupUndo(self._service()).commit(
+                payload, token=self.token,
+                principal=KeeperPrincipal('explorer', False))
+        except CommandError:
+            raise
+        except PermissionError as error:
+            raise CommandError('unauthorized',
+                               'Keeper undo was not authorized') from error
+        except Exception as error:
+            raise CommandError('keeper_failed',
+                               'Keeper undo could not be completed') from error
+        if not isinstance(result, dict):
+            raise CommandError('invalid_response',
+                               'Keeper undo returned no receipt')
+        for field in ('operation_id', 'proposal_id', 'revision'):
+            if result.get(field) != payload[field]:
+                raise CommandError('invalid_response',
+                                   'Keeper undo receipt does not match the request')
+        if result.get('status') != 'undone' or not isinstance(result.get('applied'), list):
+            raise CommandError('invalid_response',
+                               'Keeper undo receipt has an unexpected status')
+        return 'keeper_undo', result
 
     @staticmethod
     def _decide_command(command):
@@ -798,6 +901,7 @@ def serve(resolved):
                         if action == 'materials_archive':
                             emit('material_archive_list', materials.list_summaries(archived=True, token=token))
                     elif action in ('keeper_list', 'keeper_open', 'keeper_decide',
+                                    'keeper_undo_preview', 'keeper_undo',
                                     'keeper_revise', 'keeper_audit',
                                     'keeper_test_request', 'keeper_request'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')

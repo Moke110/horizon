@@ -227,6 +227,12 @@ def _card_command(change, command, action):
         for name in _CARD_FIELDS:
             if before.get(name) != after.get(name):
                 command[name] = copy.deepcopy(after.get(name))
+        if before.get("sources") != after.get("sources"):
+            # Merge and explicit supplementation add only owner-validated pins.
+            command["sources"] = [
+                {name: copy.deepcopy(source[name])
+                 for name in ("material_id", "locator", "excerpt")}
+                for source in after.get("sources", [])]
 
 
 def _theme_command(change, command, action):
