@@ -124,7 +124,7 @@ def _change_identity(change, kind, position):
     return identity[:512]
 
 
-def _evidence_groups(groups):
+def _evidence_groups(groups, *, revision=False):
     """Project the core context or the documented evidence shape into one contract."""
     if not isinstance(groups, list):
         return []
@@ -142,7 +142,10 @@ def _evidence_groups(groups):
                 changes.append(change)
                 continue
             kind = change.get('kind') if isinstance(change.get('kind'), str) else ''
-            item = dict(change)
+            if revision:
+                item = {"action": change.get("action")}
+            else:
+                item = dict(change)
             item['change_id'] = change.get('change_id') or '%s:change-%d' % (proposal_id, position + 1)
             item['entity'] = _change_identity(change, kind, position)
             source = _change_source_fields(change)
@@ -152,6 +155,11 @@ def _evidence_groups(groups):
             fields = change.get('fields') if isinstance(change.get('fields'), dict) else {}
             if relations is None:
                 relations = fields.get('relations') or fields.get('related_cards')
+            if revision and relations is None:
+                relation_field = {'card': 'relations', 'theme': 'related_cards'}.get(kind)
+                before, after = change.get('before') or {}, change.get('after') or {}
+                if relation_field and before.get(relation_field) != after.get(relation_field):
+                    relations = after.get(relation_field)
             if relations is not None:
                 item['relations'] = relations
             changes.append(item)
@@ -222,9 +230,9 @@ class KeeperRuntime:
         provenance = context.get('provenance')
         if provenance is None:
             provenance = {}
-        groups = _evidence_groups(context.get('groups'))
         if not isinstance(provenance, dict):
             raise KeeperRuntimeError('provenance must be an object')
+        groups = _evidence_groups(context.get('groups'), revision=bool(context.get('review_id')))
         if not groups:
             raise KeeperRuntimeError('groups must be a nonempty list')
         if self._cancelled.is_set():
@@ -243,7 +251,7 @@ class KeeperRuntime:
             child = self.agent.start_keeper_child({
                 'schema_version': 1, 'operation_id': start_operation, 'task_id': task_id,
                 'input_version': task_version, 'input_text': self._input_text(context),
-                'snapshots': {'keeper': {'request_id': request_id}},
+                'snapshots': self._snapshots(context, attempting=False),
             }, token=self.token)
         child = self._refresh_child(task_id, child['child_id'])
         if child['status'] != 'running':
@@ -255,7 +263,7 @@ class KeeperRuntime:
         child = self.agent.attempt_child({
             'schema_version': 1, 'operation_id': _operation(request_id, 'attempt:' + str(child['version'])),
             'child_id': child['child_id'], 'expected_version': child['version'],
-            'snapshots': {'keeper': {'request_id': request_id, 'report_id': report_id}},
+            'snapshots': self._snapshots(context, attempting=True),
         }, token=self.token)
         child = self._refresh_child(task_id, child['child_id'])
         try:
@@ -305,7 +313,21 @@ class KeeperRuntime:
     def _input_text(context):
         text = ('Review bounded knowledge evidence for request %s, task %s, report %s.' %
                 (context['request_id'], context['task_id'], context['report_id']))
-        return text[:16000]
+        feedback = context.get('feedback')
+        if isinstance(feedback, str) and feedback.strip():
+            text += ' Explorer feedback: ' + feedback
+        return text
+
+    @staticmethod
+    def _snapshots(context, *, attempting):
+        """Bounded ledger metadata; the task body never enters a snapshot."""
+        metadata = {'request_id': context['request_id']}
+        if attempting or 'review_id' in context:
+            metadata['report_id'] = context['report_id']
+        for field in ('review_id', 'proposal_id', 'revision', 'feedback', 'fingerprint'):
+            if field in context:
+                metadata[field] = context[field]
+        return {'keeper': metadata}
 
     def _run_worker(self, payload):
         command = [self.python, '-X', 'utf8', '-m', 'hostrun.keeper_worker']

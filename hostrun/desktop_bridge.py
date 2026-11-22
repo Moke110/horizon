@@ -48,6 +48,8 @@ def keeper_bridge_command(commands, command, *, test_enabled):
         return commands.read(command)
     if action == 'keeper_decide':
         return commands.decide(command)
+    if action == 'keeper_revise':
+        return commands.revise(command)
     if action == 'keeper_audit':
         return commands.audit(command)
     if action == 'keeper_test_request':
@@ -156,13 +158,49 @@ class KeeperCommands:
                 raise CommandError('invalid_response',
                                    'Keeper decision receipt does not match the request')
         expected_status = 'approved' if payload['decision'] == 'approve' else 'rejected'
-        if result.get('status') != expected_status:
+        if result.get('status') == 'revising':
+            review_id = result.get('review_id')
+            if payload['decision'] != 'approve' or not isinstance(review_id, str) \
+                    or not review_id.strip() or result.get('applied') != []:
+                raise CommandError('invalid_response',
+                                   'Keeper decision receipt has an unexpected status')
+        elif result.get('status') != expected_status:
             raise CommandError('invalid_response',
                                'Keeper decision receipt has an unexpected status')
         if not isinstance(result.get('applied'), list):
             raise CommandError('invalid_response',
                                'Keeper decision receipt has no applied list')
         return 'keeper_decide', result
+
+    def revise(self, command):
+        """Adjust or cancel one revision under a trusted Explorer principal."""
+        _reject_caller_authority(command)
+        payload = {key: value for key, value in command.items() if key != 'action'}
+        from hostrun.keeper import KeeperPrincipal
+        try:
+            result = self._service().revise(
+                payload, token=self.token,
+                principal=KeeperPrincipal('explorer', False))
+        except CommandError:
+            raise
+        except PermissionError as error:
+            raise CommandError('unauthorized',
+                               'Keeper revision was not authorized') from error
+        except Exception as error:
+            raise CommandError('keeper_failed',
+                               'Keeper revision could not be completed') from error
+        if not isinstance(result, dict):
+            raise CommandError('invalid_response', 'Keeper revision returned no receipt')
+        for field in ('operation_id', 'proposal_id', 'revision', 'decision'):
+            if result.get(field) != payload.get(field):
+                raise CommandError('invalid_response',
+                                   'Keeper revision receipt does not match the request')
+        expected_status = 'revising' if payload['decision'] == 'adjust' else 'cancelled'
+        if result.get('status') != expected_status or result.get('applied') != []:
+            raise CommandError('invalid_response', 'Keeper revision receipt has an unexpected status')
+        if expected_status == 'revising' and not result.get('review_id'):
+            raise CommandError('invalid_response', 'Keeper revision receipt is missing its review ID')
+        return 'keeper_revise', result
 
     @staticmethod
     def _audit_command(command):
@@ -206,6 +244,10 @@ class KeeperCommands:
         for request_id in self._service().queued(token=self.token):
             self._queue_review(request_id)
 
+    def resume_queued_revisions(self):
+        for review_id in self._service().queued_revisions(token=self.token):
+            self.queue_revision(review_id)
+
     def _queue_review(self, request_id):
         with self._lock:
             if request_id in self._jobs:
@@ -229,6 +271,46 @@ class KeeperCommands:
         else:
             self.emit('keeper_review_error', {'request_id': request_id,
                                               'message': error[:1000]})
+
+    def queue_revision(self, review_id):
+        """Queue one durable revision job behind the existing job lock."""
+        if not isinstance(review_id, str) or not review_id.strip():
+            return
+        key = ('revision', review_id)
+        with self._lock:
+            if key in self._jobs:
+                return
+            self._jobs.add(key)
+        threading.Thread(target=self._review_revision, args=(review_id,),
+                         daemon=True).start()
+
+    def _review_revision(self, review_id):
+        payload, error = None, ''
+        try:
+            service = self._service()
+            value = None
+            for _attempt in range(3):
+                value = service.review_revision(
+                    review_id, token=self.token, dispatch=self.runtime.dispatch)
+                if not isinstance(value, dict):
+                    raise CommandError('invalid_response',
+                                       'Keeper revision returned no receipt')
+                if value.get('review_id') != review_id:
+                    raise CommandError('invalid_response',
+                                       'Keeper revision receipt belongs to another job')
+                if value.get('status') != 'queued' \
+                        or value.get('reason') != 'snapshot_changed':
+                    break
+            payload = value
+        except Exception:
+            error = 'Keeper revision could not be completed'
+        with self._lock:
+            self._jobs.discard(('revision', review_id))
+        if payload is not None:
+            self.emit('keeper_revision', payload)
+        else:
+            self.emit('keeper_revision_error', {'review_id': review_id,
+                                                'message': error[:1000]})
 
 
 def authenticate(incoming, token):
@@ -716,17 +798,25 @@ def serve(resolved):
                         if action == 'materials_archive':
                             emit('material_archive_list', materials.list_summaries(archived=True, token=token))
                     elif action in ('keeper_list', 'keeper_open', 'keeper_decide',
-                                    'keeper_audit', 'keeper_test_request', 'keeper_request'):
+                                    'keeper_revise', 'keeper_audit',
+                                    'keeper_test_request', 'keeper_request'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         result = keeper_bridge_command(keeper_commands, cmd,
                                                        test_enabled=keeper_test_enabled)
                         if result is not None:
                             emit(*result)
+                            receipt = result[1]
+                            if action in ('keeper_decide', 'keeper_revise') \
+                                    and isinstance(receipt, dict) \
+                                    and receipt.get('status') == 'revising':
+                                keeper_commands.queue_revision(receipt.get('review_id'))
                     elif action == 'schedule_command': service.schedule_command(cmd['command'],token=token)
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
                     elif action == 'ready':
-                        if keeper_test_enabled and not ui_ready.is_set():
-                            keeper_commands.resume_queued()
+                        if not ui_ready.is_set():
+                            if keeper_test_enabled:
+                                keeper_commands.resume_queued()
+                            keeper_commands.resume_queued_revisions()
                         ui_ready.set()
                     elif action == 'export_diagnostics':
                         report = export_report(service.home, code=code, tasks=service.list_turns(token=token))

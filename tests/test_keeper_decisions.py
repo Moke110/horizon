@@ -313,20 +313,30 @@ def test_approval_validation_is_atomic_and_leaves_the_proposal_pending(tmp_path)
         "title": "Changed by hand",
     }, token=TOKEN)
 
-    with pytest.raises(CommandError) as rejected:
-        decide(owner, stale)
-    assert rejected.value.code == "version_conflict"
+    result = decide(owner, stale)
+    assert result["status"] == "revising"
+    assert result["revision"] == 1
+    assert result["applied"] == []
+    assert result["review_id"]
     assert owner.themes.view(theme["theme_id"], token=TOKEN)["version"] == theme["version"]
-    assert owner.keeper.view(identifier, token=TOKEN)["status"] == "pending"
-    assert owner.keeper.audit(identifier, token=TOKEN) == []
+    assert owner.cards.view(card["card_id"], token=TOKEN)["title"] == "Changed by hand"
+    revising = owner.keeper.view(identifier, token=TOKEN)
+    assert revising["status"] == "revising"
+    assert revising["revision"] == 1
+    assert revising["decision"] == result
+    assert [event["type"] for event in owner.keeper.audit(identifier, token=TOKEN)] == \
+        ["keeper.revision_requested"]
 
-    # The stale revision stays pending and a distinct operation can still reject
-    # it without any owner writes; it is never silently rebased.
-    rejected = decide(owner, command(owner, identifier,
-                                     operation="reject-after-stale",
-                                     decision="reject",
-                                     reason="Owner changed."))
-    assert rejected["status"] == "rejected"
+    # The stale revision never silently rebases. Cancelling the revision is
+    # terminal and also leaves every owner record untouched.
+    cancelled = owner.keeper.revise({
+        "schema_version": 1, "operation_id": "cancel-after-stale",
+        "proposal_id": identifier, "revision": 1, "decision": "cancel",
+        "feedback": "The owner changed; stop this revision.",
+    }, token=TOKEN, principal=EXPLORER)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["applied"] == []
+    assert owner.keeper.view(identifier, token=TOKEN)["status"] == "cancelled"
     assert owner.cards.view(card["card_id"], token=TOKEN)["title"] == "Changed by hand"
     assert owner.themes.view(theme["theme_id"], token=TOKEN)["judgement"] == \
         theme["judgement"]

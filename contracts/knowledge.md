@@ -30,6 +30,14 @@ The authenticated `keeper_decide` action binds one Explorer decision to a `propo
 
 Approval validates all expected versions and material references before committing any change. Knowledge records, material bindings, owner operation receipts and events, and the proposal status, receipt and audit commit together. A validation failure leaves the group unapplied. Rejection records the decision without writing knowledge. The same operation and payload replay the original receipt. An operation ID with different payload conflicts, and an already-decided revision cannot be applied again. `keeper_open` returns the saved decision on a terminal card, and authenticated `keeper_audit` reads its audit record.
 
+### Revision and Explorer feedback
+
+If an approval matches the displayed proposal and its ordered pins but a target has since changed, the transaction records the conflict and queues one durable Keeper review. The receipt reports `status=revising`, `code=version_conflict`, an empty `applied` list, and the `review_id`. Commands against a different proposal revision or a different set of displayed pins fail before scheduling a review. A review starts a read-only Keeper child on the same original task and keeps the original completed report ID and version. New conversation turns can continue independently.
+
+The authenticated `keeper_revise` command takes `schema_version: 1`, `operation_id`, `proposal_id`, `revision`, and `decision: adjust|cancel`. An adjustment requires Explorer feedback of at most 500 UTF-8 bytes. It can supply `omit_changes` as displayed change indexes (starting at zero) or `keep_current_fields` as entries with a `change_index` and a list of proposed field names. The feedback is persisted with the original task's review and appears in the audit and child input. The choices govern which modifications Keeper reviews. With feedback alone, Keeper rechecks the existing changes.
+
+Keeper rebuilds the selected changes against current owners, preserves unrelated manual edits, and rechecks source and relationship pins. If a target moves again during review, the service verifies the plan again with a bounded retry. If a safe plan is unavailable it records a returned card. A successful review publishes the same proposal ID at the next revision. `keeper_open` serves the current status and `revision_notes` with the previous reviewed changes, feedback and the new review result. Only an explicit new approval with that revision and its displayed versions can apply the group. Cancellation prevents later review publication. The review queue, feedback, audit and decisions remain available across a restart.
+
 Reissuing the same rejected change on the same grounds returns no new card. An explicit `supersedes_proposal_id` and `new_evidence_reason` describe why the same change should be considered with new evidence. A recaptured or reordered copy of the same evidence does not satisfy that requirement.
 
 ## Version history and undo

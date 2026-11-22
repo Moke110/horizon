@@ -3,17 +3,24 @@ import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEven
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
 import {KnowledgeHistoryPanel,type HistoryKind,type HistoryRecord} from './KnowledgeHistoryPanel';
-import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal} from './KeeperProposalPanel';
+import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,type KeeperProposalStatus,type KeeperRevisionDecision,type KeeperKeepFields,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal,keeperChangedFields,KEEPER_FEEDBACK_LIMIT,keeperFeedbackByteLength} from './KeeperProposalPanel';
 
 type MaterialOption={material_id:string;title:string;version?:number};
 type EntityType='card'|'theme'|'frontier';
 type TypeFilter='all'|EntityType;
 type ScopeFilter='active'|'inactive'|'pending';
-type KeeperStatus='pending'|'approved'|'rejected';
+type KeeperStatus=KeeperProposalStatus;
 type KeeperSelection={proposal_id:string;revision:number|null;status:KeeperStatus;nonce:string};
 type KeeperListState=Record<KeeperStatus,KeeperListEvent|null>;
 type KeeperListRequests=Record<KeeperStatus,string|null>;
-type KeeperDecisionWork={operation_id:string;proposal_id:string;revision:number;decision:KeeperDecisionChoice};
+type KeeperDecisionWork={
+  operation_id:string;
+  proposal_id:string;
+  revision:number;
+  action:'keeper_decide'|'keeper_revise';
+  decision:KeeperDecisionChoice|KeeperRevisionDecision;
+  expectedStatus:'approved'|'rejected'|'revising'|'cancelled';
+};
 type ActiveSelection={type:EntityType;mode:'create'|'open';id?:string;version?:number;nonce:string;previousView?:string};
 type PanelRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 type RelationTarget={kind:'card'|'theme';id:string};
@@ -38,16 +45,74 @@ type SearchValues={query:string;type:TypeFilter;scope:ScopeFilter;relationTarget
 type SearchRequest={operation_id:string;values:SearchValues;offset:number};
 
 const PAGE_SIZE=20;
-const KEEPER_STATUSES:KeeperStatus[]=['pending','approved','rejected'];
-const KEEPER_STATUS_LABEL:Record<KeeperStatus,string>={pending:'待确认',approved:'已批准',rejected:'已拒绝'};
-const EMPTY_KEEPER_LISTS:KeeperListState={pending:null,approved:null,rejected:null};
-const EMPTY_KEEPER_REQUESTS:KeeperListRequests={pending:null,approved:null,rejected:null};
+const KEEPER_STATUSES:KeeperStatus[]=['pending','revising','returned','cancelled','approved','rejected'];
+const KEEPER_STATUS_LABEL:Record<KeeperStatus,string>={
+  pending:'待确认',revising:'修订中',returned:'已退回',cancelled:'已取消',approved:'已批准',rejected:'已拒绝',
+};
+function statusRecord<T>(value:T):Record<KeeperStatus,T>{
+  return {pending:value,revising:value,returned:value,cancelled:value,approved:value,rejected:value};
+}
+const asKeeperStatus=(value:unknown):KeeperStatus|null=>typeof value==='string'
+  &&(KEEPER_STATUSES as string[]).includes(value)?value as KeeperStatus:null;
+const KEEPER_STATUS_RANK:Record<KeeperStatus,number>={
+  pending:0,revising:1,returned:2,cancelled:2,approved:2,rejected:2,
+};
+const EMPTY_KEEPER_LISTS=statusRecord<KeeperListEvent|null>(null);
+type KeeperTerminalEvent={
+  proposal_id:string;
+  revision:number|null;
+  status:KeeperStatus|null;
+  review_id:string|null;
+  job_id:string|null;
+  proposal_status:string|null;
+  job_status:string|null;
+};
+/**
+ * Terminal job results carry the proposal revision under proposal_revision and
+ * the Keeper outcome under proposal_status; `revision` there is the task
+ * revision the job ran from and must never be stored as the proposal revision.
+ * Older revision events used flat `revision`/`status`, so accept both.
+ */
+const readKeeperTerminalEvent=(data:Record<string,unknown>|undefined|null):KeeperTerminalEvent|null=>{
+  if(!data||typeof data!=='object')return null;
+  const proposal_id=typeof data.proposal_id==='string'?data.proposal_id:'';
+  if(!proposal_id)return null;
+  const job_status=typeof data.status==='string'&&data.status?data.status:null;
+  const explicitProposalStatus=typeof data.proposal_status==='string'&&data.proposal_status
+    ?data.proposal_status:null;
+  const proposal_status=explicitProposalStatus||job_status;
+  /* A terminal result's `revision` is the task revision the job ran from;
+     only legacy revision events without proposal_status expose the proposal
+     revision under `revision`. */
+  const revisionSource=typeof data.proposal_revision==='number'?data.proposal_revision
+    :explicitProposalStatus?null:typeof data.revision==='number'?data.revision:null;
+  const revision=typeof revisionSource==='number'&&Number.isInteger(revisionSource)&&revisionSource>0
+    ?revisionSource:null;
+  const review_id=typeof data.review_id==='string'&&data.review_id?data.review_id:null;
+  const job_id=typeof data.job_id==='string'&&data.job_id?data.job_id:null;
+  return {proposal_id,revision,status:asKeeperStatus(proposal_status),review_id,job_id,
+    proposal_status:proposal_status??null,job_status};
+};
+/** Some terminal job events wrap the result; prefer the payload that names a proposal. */
+const keeperEventData=(data:Record<string,unknown>|undefined|null):Record<string,unknown>|undefined=>{
+  if(!data||typeof data!=='object')return undefined;
+  if(typeof data.proposal_id==='string'&&data.proposal_id)return data;
+  const result=(data as {result?:unknown}).result;
+  return result&&typeof result==='object'&&!Array.isArray(result)
+    ?result as Record<string,unknown>:data;
+};
+const keeperProposalReview=(proposal:KeeperProposal):string|null=>{
+  if(typeof proposal.review_id==='string'&&proposal.review_id)return proposal.review_id;
+  const notes=proposal.revision_notes;
+  return notes&&typeof notes.review_id==='string'&&notes.review_id?notes.review_id:null;
+};
 const TYPE_LABEL:Record<EntityType,string>={card:'知识卡片',theme:'命题',frontier:'关注问题'};
 const STATUS_LABEL:Record<string,string>={active:'有效',archived:'已归档',following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 const truncate=(value:string,length=56)=>value.length>length?value.slice(0,length)+'…':value;
 const proposalSearchText=(proposal:KeeperProposal)=>[
-  proposal.proposal_id,proposal.status,proposal.reason,
+  proposal.proposal_id,proposal.status,proposal.reason,proposal.feedback,proposal.review_id,
   keeperDecisionFromProposal(proposal)?.status,keeperDecisionFromProposal(proposal)?.reason,
+  proposal.revision_notes?.feedback,proposal.revision_notes?.reason,
   typeof proposal.decision==='string'?proposal.decision:proposal.decision?.decision,
   proposal.request_id,proposal.task_id,
   proposal.report_id,proposal.child_id,proposal.provenance,
@@ -55,6 +120,10 @@ const proposalSearchText=(proposal:KeeperProposal)=>[
     change.kind,change.action,change.id,change.reason,
     JSON.stringify(change.before??''),JSON.stringify(change.after??''),
     ...(change.sources||[]).flatMap(source=>[source.material_id,source.locator,source.excerpt]),
+  ]),
+  ...(proposal.revision_notes?.previous_changes||[]).flatMap(change=>[
+    change.kind,change.action,change.id,change.reason,
+    JSON.stringify(change.before??''),JSON.stringify(change.after??''),
   ]),
 ].filter(Boolean).join(' ').toLowerCase();
 const targetOf=(value:string):RelationTarget|null=>{
@@ -124,6 +193,7 @@ export function KnowledgeWorkbench({
   const [pendingOpenError,setPendingOpenError]=useState('');
   const [decisionPending,setDecisionPending]=useState<KeeperDecisionWork|null>(null);
   const [decisionError,setDecisionError]=useState('');
+  const [decisionNotice,setDecisionNotice]=useState('');
   const [decisionReceipt,setDecisionReceipt]=useState<KeeperDecision|null>(null);
   const [decisionRefreshError,setDecisionRefreshError]=useState('');
   const results=useRef<HTMLUListElement>(null);
@@ -135,12 +205,16 @@ export function KnowledgeWorkbench({
   const skipHeadingFocus=useRef(false);
   const pendingActive=useRef(false);
   const keeperStatusRef=useRef<KeeperStatus>('pending');
-  const keeperRefreshQueued=useRef<Record<KeeperStatus,boolean>>({pending:false,approved:false,rejected:false});
-  const keeperListPending=useRef<KeeperListRequests>({...EMPTY_KEEPER_REQUESTS});
-  const keeperDataRef=useRef<KeeperListState>(EMPTY_KEEPER_LISTS);
-  const pendingOpenPending=useRef<{operation_id:string;proposal_id:string}|null>(null);
+  const keeperRefreshQueued=useRef<Record<KeeperStatus,boolean>>(statusRecord(false));
+  const keeperListPending=useRef<KeeperListRequests>(statusRecord<string|null>(null));
+  const keeperDataRef=useRef<KeeperListState>(statusRecord<KeeperListEvent|null>(null));
+  const latestRevisionRef=useRef<Record<string,number>>({});
+  const latestStatusRef=useRef<Record<string,{revision:number;status:KeeperStatus}>>({});
+  const reviewHistoryRef=useRef<Record<string,string[]>>({});
+  const pendingOpenPending=useRef<{operation_id:string;proposal_id:string;keepProposal?:boolean}|null>(null);
   const decisionRefreshPending=useRef<{operation_id:string;proposal_id:string;revision:number;status:KeeperStatus}|null>(null);
   const decisionWork=useRef<KeeperDecisionWork|null>(null);
+  const decisionReceiptRef=useRef<KeeperDecision|null>(null);
   const pendingSelectionRef=useRef<KeeperSelection|null>(null);
   const pendingProposalRef=useRef<KeeperProposal|null>(null);
   const pendingCountCallback=useRef(onPendingCount);
@@ -150,7 +224,46 @@ export function KnowledgeWorkbench({
   pendingSelectionRef.current=pendingSelection;
   pendingProposalRef.current=pendingProposal;
   decisionWork.current=decisionPending;
+  decisionReceiptRef.current=decisionReceipt;
   pendingCountCallback.current=onPendingCount;
+
+  const rememberKeeperState=(
+    proposal_id:string,revision:number|null,status:KeeperStatus|null,authoritative=false,
+  )=>{
+    if(!status)return;
+    const prior=latestStatusRef.current[proposal_id];
+    if(prior&&revision!==null&&!authoritative){
+      if(revision<prior.revision)return;
+      if(revision===prior.revision&&KEEPER_STATUS_RANK[status]<KEEPER_STATUS_RANK[prior.status])return;
+    }
+    latestStatusRef.current[proposal_id]={revision:revision??prior?.revision??0,status};
+  };
+
+  /**
+   * Keeper jobs are correlated by review_id (or job_id). A newly seen job may
+   * legitimately move a returned proposal at the same revision back to
+   * revising; an event whose job was already superseded is late and must not
+   * overwrite the newer local state. An authoritative open read resets the
+   * history because the persisted proposal names the current job.
+   */
+  const noteReview=(proposal_id:string,candidate:string|null,{reset=false}:{reset?:boolean}={}):
+    'unknown'|'new'|'current'|'stale'=>{
+    if(!candidate)return 'unknown';
+    const history=reviewHistoryRef.current[proposal_id]||[];
+    if(reset){
+      /* Keep older jobs so a late event from a superseded job is still
+         recognisable; the read names the current job. */
+      const rest=history.filter(item=>item!==candidate);
+      reviewHistoryRef.current[proposal_id]=[...rest,candidate].slice(-20);
+      return 'current';
+    }
+    const index=history.indexOf(candidate);
+    if(index<0){
+      reviewHistoryRef.current[proposal_id]=[...history,candidate].slice(-20);
+      return history.length?'new':'current';
+    }
+    return index===history.length-1?'current':'stale';
+  };
 
   const searchNow=(values:SearchValues,offset:number,background=false)=>{
     const target=targetOf(values.relationTarget);
@@ -188,14 +301,33 @@ export function KnowledgeWorkbench({
     const operation_id=crypto.randomUUID();
     const revision=typeof proposal.revision==='number'?proposal.revision:null;
     pendingOpenPending.current={operation_id,proposal_id:proposal.proposal_id};
+    decisionRefreshPending.current=null;
+    rememberKeeperState(proposal.proposal_id,revision,asKeeperStatus(proposal.status));
+    if(revision!==null)latestRevisionRef.current[proposal.proposal_id]=Math.max(
+      latestRevisionRef.current[proposal.proposal_id]??-1,revision);
     setPendingSelection({proposal_id:proposal.proposal_id,revision,status:keeperStatus,nonce:crypto.randomUUID()});
     setPendingProposal(Array.isArray(proposal.changes)&&proposal.changes.length?proposal:null);
     setPendingOpenLoading(true);
     setPendingOpenError('');
     setDecisionError('');
+    setDecisionNotice('');
     setDecisionReceipt(null);
     setDecisionRefreshError('');
     onCommand({action:'keeper_open',schema_version:1,operation_id,proposal_id:proposal.proposal_id});
+  };
+  const reopenSelectedProposal=(proposal_id:string,revision:number|null=null):boolean=>{
+    const selected=pendingSelectionRef.current;
+    if(!selected||selected.proposal_id!==proposal_id)return false;
+    const visibleRevision=Math.max(
+      typeof selected.revision==='number'?selected.revision:-1,
+      typeof pendingProposalRef.current?.revision==='number'?pendingProposalRef.current.revision:-1);
+    if(revision!==null&&visibleRevision>=0&&revision<visibleRevision)return false;
+    const operation_id=crypto.randomUUID();
+    pendingOpenPending.current={operation_id,proposal_id,keepProposal:true};
+    setPendingOpenLoading(true);
+    setPendingOpenError('');
+    onCommand({action:'keeper_open',schema_version:1,operation_id,proposal_id});
+    return true;
   };
   const retryPendingOpen=()=>{
     const selected=pendingSelection;
@@ -215,6 +347,7 @@ export function KnowledgeWorkbench({
     setPendingOpenLoading(false);
     setPendingOpenError('');
     setDecisionError('');
+    setDecisionNotice('');
     setDecisionReceipt(null);
     setDecisionRefreshError('');
     window.setTimeout(()=>{
@@ -270,6 +403,29 @@ export function KnowledgeWorkbench({
             return;
           }
           setPendingProposal(proposal);
+          pendingProposalRef.current=proposal;
+          const refreshReview=keeperProposalReview(proposal);
+          const knownRevision=latestRevisionRef.current[proposal.proposal_id]??-1;
+          const refreshedRevision=typeof proposal.revision==='number'?proposal.revision:null;
+          if(refreshedRevision!==null&&refreshedRevision<knownRevision){
+            setDecisionRefreshError('决定已提交，但读取的持久状态落后于已知修订；可以重试打开该提议。');
+            return;
+          }
+          if(refreshReview&&(refreshedRevision===null||refreshedRevision>=knownRevision)){
+            noteReview(proposal.proposal_id,refreshReview,{reset:true});
+          }
+          if(refreshedRevision!==null)latestRevisionRef.current[proposal.proposal_id]=Math.max(
+            knownRevision,refreshedRevision);
+          const refreshStatus=asKeeperStatus(proposal.status);
+          rememberKeeperState(proposal.proposal_id,
+            typeof proposal.revision==='number'?proposal.revision:null,refreshStatus,true);
+          setPendingSelection(current=>current&&current.proposal_id===proposal.proposal_id
+            ?{
+              ...current,
+              revision:typeof proposal.revision==='number'?proposal.revision:current.revision,
+              status:refreshStatus||current.status,
+            }
+            :current);
           if(proposal.status===refresh.status){
             setDecisionRefreshError('');
           }else{
@@ -287,36 +443,82 @@ export function KnowledgeWorkbench({
           setPendingOpenError('提议详情响应不完整；可重试。');
           return;
         }
+        const incomingRevision=typeof proposal.revision==='number'&&Number.isInteger(proposal.revision)
+          ?proposal.revision:null;
+        const selected=pendingSelectionRef.current;
+        if(incomingRevision!==null&&selected&&typeof selected.revision==='number'
+          &&incomingRevision<selected.revision)return;
+        const knownRevision=latestRevisionRef.current[proposal.proposal_id]??-1;
+        if(incomingRevision!==null&&incomingRevision<knownRevision){
+          setPendingOpenError('提议详情落后于已知修订；可重试读取当前持久状态。');
+          return;
+        }
+        if(incomingRevision!==null)latestRevisionRef.current[proposal.proposal_id]=Math.max(
+          knownRevision,incomingRevision);
+        const incomingReview=keeperProposalReview(proposal);
+        if(incomingReview&&(incomingRevision===null||incomingRevision>=knownRevision)){
+          noteReview(proposal.proposal_id,incomingReview,{reset:true});
+        }
+        if(incomingRevision!==null&&selected&&typeof selected.revision==='number'
+          &&incomingRevision>selected.revision){
+          setDecisionReceipt(null);
+          setDecisionNotice('');
+          setDecisionError('');
+          setDecisionRefreshError('');
+        }
         setPendingOpenError('');
         setPendingProposal(proposal);
+        const incomingStatus=asKeeperStatus(proposal.status);
+        rememberKeeperState(proposal.proposal_id,incomingRevision,incomingStatus,
+          incomingRevision===null||incomingRevision>=knownRevision);
+        const currentReceipt=decisionReceiptRef.current;
+        if(currentReceipt&&incomingStatus&&currentReceipt.status!==incomingStatus
+          &&incomingStatus!=='pending'){
+          setDecisionReceipt(null);
+          setDecisionNotice('');
+          setDecisionRefreshError('');
+        }
         setPendingSelection(current=>current&&current.proposal_id===proposal.proposal_id
-          ?{...current,revision:typeof proposal.revision==='number'?proposal.revision:current.revision}
+          ?{
+            ...current,
+            revision:incomingRevision??current.revision,
+            status:incomingStatus||current.status,
+          }
           :current);
         return;
       }
-      if(event.kind==='keeper_decide'){
+      if(event.kind==='keeper_decide'||event.kind==='keeper_revise'){
         const work=decisionWork.current;
         if(!work||event.data?.operation_id!==work.operation_id)return;
-        if(event.data?.proposal_id!==work.proposal_id||event.data?.revision!==work.revision){
+        const wrongKind=work.action==='keeper_decide'?event.kind!=='keeper_decide':event.kind!=='keeper_revise';
+        const wrongDecision=typeof event.data?.decision==='string'&&event.data.decision!==work.decision;
+        if(wrongKind||wrongDecision||event.data?.proposal_id!==work.proposal_id
+          ||event.data?.revision!==work.revision){
           decisionWork.current=null;
           setDecisionPending(null);
           const selected=pendingSelectionRef.current;
           if(selected?.proposal_id===work.proposal_id&&selected?.revision===work.revision){
-            setDecisionError('决定响应与当前提议或修订不匹配；未确认成功，可重试。');
+            setDecisionError('响应与当前提议、修订或操作不匹配；未确认成功，可重试。');
           }
           return;
         }
-        const expectedStatus=work.decision==='approve'?'approved':'rejected';
-        if(event.data?.status!==expectedStatus){
+        const resultStatus=asKeeperStatus(event.data?.status);
+        const accepted=resultStatus!==null&&(work.action==='keeper_decide'
+          ?resultStatus===work.expectedStatus||resultStatus==='revising'
+          :work.decision==='adjust'
+            ?resultStatus==='revising'||resultStatus==='cancelled'
+            :resultStatus==='cancelled');
+        if(!accepted||!resultStatus){
           decisionWork.current=null;
           setDecisionPending(null);
           const selected=pendingSelectionRef.current;
           if(selected?.proposal_id===work.proposal_id&&selected?.revision===work.revision){
-            setDecisionError('决定响应与当前提议不匹配；未确认成功，可重试。');
+            setDecisionError('响应状态与当前提议不匹配；未确认成功，可重试。');
           }
           return;
         }
         const result=event.data as KeeperDecision;
+        rememberKeeperState(work.proposal_id,work.revision,resultStatus);
         decisionWork.current=null;
         setDecisionPending(null);
         setDecisionError('');
@@ -326,31 +528,148 @@ export function KnowledgeWorkbench({
           &&selected?.revision===work.revision
           &&proposal?.proposal_id===work.proposal_id
           &&proposal?.revision===work.revision;
+        const notice=resultStatus==='revising'
+          ?(work.action==='keeper_decide'
+            ?'决定目标已过期，Keeper 已转入修订；本次决定没有写入知识库。'
+            :'已提交调整请求，Keeper 正在修订；修订完成前不能批准、拒绝或再次调整。')
+          :resultStatus==='cancelled'
+            ?(work.action==='keeper_decide'
+              ?'决定目标已过期，Keeper 已取消本次修订；没有写入知识库。'
+              :'已取消本次修订，没有写入知识库。')
+            :'';
         if(sameSelection&&selected&&proposal){
-          setDecisionReceipt(result);
-          setDecisionRefreshError('');
-          const nextProposal:KeeperProposal={...proposal,status:expectedStatus,decision:result};
-          pendingProposalRef.current=nextProposal;
-          setPendingProposal(nextProposal);
-          const nextSelection:KeeperSelection={...selected,status:expectedStatus,revision:work.revision};
-          pendingSelectionRef.current=nextSelection;
-          setPendingSelection(nextSelection);
-          keeperStatusRef.current=expectedStatus;
-          setKeeperStatus(expectedStatus);
-          requestKeeperList(expectedStatus);
-          const operation_id=crypto.randomUUID();
-          decisionRefreshPending.current={operation_id,proposal_id:work.proposal_id,
-            revision:work.revision,status:expectedStatus};
-          onCommand({action:'keeper_open',schema_version:1,operation_id,
-            proposal_id:work.proposal_id});
+          if(resultStatus==='approved'||resultStatus==='rejected'){
+            setDecisionReceipt(result);
+            setDecisionNotice('');
+            setDecisionRefreshError('');
+            const nextProposal:KeeperProposal={...proposal,status:resultStatus,decision:result};
+            pendingProposalRef.current=nextProposal;
+            setPendingProposal(nextProposal);
+            const nextSelection:KeeperSelection={...selected,status:resultStatus,revision:work.revision};
+            pendingSelectionRef.current=nextSelection;
+            setPendingSelection(nextSelection);
+            keeperStatusRef.current=resultStatus;
+            setKeeperStatus(resultStatus);
+            requestKeeperList(resultStatus);
+            const operation_id=crypto.randomUUID();
+            decisionRefreshPending.current={operation_id,proposal_id:work.proposal_id,
+              revision:work.revision,status:resultStatus};
+            onCommand({action:'keeper_open',schema_version:1,operation_id,
+              proposal_id:work.proposal_id});
+          }else{
+            setDecisionReceipt(result);
+            setDecisionNotice(notice);
+            setDecisionRefreshError('');
+            const nextProposal:KeeperProposal={...proposal,status:resultStatus,decision:result};
+            pendingProposalRef.current=nextProposal;
+            setPendingProposal(nextProposal);
+            const nextSelection:KeeperSelection={...selected,status:resultStatus,revision:work.revision};
+            pendingSelectionRef.current=nextSelection;
+            setPendingSelection(nextSelection);
+            keeperStatusRef.current=resultStatus;
+            setKeeperStatus(resultStatus);
+            requestKeeperList(resultStatus);
+            requestKeeperList('pending',{silent:true});
+            reopenSelectedProposal(work.proposal_id,work.revision);
+          }
         }else{
-          requestKeeperList(expectedStatus,{silent:true});
+          requestKeeperList(resultStatus,{silent:true});
+          requestKeeperList('pending',{silent:true});
         }
-        requestKeeperList('pending',{silent:true});
         return;
       }
-      if(event.kind==='keeper_review'){
-        requestKeeperList('pending',{silent:!pendingActive.current});
+      if(event.kind==='keeper_revision'||event.kind==='keeper_review'){
+        const refreshPending=()=>requestKeeperList('pending',{silent:!pendingActive.current});
+        const terminal=readKeeperTerminalEvent(keeperEventData(event.data));
+        if(terminal){
+          const proposal_id=terminal.proposal_id;
+          const revision=terminal.revision;
+          const status=terminal.status;
+          const seen=latestRevisionRef.current[proposal_id]??-1;
+          if(revision!==null&&revision<seen){
+            if(event.kind==='keeper_review')refreshPending();
+            return;
+          }
+          const verdict=noteReview(proposal_id,terminal.review_id||terminal.job_id);
+          if(verdict==='stale'){
+            if(event.kind==='keeper_review')refreshPending();
+            return;
+          }
+          if(revision!==null)latestRevisionRef.current[proposal_id]=Math.max(seen,revision);
+          const prior=latestStatusRef.current[proposal_id];
+          if(status&&revision!==null&&prior&&revision===prior.revision
+            &&verdict!=='new'
+            &&KEEPER_STATUS_RANK[status]<KEEPER_STATUS_RANK[prior.status]){
+            if(event.kind==='keeper_review')refreshPending();
+            return;
+          }
+          rememberKeeperState(proposal_id,revision,status,verdict==='new');
+          const selected=pendingSelectionRef.current;
+          const sameSelected=selected?.proposal_id===proposal_id;
+          if(status){
+            if(sameSelected){
+              keeperStatusRef.current=status;
+              setKeeperStatus(status);
+              const current=pendingProposalRef.current;
+              if(current&&current.proposal_id===proposal_id
+                &&!(revision!==null&&typeof current.revision==='number'&&revision<current.revision)){
+                // The completion event names the new revision. Only the
+                // correlated open response supplies that revision's changes.
+                const nextProposal=revision!==null&&revision!==current.revision
+                  ?null:{...current,status};
+                pendingProposalRef.current=nextProposal;
+                setPendingProposal(nextProposal);
+              }
+              setPendingSelection(currentSelection=>{
+                if(!currentSelection||currentSelection.proposal_id!==proposal_id)return currentSelection;
+                return {...currentSelection,status,revision:revision!==null?Math.max(
+                  typeof currentSelection.revision==='number'?currentSelection.revision:revision,revision):currentSelection.revision};
+              });
+              const currentReceipt=decisionReceiptRef.current;
+              const advanced=revision!==null&&selected&&typeof selected.revision==='number'
+                &&revision>selected.revision;
+              if(currentReceipt&&(verdict==='new'||advanced
+                ||(currentReceipt.status!==status&&status!=='pending'))){
+                setDecisionReceipt(null);
+                setDecisionNotice('');
+                setDecisionError('');
+                setDecisionRefreshError('');
+              }
+              requestKeeperList(status,{silent:false});
+            }else{
+              requestKeeperList(status,{silent:keeperStatusRef.current!==status});
+            }
+            if(status!=='pending')requestKeeperList('pending',{silent:keeperStatusRef.current!=='pending'});
+          }
+          reopenSelectedProposal(proposal_id,revision);
+        }
+        if(event.kind==='keeper_review')refreshPending();
+        return;
+      }
+      if(event.kind==='keeper_revision_error'){
+        const data=keeperEventData(event.data);
+        const proposal_id=typeof data?.proposal_id==='string'?data.proposal_id:'';
+        const review_id=typeof data?.review_id==='string'&&data.review_id?data.review_id:null;
+        const job_id=typeof data?.job_id==='string'&&data.job_id?data.job_id:null;
+        const activeReview=pendingProposalRef.current
+          ?keeperProposalReview(pendingProposalRef.current):null;
+        const receiptReview=decisionReceiptRef.current?.review_id;
+        if(!proposal_id&&(!review_id||(review_id!==activeReview&&review_id!==receiptReview)))return;
+        if(proposal_id&&noteReview(proposal_id,review_id||job_id)==='stale')return;
+        const message=typeof data?.message==='string'&&data.message?data.message
+          :typeof data?.code==='string'&&data.code?`Keeper 修订未完成（${data.code}）；可刷新提议后重试。`
+          :'Keeper 修订未完成；可刷新提议后重试。';
+        const work=decisionWork.current;
+        if(work&&(!proposal_id||work.proposal_id===proposal_id)){
+          decisionWork.current=null;
+          setDecisionPending(null);
+        }
+        const selected=pendingSelectionRef.current;
+        if(selected&&(!proposal_id||selected.proposal_id===proposal_id)){
+          setPendingOpenError(message);
+          setDecisionError('');
+        }
+        if(proposal_id)requestKeeperList('pending',{silent:!pendingActive.current});
         return;
       }
       if(event.kind==='knowledge_search'){
@@ -398,7 +717,8 @@ export function KnowledgeWorkbench({
           setDecisionPending(null);
           const selected=pendingSelectionRef.current;
           const proposal=pendingProposalRef.current;
-          if(selected?.proposal_id===work.proposal_id&&proposal?.revision===work.revision){
+          if(selected?.proposal_id===work.proposal_id&&proposal?.proposal_id===work.proposal_id
+            &&proposal?.revision===work.revision){
             setDecisionError(message);
           }
           return;
@@ -409,10 +729,12 @@ export function KnowledgeWorkbench({
           return;
         }
         if(pendingOpenPending.current?.operation_id===operation_id){
+          const open=pendingOpenPending.current;
+          if(!open)return;
           pendingOpenPending.current=null;
           setPendingOpenLoading(false);
-          setPendingProposal(null);
           setPendingOpenError(message);
+          if(!open.keepProposal)setPendingProposal(null);
           return;
         }
         if(!latest||operation_id!==latest.operation_id)return;
@@ -458,7 +780,12 @@ export function KnowledgeWorkbench({
     if(!openPendingNonce)return;
     focusAfterSearch.current=false;
     pendingFocusAfterRefresh.current=false;
-    keeperRefreshQueued.current={pending:false,approved:false,rejected:false};
+    keeperRefreshQueued.current=statusRecord(false);
+    latestRevisionRef.current={};
+    latestStatusRef.current={};
+    reviewHistoryRef.current={};
+    pendingOpenPending.current=null;
+    decisionRefreshPending.current=null;
     setType('all');
     setScope('pending');
     setQuery('');
@@ -473,6 +800,7 @@ export function KnowledgeWorkbench({
     setPendingOpenError('');
     setDecisionPending(null);
     setDecisionError('');
+    setDecisionNotice('');
     setDecisionReceipt(null);
     setDecisionRefreshError('');
     requestKeeperList('pending');
@@ -489,12 +817,12 @@ export function KnowledgeWorkbench({
   const rows=pageData?.results||[];
   const loadingBlocking=loading&&!pageData&&!searchError;
   const keeperList=keeperData[keeperStatus];
-  const pendingProposals=keeperList?.proposals||[];
-  const pendingNeedle=query.trim().toLowerCase();
-  const pendingRows=pendingProposals.filter(proposal=>
+  const statusProposals=keeperList?.proposals||[];
+  const statusNeedle=query.trim().toLowerCase();
+  const statusRows=statusProposals.filter(proposal=>
     (type==='all'||(proposal.changes||[]).some(change=>change.kind===type))
-    &&(!pendingNeedle||proposalSearchText(proposal).includes(pendingNeedle)));
-  const pendingLoadingBlocking=keeperLoading&&!keeperList&&!keeperError;
+    &&(!statusNeedle||proposalSearchText(proposal).includes(statusNeedle)));
+  const keeperLoadingBlocking=keeperLoading&&!keeperList&&!keeperError;
   const currentKeeperStatusLabel=KEEPER_STATUS_LABEL[keeperStatus];
   const target=targetOf(relationTarget);
 
@@ -571,6 +899,7 @@ export function KnowledgeWorkbench({
     setPendingOpenLoading(false);
     setPendingOpenError('');
     setDecisionError('');
+    setDecisionNotice('');
     setDecisionReceipt(null);
     setDecisionRefreshError('');
     pendingOpenPending.current=null;
@@ -579,7 +908,7 @@ export function KnowledgeWorkbench({
   const changeScope=(next:ScopeFilter)=>{
     focusAfterSearch.current=false;
     pendingFocusAfterRefresh.current=false;
-    keeperRefreshQueued.current={pending:false,approved:false,rejected:false};
+    keeperRefreshQueued.current=statusRecord(false);
     setScope(next);
     setPage(0);
     clearDecisionView();
@@ -612,6 +941,7 @@ export function KnowledgeWorkbench({
   const deciding=!!decisionPending
     &&pendingSelection?.proposal_id===decisionPending.proposal_id
     &&pendingSelection?.revision===decisionPending.revision;
+  const decidingAction=deciding&&decisionPending?decisionPending.decision:null;
   const goPage=(next:number)=>{
     const values=latestSearch.current?.values||{query,type,scope,relationTarget};
     setPage(next);
@@ -630,6 +960,17 @@ export function KnowledgeWorkbench({
     const proposal=pendingProposal;
     if(!selected||!proposal||decisionWork.current||selected.status!=='pending')return;
     if(proposal.proposal_id!==selected.proposal_id||proposal.status!=='pending')return;
+    if(typeof selected.revision==='number'&&typeof proposal.revision==='number'
+      &&selected.revision!==proposal.revision){
+      setDecisionError('当前显示的修订已变化；请重新打开提议核对后再决定。');
+      return;
+    }
+    const latestSeen=latestRevisionRef.current[proposal.proposal_id];
+    if(typeof latestSeen==='number'&&typeof proposal.revision==='number'
+      &&latestSeen>proposal.revision){
+      setDecisionError(`Keeper 已发布更新的修订 v${latestSeen}；请重新打开提议核对后再决定。`);
+      return;
+    }
     const revision=typeof proposal.revision==='number'?proposal.revision:0;
     if(!Number.isInteger(revision)||revision<1){
       setDecisionError('提议缺少有效修订，暂不能决定；请重新打开提议核对。');
@@ -647,15 +988,112 @@ export function KnowledgeWorkbench({
       return;
     }
     const operation_id=crypto.randomUUID();
-    const work:KeeperDecisionWork={operation_id,proposal_id:proposal.proposal_id,revision,decision};
+    const work:KeeperDecisionWork={
+      operation_id,proposal_id:proposal.proposal_id,revision,
+      action:'keeper_decide',decision,expectedStatus:decision==='approve'?'approved':'rejected',
+    };
     decisionWork.current=work;
     setDecisionPending(work);
     setDecisionError('');
+    setDecisionNotice('');
     const trimmed=reason.trim();
     onCommand({
       action:'keeper_decide',schema_version:1,operation_id,
       proposal_id:proposal.proposal_id,revision,expected_versions,decision,
       ...(trimmed?{reason:trimmed}:{}),
+    });
+  };
+  const reviseProposal=(decision:KeeperRevisionDecision,feedback:string,omitChanges:number[],keepCurrentFields:KeeperKeepFields[]=[])=>{
+    const selected=pendingSelection;
+    const proposal=pendingProposal;
+    if(!selected||!proposal||decisionWork.current)return;
+    if(proposal.proposal_id!==selected.proposal_id)return;
+    if(typeof selected.revision==='number'&&typeof proposal.revision==='number'
+      &&selected.revision!==proposal.revision){
+      setDecisionError('当前显示的修订已变化；请重新打开提议核对后再操作。');
+      return;
+    }
+    const latestSeen=latestRevisionRef.current[proposal.proposal_id];
+    if(typeof latestSeen==='number'&&typeof proposal.revision==='number'
+      &&latestSeen>proposal.revision){
+      setDecisionError(`Keeper 已发布更新的修订 v${latestSeen}；请重新打开提议核对后再操作。`);
+      return;
+    }
+    const revision=typeof proposal.revision==='number'?proposal.revision:0;
+    if(!Number.isInteger(revision)||revision<1){
+      setDecisionError('提议缺少有效修订，暂不能调整；请重新打开提议核对。');
+      return;
+    }
+    const proposalStatus=asKeeperStatus(proposal.status);
+    const adjustableStatus=(value:KeeperStatus)=>value==='pending'||value==='returned';
+    const cancellableStatus=(value:KeeperStatus)=>value==='pending'||value==='returned'||value==='revising';
+    if(decision==='adjust'){
+      if(!proposalStatus||!adjustableStatus(selected.status)||!adjustableStatus(proposalStatus)
+        ||selected.status!==proposalStatus){
+        setDecisionError('只有待确认或已退回的提议可以要求调整；请刷新提议核对。');
+        return;
+      }
+      const changes=Array.isArray(proposal.changes)?proposal.changes:[];
+      if(!changes.length){
+        setDecisionError('提议没有可调整的变更。');
+        return;
+      }
+      const trimmed=feedback.trim();
+      if(!trimmed){
+        setDecisionError('请填写调整说明后再提交。');
+        return;
+      }
+      if(keeperFeedbackByteLength(trimmed)>KEEPER_FEEDBACK_LIMIT){
+        setDecisionError(`调整说明不能超过 ${KEEPER_FEEDBACK_LIMIT} 个 UTF-8 字节。`);
+        return;
+      }
+      const ordered=Array.from(new Set(omitChanges.filter(index=>
+        Number.isInteger(index)&&index>=0&&index<changes.length))).sort((left,right)=>left-right);
+      const keepPayload:KeeperKeepFields[]=[];
+      for(const item of keepCurrentFields){
+        if(!item||!Number.isInteger(item.change_index))continue;
+        const index=item.change_index;
+        if(index<0||index>=changes.length||ordered.includes(index))continue;
+        const allowed=keeperChangedFields(changes[index]);
+        const fields=Array.from(new Set((Array.isArray(item.fields)?item.fields:[])
+          .filter(field=>typeof field==='string'&&allowed.includes(field))));
+        if(fields.length)keepPayload.push({change_index:index,fields});
+      }
+      const operation_id=crypto.randomUUID();
+      const work:KeeperDecisionWork={
+        operation_id,proposal_id:proposal.proposal_id,revision,
+        action:'keeper_revise',decision:'adjust',expectedStatus:'revising',
+      };
+      decisionWork.current=work;
+      setDecisionPending(work);
+      setDecisionError('');
+      setDecisionNotice('');
+      onCommand({
+        action:'keeper_revise',schema_version:1,operation_id,
+        proposal_id:proposal.proposal_id,revision,decision:'adjust',
+        feedback:trimmed,
+        ...(ordered.length?{omit_changes:ordered}:{}),
+        ...(keepPayload.length?{keep_current_fields:keepPayload}:{}),
+      });
+      return;
+    }
+    if(!proposalStatus||!cancellableStatus(selected.status)||!cancellableStatus(proposalStatus)
+      ||selected.status!==proposalStatus){
+      setDecisionError('只有待确认、已退回或修订中的提议可以取消；请刷新提议核对。');
+      return;
+    }
+    const operation_id=crypto.randomUUID();
+    const work:KeeperDecisionWork={
+      operation_id,proposal_id:proposal.proposal_id,revision,
+      action:'keeper_revise',decision:'cancel',expectedStatus:'cancelled',
+    };
+    decisionWork.current=work;
+    setDecisionPending(work);
+    setDecisionError('');
+    setDecisionNotice('');
+    onCommand({
+      action:'keeper_revise',schema_version:1,operation_id,
+      proposal_id:proposal.proposal_id,revision,decision:'cancel',
     });
   };
 
@@ -681,7 +1119,7 @@ export function KnowledgeWorkbench({
           {cards.length>0&&<optgroup label="知识卡片">{cards.map(card=><option key={card.card_id} value={`card:${card.card_id}`}>{truncate(card.title)}{card.status==='archived'?'（已归档）':''} · v{card.version}</option>)}</optgroup>}
           {themes.length>0&&<optgroup label="命题">{themes.map(theme=><option key={theme.theme_id} value={`theme:${theme.theme_id}`}>{truncate(theme.judgement)}{theme.status==='archived'?'（已归档）':''} · v{theme.version}</option>)}</optgroup>}
         </select></label>
-        <div className="workbench-filter-actions"><span>{scope==='pending'?'确认卡按 Keeper 持久状态筛选；在右侧对整组批准或拒绝':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</button></div>
+        <div className="workbench-filter-actions"><span>{scope==='pending'?'待确认按 Keeper 持久状态筛选；在右侧批准、拒绝、要求调整或取消提议':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</button></div>
       </form>
       <div className="workbench-create" role="group" aria-label="新建知识库记录">
         <span>新建</span>
@@ -696,35 +1134,42 @@ export function KnowledgeWorkbench({
         </button>)}
       </div>}
       <p className="workbench-count" aria-live="polite">{scope==='pending'
-        ?(keeperLoading?(keeperList?`正在刷新${currentKeeperStatusLabel}提议…`:`正在读取${currentKeeperStatusLabel}提议…`):keeperError&&!keeperList?`${currentKeeperStatusLabel}提议未完成`:`共 ${pendingProposals.length} 条${currentKeeperStatusLabel}提议${pendingRows.length!==pendingProposals.length?` · 当前筛选 ${pendingRows.length} 条`:''}`)
+        ?(keeperLoading?(keeperList?`正在刷新${currentKeeperStatusLabel}提议…`:`正在读取${currentKeeperStatusLabel}提议…`):keeperError&&!keeperList?`${currentKeeperStatusLabel}提议未完成`:`共 ${statusProposals.length} 条${currentKeeperStatusLabel}提议${statusRows.length!==statusProposals.length?` · 当前筛选 ${statusRows.length} 条`:''}`)
         :<>{loading?'正在搜索…':searchError?'搜索未完成':`共 ${pageData?.total||0} 条`}{!loading&&!searchError&&pageCount>1?` · 第 ${currentPage+1}/${pageCount} 页`:''}</>}</p>
       {scope==='pending'
-        ?(pendingLoadingBlocking?<p className="workbench-status" role="status">正在读取 Keeper {currentKeeperStatusLabel}提议…</p>
+        ?(keeperLoadingBlocking?<p className="workbench-status" role="status">正在读取 Keeper {currentKeeperStatusLabel}提议…</p>
           :keeperError&&!keeperList?<div className="workbench-error" role="alert"><p>{keeperError}</p><button type="button" onClick={retry}>重试</button></div>
           :<>
             {keeperError&&<div className="workbench-error workbench-error-inline" role="alert"><p>{keeperError}</p><button type="button" onClick={retry}>重试</button></div>}
-            {keeperList&&pendingProposals.length===0?<div className="workbench-empty workbench-pending" role="status">
+            {keeperList&&statusProposals.length===0?<div className="workbench-empty workbench-pending" role="status">
               <h3>{currentKeeperStatusLabel}：当前为空</h3>
-              <p>{keeperStatus==='pending'?'Keeper 返回的待确认提议为 0 条；这里不会显示未经确认的提议。':'该状态没有 Keeper 提议；已批准和已拒绝会保留持久回执供重新打开。'}</p>
+              <p>{keeperStatus==='pending'?'Keeper 返回的待确认提议为 0 条；这里不会显示未经确认的提议。'
+                :keeperStatus==='revising'?'当前没有 Keeper 正在修订的提议；修订完成或取消后会更新到相应状态。'
+                :keeperStatus==='returned'?'当前没有已退回提议；退回原因与反馈会随持久状态保留。'
+                :keeperStatus==='cancelled'?'当前没有已取消提议；取消结果不会写入知识库。'
+                :'该状态没有 Keeper 提议；已批准和已拒绝会保留持久回执供重新打开。'}</p>
             </div>
-            :pendingRows.length===0?<div className="workbench-empty" role="status"><p>{keeperList?`没有匹配当前筛选的${currentKeeperStatusLabel}提议；实际返回 ${pendingProposals.length} 条。`:`尚未读取${currentKeeperStatusLabel}提议。`}</p></div>
+            :statusRows.length===0?<div className="workbench-empty" role="status"><p>{keeperList?`没有匹配当前筛选的${currentKeeperStatusLabel}提议；实际返回 ${statusProposals.length} 条。`:`尚未读取${currentKeeperStatusLabel}提议。`}</p></div>
             :<ul className="workbench-results" ref={results} aria-label={`${currentKeeperStatusLabel}提议`}>
-              {pendingRows.map(proposal=>{
+              {statusRows.map(proposal=>{
                 const changes=Array.isArray(proposal.changes)?proposal.changes:[];
                 const kinds=Array.from(new Set(changes.map(change=>change.kind)));
                 const persistedDecision=keeperDecisionFromProposal(proposal);
-                const reason=persistedDecision?.reason||changes.map(change=>change.reason).find(Boolean);
+                const reason=persistedDecision?.reason||proposal.feedback||proposal.reason
+                  ||proposal.revision_notes?.feedback||proposal.revision_notes?.reason
+                  ||changes.map(change=>change.reason).find(Boolean);
                 const status=keeperStatusLabel(proposal.status||persistedDecision?.status);
                 const badge=keeperTestBadge(proposal);
-                const selected=pendingSelection?.proposal_id===proposal.proposal_id&&pendingSelection.status===keeperStatus;
+                const savedSelection=pendingSelection?.proposal_id===proposal.proposal_id&&pendingSelection.status===keeperStatus;
                 return <li key={proposal.proposal_id}>
-                  <button type="button" data-pending-result data-proposal-id={proposal.proposal_id} className={selected?'selected':''} aria-current={selected?true:undefined} onClick={()=>openProposal(proposal)}>
+                  <button type="button" data-pending-result data-proposal-id={proposal.proposal_id} className={savedSelection?'selected':''} aria-current={savedSelection?true:undefined} onClick={()=>openProposal(proposal)}>
                     <span className="workbench-result-title">{keeperProposalTitle(proposal)}</span>
                     <span className="workbench-result-summary">{reason||`${changes.length} 项变更`}</span>
                     <span className="workbench-result-meta">
                       {kinds.map(kind=><span key={kind}>{keeperKindLabel(kind)}</span>)}
                       {status&&<span>{status}</span>}
                       {typeof proposal.revision==='number'&&<span>修订 v{proposal.revision}</span>}
+                      {proposal.revision_notes&&<span className="workbench-badge-revision">新修订</span>}
                       {badge&&<span className="workbench-badge-test">{badge}</span>}
                       {typeof proposal.report_version==='number'&&<span>报道 v{proposal.report_version}</span>}
                     </span>
@@ -760,12 +1205,16 @@ export function KnowledgeWorkbench({
     <section className="workbench-detail" aria-label={scope==='pending'?`Keeper ${currentKeeperStatusLabel}提议详情`:'知识库详情'}>
       {scope==='pending'
         ?(pendingSelection
-          ?<KeeperProposalPanel key={pendingSelection.nonce} proposalId={pendingSelection.proposal_id} proposal={pendingProposal} loading={pendingOpenLoading} error={pendingOpenError} deciding={deciding} decisionError={decisionError} decisionNotice={decisionRefreshError} receipt={decisionReceipt} onRetry={retryPendingOpen} onDecide={decideProposal} onClose={closePendingProposal}/>
+          ?<KeeperProposalPanel key={pendingSelection.nonce} proposalId={pendingSelection.proposal_id} proposal={pendingProposal} loading={pendingOpenLoading} error={pendingOpenError} deciding={deciding} decidingAction={decidingAction} decisionError={decisionError} decisionNotice={decisionNotice||decisionRefreshError} receipt={decisionReceipt} onRetry={retryPendingOpen} onDecide={decideProposal} onRevise={reviseProposal} onClose={closePendingProposal}/>
           :<div className="workbench-empty workbench-pending-intro">
             <h2>Keeper {currentKeeperStatusLabel}</h2>
             <p>左侧按 Keeper 持久状态列出{currentKeeperStatusLabel}提议，默认打开待确认。选择一条后，这里显示整组确认卡片：按知识卡片、命题、关注问题分组的变更、变更前/后、理由、固定来源与任务/报道链接。</p>
-            <p>{keeperStatus==='pending'?'待确认卡片可对整组批准或拒绝，并填写可选决定理由；批准和拒绝都绑定提议修订与每个对象的固定版本。':'已批准和已拒绝卡片只读显示持久回执；重新打开工作台或切换状态后仍读取同一结果。'}</p>
-            {keeperList&&pendingProposals.length>0&&<p>当前有 {pendingProposals.length} 条{currentKeeperStatusLabel}提议，请从左侧选择。</p>}
+            <p>{keeperStatus==='pending'?'待确认卡片可对整组批准或拒绝，也可在“要求调整”中填写说明并选择希望 Keeper 保留的当前字段；说明会发给原始任务，不会被自动理解。批准和拒绝都绑定提议修订与每个对象的固定版本。'
+              :keeperStatus==='revising'?'修订中的卡片不能批准、拒绝或再次调整，只能对当前修订明确取消；Keeper 完成修订后会显示新的提议修订与差异。'
+              :keeperStatus==='returned'?'已退回卡片只读显示退回原因、反馈与此前父级/报道来源，且没有写入知识库；可以在“要求调整”中结合退回原因重新提交，或取消该提议。'
+              :keeperStatus==='cancelled'?'已取消卡片只读显示取消结果，不会写入知识库。'
+              :'已批准和已拒绝卡片只读显示持久回执；重新打开工作台或切换状态后仍读取同一结果。'}</p>
+            {keeperList&&statusProposals.length>0&&<p>当前有 {statusProposals.length} 条{currentKeeperStatusLabel}提议，请从左侧选择。</p>}
           </div>)
         :active?<>
           <header className="workbench-detail-head">
