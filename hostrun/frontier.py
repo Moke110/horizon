@@ -192,8 +192,13 @@ class FrontierService:
             raise CommandError("invalid_command", "schema_version and operation_id required")
 
     @staticmethod
-    def _replay(db, command, action):
-        encoded = json.dumps({"action": action, "command": command}, sort_keys=True)
+    def _replay(db, command, action, origin="manual"):
+        request = {"action": action, "command": command}
+        if origin == "keeper":
+            # Trusted attribution is recorded beside, not inside, the command,
+            # so a caller-supplied command field can never claim it.
+            request["origin"] = "keeper"
+        encoded = json.dumps(request, sort_keys=True)
         row = db.execute("SELECT request,result FROM frontier_operations WHERE operation_id=?",
                          (command["operation_id"],)).fetchone()
         if row:
@@ -208,6 +213,17 @@ class FrontierService:
                             "version": frontier["version"], "status": frontier["status"]})
         except Exception:
             pass  # A disconnected viewer cannot undo committed work.
+
+    def notify_committed(self, frontier):
+        """Notify after a trusted caller's group transaction has committed."""
+        self._notify(frontier)
+
+    @staticmethod
+    def _event_json(event, origin):
+        # Keeper attribution is trusted caller metadata, not command input.
+        if origin == "keeper":
+            event["origin"] = "keeper"
+        return json.dumps(event)
 
     @staticmethod
     def history_removed(db):
@@ -233,13 +249,32 @@ class FrontierService:
 
     def create(self, command, *, token):
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_scope")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "create")
-            if previous is not None:
-                return previous
+            frontier, changed = self.apply_in_transaction(
+                db, "create", command, token=token)
+        if changed:
+            self.notify_committed(frontier)
+        return frontier
+
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual"):
+        """Apply one Frontier write on the caller's open transaction.
+
+        The caller owns BEGIN, COMMIT and notification. Replays return their
+        original record and ``changed=False`` so a group commit does not notify
+        twice.
+        """
+        self._authorize(token)
+        self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_scope")
+        if origin not in ("manual", "keeper"):
+            raise ValueError("Unknown Frontier origin")
+        if action not in ("create", "update", "delete"):
+            raise CommandError("invalid_command", "Unknown Frontier action")
+        encoded, previous = self._replay(db, command, action, origin)
+        if previous is not None:
+            return previous, False
+        if action == "create":
             frontier_id = str(uuid.uuid4())
             now = int(self.clock())
             frontier = {
@@ -259,11 +294,49 @@ class FrontierService:
             db.execute("INSERT INTO frontier_operations VALUES(?,?,?)",
                        (command["operation_id"], encoded, json.dumps(frontier)))
             db.execute("INSERT INTO frontier_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({"schema_version": 1, "type": "frontier.created",
-                                                             "frontier_id": frontier_id,
-                                                             "operation_id": command["operation_id"]})))
-        self._notify(frontier)
-        return frontier
+                       (command["operation_id"], self._event_json(
+                           {"schema_version": 1, "type": "frontier.created",
+                            "frontier_id": frontier_id,
+                            "operation_id": command["operation_id"]}, origin)))
+            return frontier, True
+        frontier_id = command.get("frontier_id")
+        frontier = self._read(db, frontier_id)
+        if type(command.get("expected_version")) is not int or command["expected_version"] != frontier["version"]:
+            raise CommandError("version_conflict", "Frontier 已被修改，请刷新后重试")
+        if frontier["status"] == "deleted":
+            raise CommandError("invalid_transition",
+                               "已删除的 Frontier 不能编辑" if action == "update"
+                               else "该 Frontier 已删除")
+        updated = dict(frontier)
+        updated["operation_id"] = command["operation_id"]
+        if action == "update":
+            if "question" in command:
+                updated["question"] = _validate_question(command["question"])
+            if "scope" in command:
+                updated["scope"] = _validate_scope(command["scope"])
+            if "hard_constraints" in command:
+                updated["hard_constraints"] = _validate_constraints(command["hard_constraints"])
+            if "status" in command:
+                updated["status"] = _validate_status(command["status"])
+            if "relations" in command:
+                updated["relations"] = _validate_relations(command["relations"])
+            event_type = "frontier.updated"
+        else:
+            updated["status"] = "deleted"
+            event_type = "frontier.deleted"
+        updated["version"] = frontier["version"] + 1
+        updated["updated_at"] = int(self.clock())
+        db.execute("UPDATE frontiers SET result=? WHERE frontier_id=?",
+                   (json.dumps(updated), frontier_id))
+        db.execute("INSERT INTO frontier_operations VALUES(?,?,?)",
+                   (command["operation_id"], encoded, json.dumps(updated)))
+        db.execute("INSERT INTO frontier_events(operation_id,event) VALUES(?,?)",
+                   (command["operation_id"], self._event_json(
+                       {"schema_version": 1, "type": event_type,
+                        "frontier_id": frontier_id,
+                        "operation_id": command["operation_id"],
+                        "version": updated["version"]}, origin)))
+        return updated, True
 
     @classmethod
     def query_all_in_transaction(cls, db):
@@ -314,74 +387,21 @@ class FrontierService:
 
     def update(self, command, *, token):
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_scope")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "update")
-            if previous is not None:
-                return previous
-            frontier_id = command.get("frontier_id")
-            frontier = self._read(db, frontier_id)
-            if type(command.get("expected_version")) is not int or command["expected_version"] != frontier["version"]:
-                raise CommandError("version_conflict", "Frontier 已被修改，请刷新后重试")
-            if frontier["status"] == "deleted":
-                raise CommandError("invalid_transition", "已删除的 Frontier 不能编辑")
-            updated = dict(frontier)
-            updated["operation_id"] = command["operation_id"]
-            if "question" in command:
-                updated["question"] = _validate_question(command["question"])
-            if "scope" in command:
-                updated["scope"] = _validate_scope(command["scope"])
-            if "hard_constraints" in command:
-                updated["hard_constraints"] = _validate_constraints(command["hard_constraints"])
-            if "status" in command:
-                updated["status"] = _validate_status(command["status"])
-            if "relations" in command:
-                updated["relations"] = _validate_relations(command["relations"])
-            updated["version"] = frontier["version"] + 1
-            updated["updated_at"] = int(self.clock())
-            db.execute("UPDATE frontiers SET result=? WHERE frontier_id=?",
-                       (json.dumps(updated), frontier_id))
-            db.execute("INSERT INTO frontier_operations VALUES(?,?,?)",
-                       (command["operation_id"], encoded, json.dumps(updated)))
-            db.execute("INSERT INTO frontier_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({"schema_version": 1, "type": "frontier.updated",
-                                                             "frontier_id": frontier_id,
-                                                             "operation_id": command["operation_id"],
-                                                             "version": updated["version"]})))
-        self._notify(updated)
-        return updated
+            frontier, changed = self.apply_in_transaction(
+                db, "update", command, token=token)
+        if changed:
+            self.notify_committed(frontier)
+        return frontier
 
     def delete(self, command, *, token):
         """Delete a Frontier by marking it terminal; history and materials stay."""
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_scope")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "delete")
-            if previous is not None:
-                return previous
-            frontier_id = command.get("frontier_id")
-            frontier = self._read(db, frontier_id)
-            if type(command.get("expected_version")) is not int or command["expected_version"] != frontier["version"]:
-                raise CommandError("version_conflict", "Frontier 已被修改，请刷新后重试")
-            if frontier["status"] == "deleted":
-                raise CommandError("invalid_transition", "该 Frontier 已删除")
-            updated = dict(frontier)
-            updated["operation_id"] = command["operation_id"]
-            updated["status"] = "deleted"
-            updated["version"] = frontier["version"] + 1
-            updated["updated_at"] = int(self.clock())
-            db.execute("UPDATE frontiers SET result=? WHERE frontier_id=?",
-                       (json.dumps(updated), frontier_id))
-            db.execute("INSERT INTO frontier_operations VALUES(?,?,?)",
-                       (command["operation_id"], encoded, json.dumps(updated)))
-            db.execute("INSERT INTO frontier_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({"schema_version": 1, "type": "frontier.deleted",
-                                                             "frontier_id": frontier_id,
-                                                             "operation_id": command["operation_id"],
-                                                             "version": updated["version"]})))
-        self._notify(updated)
-        return updated
+            frontier, changed = self.apply_in_transaction(
+                db, "delete", command, token=token)
+        if changed:
+            self.notify_committed(frontier)
+        return frontier

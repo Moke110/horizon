@@ -18,11 +18,19 @@ Keeper reviews bounded requests from a trusted Editor principal. In the pre-Edit
 
 The Agent dispatches a bounded, read-only Keeper child attached to the original task. Keeper checks the supplied evidence, duplicates and relationships. Independent changes appear on separate cards. Insufficient supporting evidence can return the request for more evidence. Pending confirmation data is persisted separately from committed knowledge. The child releases its execution slot when review finishes, and the completed report and newer plans can proceed while a proposal awaits a decision.
 
-The authenticated `keeper_list` and `keeper_open` desktop queries serve the pending cards. Each card exposes grouped before and after values, reasons, source references, and its linked report and version. This stage exposes the read-only confirmation view; committing a proposed group is handled by the subsequent decision workflow.
+The authenticated `keeper_list` and `keeper_open` desktop queries serve pending and decided cards. Each card exposes grouped before and after values, reasons, source references, and its linked report and version.
 
 The `keeper_test_request` desktop action is enabled only by the trusted launcher setting `HORIZON_KEEPER_TEST_REQUESTS=1`. Its `request` object includes a schema version, operation ID, task ID and version, report ID and version, and groups of changes. A change provides `kind`, `action`, `fields`, `reason` and saved `sources`. Updates and deletions also provide `id` and `expected_version`. Sources carry `material_id`, `material_version`, `locator` and `excerpt`. The adapter supplies the test principal itself. The initial response identifies the stored request, and `keeper_review` reports dispatch results and proposal IDs. Keeper's deterministic child checks the bounded inputs passed by the owners. A pending card records that the cited snapshot and anchor were verified and that the requested fields passed the owner's checks. Explorers review whether those sources substantiate the requested change.
 
 In the test-enabled bridge, startup resumes queued requests with their existing identities. A stale pin results in a durable returned receipt, and a failed child results in a durable failed receipt. Either retains a recorded child identity when one exists. Replaying an operation can reread its outcome without launching a second completed review. Grouping follows direct and transitive connections between the requested changes across the request.
+
+### Group decisions
+
+The authenticated `keeper_decide` action binds one Explorer decision to a `proposal_id`, `revision`, ordered `expected_versions`, and `operation_id`. `expected_versions` follows the order of the changes on the displayed card, with `null` for a creation. `decision` is `approve` or `reject`, with an optional `reason`. The desktop adapter provides the trusted Explorer identity. Keeper and Editor cannot decide.
+
+Approval validates all expected versions and material references before committing any change. Knowledge records, material bindings, owner operation receipts and events, and the proposal status, receipt and audit commit together. A validation failure leaves the group unapplied. Rejection records the decision without writing knowledge. The same operation and payload replay the original receipt. An operation ID with different payload conflicts, and an already-decided revision cannot be applied again. `keeper_open` returns the saved decision on a terminal card, and authenticated `keeper_audit` reads its audit record.
+
+Reissuing the same rejected change on the same grounds returns no new card. An explicit `supersedes_proposal_id` and `new_evidence_reason` describe why the same change should be considered with new evidence. A recaptured or reordered copy of the same evidence does not satisfy that requirement.
 
 ## Version history and undo
 

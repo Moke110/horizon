@@ -162,8 +162,13 @@ class KnowledgeCardService:
             raise CommandError("invalid_command", "schema_version and operation_id required")
 
     @staticmethod
-    def _replay(db, command, action):
-        encoded = json.dumps({"action": action, "command": command}, sort_keys=True)
+    def _replay(db, command, action, origin="manual"):
+        request = {"action": action, "command": command}
+        if origin == "keeper":
+            # Trusted attribution is recorded beside, not inside, the command,
+            # so a caller-supplied command field can never claim it.
+            request["origin"] = "keeper"
+        encoded = json.dumps(request, sort_keys=True)
         row = db.execute("SELECT request,result FROM knowledge_card_operations WHERE operation_id=?",
                          (command["operation_id"],)).fetchone()
         if row:
@@ -178,6 +183,17 @@ class KnowledgeCardService:
                             "version": card["version"], "status": card["status"]})
         except Exception:
             pass  # A disconnected viewer cannot undo committed work.
+
+    def notify_committed(self, card):
+        """Notify after a trusted caller's group transaction has committed."""
+        self._notify(card)
+
+    @staticmethod
+    def _event_json(event, origin):
+        # Keeper attribution is trusted caller metadata, not command input.
+        if origin == "keeper":
+            event["origin"] = "keeper"
+        return json.dumps(event)
 
     def history_removed(self, db):
         """Material ids whose pinned snapshots were permanently removed."""
@@ -257,13 +273,33 @@ class KnowledgeCardService:
 
     def create(self, command, *, token):
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_card")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "create")
-            if previous is not None:
-                return previous
+            card, changed = self.apply_in_transaction(
+                db, "create", command, token=token)
+        if changed:
+            self.notify_committed(card)
+        return card
+
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual"):
+        """Apply one Knowledge Card write on the caller's open transaction.
+
+        ``delete`` and ``archive`` share the public archive semantics and the
+        same operation receipt. The caller owns BEGIN, COMMIT and notification.
+        """
+        self._authorize(token)
+        self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_card")
+        if origin not in ("manual", "keeper"):
+            raise ValueError("Unknown Knowledge Card origin")
+        if action == "delete":
+            action = "archive"
+        if action not in ("create", "update", "archive"):
+            raise CommandError("invalid_command", "Unknown Knowledge Card action")
+        encoded, previous = self._replay(db, command, action, origin)
+        if previous is not None:
+            return previous, False
+        if action == "create":
             card_id = str(uuid.uuid4())
             now = int(self.clock())
             fields = self._fields(command)
@@ -286,7 +322,7 @@ class KnowledgeCardService:
                 "source_pending": source_pending,
                 "questionable": fields.get("questionable", False),
                 "known": True,
-                "origin": "manual",
+                "origin": "keeper" if origin == "keeper" else "manual",
                 "status": "active",
                 "created_at": now,
                 "updated_at": now,
@@ -296,11 +332,55 @@ class KnowledgeCardService:
             db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
                        (command["operation_id"], encoded, json.dumps(card)))
             db.execute("INSERT INTO knowledge_card_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({
+                       (command["operation_id"], self._event_json({
                            "schema_version": 1, "type": "knowledge_card.created",
-                           "card_id": card_id, "operation_id": command["operation_id"]})))
-        self._notify(card)
-        return card
+                           "card_id": card_id, "operation_id": command["operation_id"]}, origin)))
+            return card, True
+        card = self._read(db, command.get("card_id"))
+        if action == "update":
+            fields = self._fields(command)
+            if type(command.get("expected_version")) is not int \
+                    or command["expected_version"] != card["version"]:
+                self._conflict(command, card, fields)
+            if card["status"] == "archived":
+                raise CommandError("invalid_transition", "已归档的知识卡片不能编辑")
+            if "status" in command:
+                raise CommandError("invalid_status", "请用归档操作改变知识卡片状态")
+            if "sources" in fields:
+                fields["sources"] = self._resolve_sources(db, card["card_id"], fields["sources"], card["sources"])
+            if "relations" in fields:
+                self._relations(db, card["card_id"], fields["relations"])
+            updated = dict(card)
+            updated["operation_id"] = command["operation_id"]
+            updated.update(fields)
+            updated["provenance"], updated["source_pending"] = _provenance(
+                updated["sources"])
+            updated["known"] = True
+            event_type = "knowledge_card.updated"
+        else:
+            if type(command.get("expected_version")) is not int \
+                    or command["expected_version"] != card["version"]:
+                self._conflict(command, card, {})
+            if card["status"] == "archived":
+                raise CommandError("invalid_transition", "该知识卡片已归档")
+            updated = dict(card)
+            updated["operation_id"] = command["operation_id"]
+            updated["status"] = "archived"
+            updated["known"] = False
+            event_type = "knowledge_card.archived"
+        updated["version"] = card["version"] + 1
+        updated["updated_at"] = int(self.clock())
+        db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?",
+                   (json.dumps(updated), card["card_id"]))
+        db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
+                   (command["operation_id"], encoded, json.dumps(updated)))
+        db.execute("INSERT INTO knowledge_card_events(operation_id,event) VALUES(?,?)",
+                   (command["operation_id"], self._event_json({
+                       "schema_version": 1, "type": event_type,
+                       "card_id": card["card_id"],
+                       "operation_id": command["operation_id"],
+                       "version": updated["version"]}, origin)))
+        return updated, True
 
     @classmethod
     def query_all_in_transaction(cls, db):
@@ -405,78 +485,21 @@ class KnowledgeCardService:
 
     def update(self, command, *, token):
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_card")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "update")
-            if previous is not None:
-                return previous
-            card = self._read(db, command.get("card_id"))
-            fields = self._fields(command)
-            if type(command.get("expected_version")) is not int \
-                    or command["expected_version"] != card["version"]:
-                self._conflict(command, card, fields)
-            if card["status"] == "archived":
-                raise CommandError("invalid_transition", "已归档的知识卡片不能编辑")
-            if "status" in command:
-                raise CommandError("invalid_status", "请用归档操作改变知识卡片状态")
-            if "sources" in fields:
-                fields["sources"] = self._resolve_sources(db, card["card_id"], fields["sources"], card["sources"])
-            if "relations" in fields:
-                self._relations(db, card["card_id"], fields["relations"])
-            updated = dict(card)
-            updated["operation_id"] = command["operation_id"]
-            updated.update(fields)
-            updated["provenance"], updated["source_pending"] = _provenance(
-                updated["sources"])
-            updated["known"] = True
-            updated["version"] = card["version"] + 1
-            updated["updated_at"] = int(self.clock())
-            db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?",
-                       (json.dumps(updated), card["card_id"]))
-            db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
-                       (command["operation_id"], encoded, json.dumps(updated)))
-            db.execute("INSERT INTO knowledge_card_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({
-                           "schema_version": 1, "type": "knowledge_card.updated",
-                           "card_id": card["card_id"],
-                           "operation_id": command["operation_id"],
-                           "version": updated["version"]})))
-        self._notify(updated)
-        return updated
+            card, changed = self.apply_in_transaction(
+                db, "update", command, token=token)
+        if changed:
+            self.notify_committed(card)
+        return card
 
     def archive(self, command, *, token):
         """Archive a card explicitly; the row and its history remain readable."""
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_card")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "archive")
-            if previous is not None:
-                return previous
-            card = self._read(db, command.get("card_id"))
-            if type(command.get("expected_version")) is not int \
-                    or command["expected_version"] != card["version"]:
-                self._conflict(command, card, {})
-            if card["status"] == "archived":
-                raise CommandError("invalid_transition", "该知识卡片已归档")
-            updated = dict(card)
-            updated["operation_id"] = command["operation_id"]
-            updated["status"] = "archived"
-            updated["known"] = False
-            updated["version"] = card["version"] + 1
-            updated["updated_at"] = int(self.clock())
-            db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?",
-                       (json.dumps(updated), card["card_id"]))
-            db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
-                       (command["operation_id"], encoded, json.dumps(updated)))
-            db.execute("INSERT INTO knowledge_card_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({
-                           "schema_version": 1, "type": "knowledge_card.archived",
-                           "card_id": card["card_id"],
-                           "operation_id": command["operation_id"],
-                           "version": updated["version"]})))
-        self._notify(updated)
-        return updated
+            card, changed = self.apply_in_transaction(
+                db, "archive", command, token=token)
+        if changed:
+            self.notify_committed(card)
+        return card

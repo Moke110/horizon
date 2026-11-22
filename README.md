@@ -207,7 +207,7 @@ Open **知识库** in the desktop app. The left pane searches local knowledge an
 
 Select a record and open **版本历史** to see what changed, who changed it, when, and any reason supplied. To undo an edit, open its preview and check the proposed changes against the current version before confirming. An undo creates a new version, preserves earlier versions and leaves later changes to unrelated fields in place. If a later edit changed the same field, the preview shows the conflict and Horizon leaves the record as it is. History remains readable for archived or deleted records. The workbench uses local data and requires no Feishu account.
 
-Open **知识库 → 待确认** to review Keeper proposals. Each card groups related changes and shows the affected objects, before and after values, reasons, saved-source excerpts and the linked report version. A proposal is visible here after its Keeper review ends. The Knowledge Base continues to show the committed versions while a proposal awaits a decision. Proposals labeled **测试请求** come from an explicit development test request.
+Open **知识库 → 待确认** to review Keeper proposals. Each card groups related changes and shows the affected objects, before and after values, reasons, saved-source excerpts and the linked report version. Choose **批准整组** to apply all changes together, or **拒绝** to decline them. You can include a reason for either decision. If any record has changed since you reviewed the card, approval reports a conflict and leaves the group unapplied. Use **已批准** and **已拒绝** to reopen recorded decisions after restarting the app. Proposals labeled **测试请求** come from an explicit development test request.
 
 ### Knowledge Base Frontiers
 
