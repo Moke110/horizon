@@ -71,3 +71,52 @@ The planning/implementation skills above are user-invoked workflows. Follow each
 The per-repo configuration those skills read is `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` and `docs/agents/domain.md`. Edit those files directly; `setup-matt-pocock-skills` only needs re-running to switch issue trackers or restart the setup.
 
 Desktop process changes must follow [desktop process ownership](contracts/desktop-processes.md), including descendant cleanup and console-free startup checks.
+
+## Directory guide
+
+| File | Responsibility |
+|---|---|
+| [.gitignore](.gitignore) | Paths excluded from version control. |
+| [common.py](common.py) | Shared, domain-free helpers for all prototype modules. |
+| [GLOSSARY.md](GLOSSARY.md) | Horizon（地平线） |
+| [Horizon.cmd](Horizon.cmd) | Windows source-checkout launch command. |
+| [LICENSE](LICENSE) | Project license. |
+| [README.md](README.md) | Horizon（地平线） |
+| [README.zh-CN.md](README.zh-CN.md) | Horizon（地平线） |
+| [requirements-release.txt](requirements-release.txt) | Pinned distribution dependencies. |
+| [requirements.txt](requirements.txt) | Python development/runtime dependencies. |
+
+## Subdirectories
+
+- [.github](.github/AGENTS.md) — GitHub Actions configuration.
+- [agent](agent/AGENTS.md) — Embedded Pi runtime and Node build configuration.
+- [archive](archive/AGENTS.md) — Read and migrate the local research archive.
+- [contracts](contracts/AGENTS.md) — Versioned behavior and data contracts for public boundaries.
+- [deploy](deploy/AGENTS.md) — Systemd service and timer templates for historical Linux deployment.
+- [desktop](desktop/AGENTS.md) — Electron application and renderer build configuration.
+- [docs](docs/AGENTS.md) — Project decisions, development conventions and acceptance evidence.
+- [drafts](drafts/AGENTS.md) — Tracked initial knowledge-building examples.
+- [editor](editor/AGENTS.md) — Editorial selection and review of research items.
+- [fixtures](fixtures/AGENTS.md) — Offline research records and reproducible input examples.
+- [horizon](horizon/AGENTS.md) — Research orchestration CLI and shared domain model.
+- [hostrun](hostrun/AGENTS.md) — Desktop bridge, Agent tasks, Voyager retrieval, local knowledge and Keeper decisions.
+- [initial_build](initial_build/AGENTS.md) — Initial local knowledge construction and review.
+- [installer](installer/AGENTS.md) — Windows installation, cleanup and native runtime inputs.
+- [knowledge](knowledge/AGENTS.md) — Knowledge CLI and Feishu Bitable adapter.
+- [library](library/AGENTS.md) — Research PDF library management, reconciliation and search.
+- [pdf_ingest](pdf_ingest/AGENTS.md) — PDF ingestion and page-level evidence anchors.
+- [publisher](publisher/AGENTS.md) — Publication, alerts and interactive delivery cards.
+- [question_queue](question_queue/AGENTS.md) — Persistent research question queue and CLI.
+- [releases](releases/AGENTS.md) — Distribution channel index.
+- [retriever](retriever/AGENTS.md) — Discovery adapters and retrieval CLI.
+- [scripts](scripts/AGENTS.md) — Developer builds, compatibility probes and release tooling.
+- [skills](skills/AGENTS.md) — Host-agent runtime skills.
+- [tests](tests/AGENTS.md) — Behavioral, compatibility and integration checks.
+- [trigger](trigger/AGENTS.md) — Keyword matching and trigger evaluation.
+- [writer](writer/AGENTS.md) — Research writing, evidence review and rendering.
+
+## Verification
+
+Follow [hostrun](hostrun/AGENTS.md) to the Voyager service and its public tests, or [desktop](desktop/AGENTS.md) to the Electron build and window entry.
+
+Generated output trees are outside this directory guide. The tracked historical push and figures in `outbox/` are examples of writer output. The same exclusion applies to local temporary runs, virtual environments, downloaded dependencies, build output and Git metadata.
