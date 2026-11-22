@@ -152,7 +152,8 @@ def test_owner_version_drift_starts_one_revision_job_without_owner_writes(tmp_pa
     assert notes["previous_changes"][0]["before"]["title"] == "Original title"
     assert notes["reason"] == "owner_drift"
     assert notes["review_id"] == result["review_id"]
-    assert notes["child_id"] == "keeper-child"
+    assert notes["child_id"] is None
+    assert stored["child_id"] == "keeper-child"
     assert notes["conflicts"] == []
     assert "feedback" not in notes
     current = owner.cards.view(card["card_id"], token=TOKEN)
