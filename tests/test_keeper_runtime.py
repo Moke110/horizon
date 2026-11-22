@@ -7,6 +7,8 @@ gate and the read-only desktop bridge events.
 """
 
 import json
+import shutil
+import sys
 import threading
 import time
 import uuid
@@ -158,6 +160,129 @@ def test_runtime_returns_insufficient_evidence_with_a_real_child(tmp_path):
     assert child['status'] == 'succeeded'
     document = json.loads(child['result'])
     assert document['status'] == 'returned' and 'no source' in document['reason']
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows embedded Pythonw import rules')
+def test_runtime_uses_candidate_worker_with_pythonw_from_another_install(tmp_path):
+    base = Path(sys.base_prefix)
+    if not (base / 'pythonw.exe').is_file():
+        pytest.skip('This Windows interpreter does not provide Pythonw')
+    alternate = tmp_path / 'other-install'
+    alternate.mkdir()
+    pythonw = alternate / 'pythonw.exe'
+    shutil.copyfile(base / 'pythonw.exe', pythonw)
+    for library in base.glob('*.dll'):
+        shutil.copyfile(library, alternate / library.name)
+    runtime_version = f'python{sys.version_info.major}{sys.version_info.minor}'
+    (alternate / f'{runtime_version}._pth').write_text(
+        f'{base / "Lib"}\n{base / "DLLs"}\n', encoding='utf-8')
+
+    owner = Owner(tmp_path / 'data')
+    material = owner.material()
+    request = owner.request([{'changes': [owner.card_change([owner.source(material)])]}])
+    runtime = KeeperRuntime(owner.agent, token=TOKEN, python=str(pythonw))
+    reviewed = owner.keeper.review(request['request_id'], token=TOKEN, dispatch=runtime.dispatch)
+
+    assert reviewed['status'] == 'pending'
+    child, = owner.agent.list_children(owner.task['task_id'], token=TOKEN)
+    assert child['status'] == 'succeeded'
+    assert json.loads(child['result'])['status'] == 'reviewed'
+
+
+def test_revision_dispatches_a_real_child_with_feedback_on_the_original_task(tmp_path):
+    owner = Owner(tmp_path)
+    material = owner.material()
+    card = owner.cards.create({
+        'schema_version': 1, 'operation_id': 'owner-create',
+        'title': 'An existing card', 'content': 'Original body',
+    }, token=TOKEN)
+    request = owner.request([{'changes': [{
+        'kind': 'card', 'action': 'update', 'id': card['card_id'],
+        'expected_version': card['version'],
+        'fields': {'title': 'Sourced title', 'content': 'Proposed replacement body'},
+        'reason': 'Review the terminology.', 'sources': [owner.source(material)],
+    }]}])
+    runtime = KeeperRuntime(owner.agent, token=TOKEN)
+    first = owner.keeper.review(request['request_id'], token=TOKEN, dispatch=runtime.dispatch)
+    proposal_id = first['proposal_ids'][0]
+    task_id = owner.task['task_id']
+    owner.agent.begin_turn({
+        'schema_version': 1, 'operation_id': 'later-turn', 'task_id': task_id,
+        'expected_version': owner.task['version'], 'text': 'An independent task turn',
+    }, token=TOKEN)
+    current = owner.cards.update({
+        'schema_version': 1, 'operation_id': 'manual-content',
+        'card_id': card['card_id'], 'expected_version': card['version'],
+        'content': 'A newer manual body',
+    }, token=TOKEN)
+    feedback = 'Keep my independently edited body.'
+    adjusted = owner.keeper.revise({
+        'schema_version': 1, 'operation_id': 'explorer-feedback', 'proposal_id': proposal_id,
+        'revision': 1, 'decision': 'adjust', 'feedback': feedback,
+        'keep_current_fields': [{'change_index': 0, 'fields': ['content']}],
+    }, token=TOKEN, principal=KeeperPrincipal('explorer', False))
+    revised = owner.keeper.review_revision(adjusted['review_id'], token=TOKEN,
+                                            dispatch=runtime.dispatch)
+    proposal = owner.keeper.view(proposal_id, token=TOKEN)
+    assert proposal['status'] == 'pending' and proposal['revision'] == 2
+    assert proposal['report_id'] == owner.report['turn_id']
+    assert proposal['changes'][0]['after']['content'] == 'A newer manual body'
+    assert owner.cards.view(card['card_id'], token=TOKEN) == current
+    children = owner.agent.list_children(task_id, token=TOKEN)
+    assert len(children) == 2
+    child = children[1]
+    assert child['child_id'] == revised['child_id']
+    assert child['role'] == 'keeper' and child['status'] == 'succeeded'
+    assert child['parent_session_id'] == owner.task['session_id']
+    assert feedback in child['input_text']
+    assert child['snapshots']['keeper']['report_id'] == owner.report['turn_id']
+
+
+def test_revision_with_new_theme_evidence_completes_one_real_review(tmp_path):
+    owner = Owner(tmp_path)
+    material = owner.material()
+    source = owner.source(material)
+    theme = owner.themes.create({
+        'schema_version': 1, 'operation_id': 'theme-base',
+        'judgement': 'Calibration remains useful', 'evidence': [],
+    }, token=TOKEN)
+    request = owner.request([{'changes': [{
+        'kind': 'theme', 'action': 'update', 'id': theme['theme_id'],
+        'expected_version': theme['version'],
+        'fields': {'evidence': [{
+            'stance': 'supports', 'reason': 'The report records calibration.', 'source': source,
+        }]},
+        'reason': 'Record the supporting source.', 'sources': [source],
+    }]}])
+    runtime = KeeperRuntime(owner.agent, token=TOKEN)
+    first = owner.keeper.review(request['request_id'], token=TOKEN, dispatch=runtime.dispatch)
+    proposal_id = first['proposal_ids'][0]
+    manual = owner.themes.update({
+        'schema_version': 1, 'operation_id': 'manual-judgement',
+        'theme_id': theme['theme_id'], 'expected_version': 1,
+        'judgement': 'Calibration is useful for this sensor only',
+    }, token=TOKEN)
+    principal = KeeperPrincipal('explorer', False)
+    staged = owner.keeper.decide({
+        'schema_version': 1, 'operation_id': 'old-theme-confirm',
+        'proposal_id': proposal_id, 'revision': 1, 'expected_versions': [1],
+        'decision': 'approve',
+    }, token=TOKEN, principal=principal)
+    revised = owner.keeper.review_revision(staged['review_id'], token=TOKEN,
+                                            dispatch=runtime.dispatch)
+    proposal = owner.keeper.view(proposal_id, token=TOKEN)
+    assert revised['status'] == 'completed' and proposal['revision'] == 2
+    assert len(owner.agent.list_children(owner.task['task_id'], token=TOKEN)) == 2
+    assert owner.themes.view(theme['theme_id'], token=TOKEN) == manual
+    decided = owner.keeper.decide({
+        'schema_version': 1, 'operation_id': 'new-theme-confirm',
+        'proposal_id': proposal_id, 'revision': 2, 'expected_versions': [2],
+        'decision': 'approve',
+    }, token=TOKEN, principal=principal)
+    committed = owner.themes.view(theme['theme_id'], token=TOKEN)
+    assert decided['applied'][0]['version'] == 3
+    assert committed['judgement'] == manual['judgement']
+    assert committed['evidence'][0]['source']['anchor']['id'] == 'p2'
 
 
 def test_failed_child_is_visible_and_exact_replay_does_not_spawn_again(tmp_path, monkeypatch):

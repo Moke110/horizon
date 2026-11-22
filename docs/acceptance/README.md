@@ -473,3 +473,26 @@ its target at v1. Each decision had one Explorer audit entry with the bound
 proposal, revision, operation and target versions. Both desktop exits returned
 0 with no remaining instance processes. The candidate's Windows suite passed
 1,655 tests with 15 skips and two dependency warnings. [K7 acceptance evidence](https://github.com/Moke110/horizon/issues/211)
+
+## K8 Keeper revisions after conflicts and feedback — 2026-11-22
+
+The Windows x64 candidate `0.1.0-k8.2` built twice from `0cff027` with ZIP
+SHA-256 `3870bf91dc22b295e50134160cd0f68bc3d90918e933cda95fb0dd38d9aa6ba7`
+and a matching 21,193-file manifest. The seven-stage installation and
+distribution wrapper passed. The first GUI run on `0.1.0-k8.1` returned both
+proposals at v1 without writing knowledge. The reused embedded Pythonw searched
+its own installation for the worker and exited with a module import error.
+The corrected desktop launches the worker from the selected package and shows
+a new revision only after one is published. Both attempts then succeeded when
+retried through the installed bridge on a copy of the failed instance data.
+
+The Explorer confirmed both GUI retest paths. SQLite readback showed that
+the old approval wrote nothing, a real Keeper child reviewed against current
+knowledge, and explicit approval of proposal v2 advanced the target to v3
+while preserving the manual edit. A separate adjustment kept one of two
+changes pending, preserved the feedback in the original task's Keeper child,
+and wrote no knowledge. The desktop exited with code 0 and left no instance
+processes. Installed checks with IANA source snapshots covered concurrent
+edits, stale approvals, repeated operations and cancellation. The Windows
+suite passed 1,671 tests with 15 skips and two dependency warnings. Both
+renderer regression tests passed. [K8 acceptance evidence](https://github.com/Moke110/horizon/issues/212)

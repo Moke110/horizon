@@ -32,6 +32,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from hostrun import keeper_revisions
 from hostrun.agent_service import AgentService, CommandError
 from hostrun.frontier import (
     FrontierService, _validate_constraints, _validate_question,
@@ -60,6 +61,8 @@ _MAX_LOCATOR_BYTES = 2000
 _MAX_EXCERPT_BYTES = 4000
 _MAX_DISPATCH_REASON_BYTES = 1000
 _MAX_LABEL_BYTES = 200
+_MAX_REVISION_ATTEMPTS = 2
+_REVISION_TERMINAL = ("approved", "rejected", "cancelled")
 
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_.:-]+")
 _KINDS = ("card", "theme", "frontier")
@@ -279,6 +282,17 @@ class KeeperService:
                    "sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
                    "proposal_id TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, "
                    "event TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS keeper_revision_jobs("
+                   "review_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL, "
+                   "base_revision INTEGER NOT NULL, status TEXT NOT NULL, "
+                   "request TEXT NOT NULL, result TEXT NOT NULL)")
+        db.execute("CREATE INDEX IF NOT EXISTS keeper_revision_jobs_proposal "
+                   "ON keeper_revision_jobs(proposal_id)")
+        db.execute("CREATE TABLE IF NOT EXISTS keeper_revision_history("
+                   "proposal_id TEXT NOT NULL, revision INTEGER NOT NULL, "
+                   "operation_id TEXT NOT NULL, result TEXT NOT NULL, "
+                   "created_at INTEGER NOT NULL, "
+                   "PRIMARY KEY(proposal_id, revision))")
 
     @contextmanager
     def _connect(self):
@@ -457,35 +471,68 @@ class KeeperService:
             if row is None:
                 raise CommandError("not_found", "Unknown Keeper proposal")
             proposal = json.loads(row[0])
-            if proposal.get("status") != "pending":
-                raise CommandError("already_decided",
-                                   "Keeper proposal has already been decided")
             if proposal.get("revision") != command["revision"]:
+                if command["decision"] == "approve" \
+                        and proposal.get("status") == "revising":
+                    result = self._stale_approval(proposal, command)
+                    db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                               (command["operation_id"], encoded,
+                                json.dumps(result)))
+                    self._audit_stale_approval(db, proposal, result)
+                    return result
                 raise CommandError("version_conflict",
                                    "Keeper proposal revision changed")
             changes = proposal["changes"]
             check_expected_versions(command, changes)
+            if proposal.get("status") == "revising" \
+                    and command["decision"] == "approve":
+                # A concurrent window approved the same displayed revision while
+                # Keeper is already rebuilding it. Return an explicit revising
+                # receipt instead of reporting a successful knowledge write.
+                result = self._stale_approval(proposal, command)
+                db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                           (command["operation_id"], encoded,
+                            json.dumps(result)))
+                self._audit_stale_approval(db, proposal, result)
+                return result
+            if proposal.get("status") != "pending":
+                raise CommandError("already_decided",
+                                   "Keeper proposal has already been decided")
             applied = []
             if command["decision"] == "approve":
                 request, _ = self._load_request(db, proposal["request_id"])
+                drift = []
+                for change in changes:
+                    if change["action"] == "create":
+                        continue
+                    record = self._read_owner(db, change["kind"], change["id"])
+                    if record["version"] != change["expected_version"]:
+                        drift.append({
+                            "kind": change["kind"], "id": change["id"],
+                            "expected_version": change["expected_version"],
+                            "current_version": record["version"],
+                        })
+                if drift:
+                    # The displayed revision still pins the old owner snapshot.
+                    # Record a durable revision job before any owner write; the
+                    # Explorer's approval never silently rebases knowledge.
+                    result, event = self._begin_revision(
+                        db, proposal, command, drift=drift)
+                    db.execute("UPDATE keeper_proposals SET result=? "
+                               "WHERE proposal_id=?",
+                               (json.dumps(proposal), command["proposal_id"]))
+                    db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                               (command["operation_id"], encoded,
+                                json.dumps(result)))
+                    self._record_audit(db, proposal["proposal_id"], event)
+                    return result
                 self._check_approval_policy(db, changes, request)
                 validate_relations_against_deletions(changes)
                 validate_material_references(self.materials, db, changes)
                 for change in changes:
-                    if change["action"] == "create":
-                        if self._existing_overlap(db, {"kind": change["kind"], "proposal": change}):
-                            raise CommandError("duplicate_entity", "An equivalent record already exists")
-                        continue
-                    record = self._read_owner(db, change["kind"], change["id"])
-                    if record["version"] != change["expected_version"]:
-                        error = CommandError("version_conflict",
-                                             "Owner version changed")
-                        error.details = {
-                            "kind": change["kind"], "id": change["id"],
-                            "expected_version": change["expected_version"],
-                            "current_version": record["version"],
-                        }
-                        raise error
+                    if change["action"] == "create" and self._existing_overlap(
+                            db, {"kind": change["kind"], "proposal": change}):
+                        raise CommandError("duplicate_entity", "An equivalent record already exists")
                 results = {}
                 for index, change in apply_order(changes):
                     action, prepared = owner_command(
@@ -538,6 +585,623 @@ class KeeperService:
         for kind, record in notifications:
             self._notify_owner(kind, record)
         return result
+
+    # ------------------------------------------------------------------
+    # Revision jobs: a drifted owner pin becomes a durable, reviewable job.
+    # ------------------------------------------------------------------
+
+    def revise(self, command, *, token, principal=None):
+        """Adjust or cancel one active proposal revision without owner writes."""
+        self._authorize(token)
+        self._check_explorer(principal)
+        command = keeper_revisions.validate_revise(command)
+        encoded = json.dumps({"action": "revise", "command": command},
+                             sort_keys=True, ensure_ascii=False)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute(
+                "SELECT request,result FROM keeper_operations WHERE operation_id=?",
+                (command["operation_id"],)).fetchone()
+            if previous is not None:
+                if previous[0] != encoded:
+                    raise CommandError(
+                        "operation_conflict",
+                        "operation_id conflicts with a previous revision command")
+                return json.loads(previous[1])
+            proposal = self._load_proposal(db, command["proposal_id"])
+            if proposal.get("revision") != command["revision"]:
+                raise CommandError("version_conflict",
+                                   "Keeper proposal revision changed")
+            status = proposal.get("status")
+            if status in _REVISION_TERMINAL \
+                    or status not in ("pending", "revising", "returned"):
+                raise CommandError("already_decided",
+                                   "Keeper proposal has already been decided")
+            if command["decision"] == "cancel":
+                result = self._cancel_revision(db, proposal, command)
+            else:
+                if status == "revising":
+                    raise CommandError(
+                        "revision_in_progress",
+                        "A Keeper revision worker already owns this proposal")
+                keeper_revisions.validate_adjustment(proposal, command)
+                result = self._adjust_revision(db, proposal, command)
+            db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                       (command["operation_id"], encoded, json.dumps(result)))
+        return result
+
+    def queued_revisions(self, *, token):
+        """Identify jobs that still need a Keeper child, including startup recovery."""
+        self._authorize(token)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT review_id,status,request,result FROM keeper_revision_jobs "
+                "ORDER BY rowid").fetchall()
+            queued = []
+            for review_id, status, request, _result in rows:
+                if status == "running":
+                    job = self._load_job(db, review_id)
+                    self._save_job(
+                        db, job, "queued",
+                        self._revision_receipt(job["request"], "queued",
+                                               reason="resumed"))
+                    queued.append(review_id)
+                elif status == "queued":
+                    queued.append(review_id)
+            return queued
+
+    def review_revision(self, review_id, *, token, dispatch):
+        """Run the real Keeper child outside the transaction, then commit safely."""
+        self._authorize(token)
+        if not isinstance(review_id, str) or not review_id:
+            raise CommandError("not_found", "Unknown Keeper revision job")
+        if not callable(dispatch):
+            raise CommandError("invalid_dispatch", "A trusted dispatcher is required")
+        digest = None
+        claim = None
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = self._load_job(db, review_id)
+            if job["status"] != "queued":
+                return job["result"]
+            proposal = self._load_proposal(db, job["proposal_id"])
+            if proposal.get("status") != "revising" \
+                    or proposal.get("revision") != job["base_revision"] \
+                    or proposal.get("revision_job") != review_id:
+                status = "cancelled" if proposal.get("status") == "cancelled" \
+                    else "returned"
+                result = self._revision_receipt(job["request"], status,
+                                                reason="revision_inactive")
+                self._save_job(db, job, status, result)
+                if status == "returned":
+                    self._persist_returned(db, proposal, job, result)
+                return result
+            try:
+                keeper_revisions.validate_adjustment(proposal, job["request"])
+                command, _ = self._load_request(db, proposal["request_id"])
+                self._check_revision_pins(db, proposal)
+                revised = self._rebuild_revision(
+                    db, proposal, command, job["request"], review_id)
+            except (CommandError, _Returned) as error:
+                result = self._revision_failure(job["request"], error)
+                self._save_job(db, job, "returned", result)
+                self._persist_returned(db, proposal, job, result)
+                self._audit_revision(db, proposal.get("proposal_id", job["proposal_id"]),
+                                     "keeper.revision_returned", result,
+                                     **self._revision_audit_details(job, result))
+                return result
+            digest = keeper_revisions.fingerprint(revised)
+            claim = str(uuid.uuid4())
+            job["request"]["attempts"] = int(job["request"].get("attempts", 0)) + 1
+            job["request"]["fingerprint"] = digest
+            job["request"]["claim"] = claim
+            self._save_job(db, job, "running",
+                           self._revision_receipt(job["request"], "running"))
+            context = self._revision_context(revised, job["request"], review_id)
+        try:
+            outcome = self._validate_dispatch(dispatch(context))
+        except Exception as error:
+            outcome = {"status": "failed",
+                       "child_id": getattr(error, "child_id", None),
+                       "reason": "invalid_dispatch" if isinstance(error, CommandError)
+                       else "keeper_execution_failed"}
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = self._load_job(db, review_id)
+            if job["status"] == "cancelled":
+                return job["result"]
+            if job["status"] != "running" \
+                    or job["request"].get("claim") != claim \
+                    or job["request"].get("fingerprint") != digest:
+                # Another process resumed this job, cancelled it, or the same
+                # review was reissued against a different snapshot. Never let
+                # this older completion publish over the newer generation.
+                return job["result"]
+            proposal = self._load_proposal(db, job["proposal_id"])
+            if proposal.get("status") == "cancelled":
+                result = self._revision_receipt(
+                    job["request"], "cancelled", reason="revision_inactive",
+                    child_id=outcome.get("child_id"))
+                self._save_job(db, job, "cancelled", result)
+                return result
+            if proposal.get("status") != "revising" \
+                    or proposal.get("revision") != job["base_revision"] \
+                    or proposal.get("revision_job") != review_id:
+                result = self._revision_receipt(job["request"], "returned",
+                                                reason="revision_inactive",
+                                                child_id=outcome.get("child_id"))
+                self._save_job(db, job, "returned", result)
+                self._persist_returned(db, proposal, job, result)
+                return result
+            if outcome["status"] != "reviewed":
+                result = self._revision_receipt(
+                    job["request"], outcome["status"],
+                    reason=outcome.get("reason"),
+                    child_id=outcome.get("child_id"))
+                self._save_job(db, job, outcome["status"], result)
+                self._persist_returned(db, proposal, job, result)
+                self._audit_revision(db, proposal["proposal_id"],
+                                     "keeper.revision_" + outcome["status"],
+                                     result,
+                                     **self._revision_audit_details(job, result))
+                return result
+            try:
+                command, _ = self._load_request(db, proposal["request_id"])
+                self._check_revision_pins(db, proposal)
+                revised = self._rebuild_revision(
+                    db, proposal, command, job["request"], review_id)
+            except (CommandError, _Returned) as error:
+                result = self._revision_failure(job["request"], error)
+                self._save_job(db, job, "returned", result)
+                self._persist_returned(db, proposal, job, result)
+                self._audit_revision(db, proposal["proposal_id"],
+                                     "keeper.revision_returned", result,
+                                     **self._revision_audit_details(job, result))
+                return result
+            if keeper_revisions.fingerprint(revised) != digest:
+                # The owners moved while the child was running. Never issue a
+                # stale revision; retry within a bound or return to the
+                # Explorer with the current proposal still intact.
+                if job["request"]["attempts"] < _MAX_REVISION_ATTEMPTS:
+                    result = self._revision_receipt(
+                        job["request"], "queued", reason="snapshot_changed")
+                    self._save_job(db, job, "queued", result)
+                    self._audit_revision(db, proposal["proposal_id"],
+                                         "keeper.revision_retry", result,
+                                         **self._revision_audit_details(job, result))
+                    return result
+                result = self._revision_receipt(
+                    job["request"], "returned", reason="snapshot_changed")
+                self._save_job(db, job, "returned", result)
+                self._persist_returned(db, proposal, job, result)
+                self._audit_revision(db, proposal["proposal_id"],
+                                     "keeper.revision_returned", result,
+                                     **self._revision_audit_details(job, result))
+                return result
+            revised["child_id"] = outcome.get("child_id") \
+                or proposal.get("child_id")
+            revised["review_id"] = review_id
+            revised["revision_notes"] = keeper_revisions.revision_notes(
+                proposal,
+                reason=job["request"].get("reason") or "revision",
+                review_id=review_id,
+                feedback=job["request"].get("feedback"),
+                child_id=revised["child_id"],
+                conflicts=revised.get("conflicts") or [])
+            previous_snapshot = keeper_revisions.snapshot(proposal)
+            db.execute(
+                "INSERT OR IGNORE INTO keeper_revision_history "
+                "(proposal_id,revision,operation_id,result,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (proposal["proposal_id"], proposal["revision"],
+                 job["request"].get("operation_id", review_id),
+                 json.dumps(previous_snapshot), int(time.time())))
+            db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                       (json.dumps(revised), proposal["proposal_id"]))
+            result = self._revision_receipt(
+                job["request"], "completed", child_id=revised["child_id"])
+            self._save_job(db, job, "completed", result)
+            self._audit_revision(db, proposal["proposal_id"],
+                                 "keeper.revision_completed", result,
+                                 **self._revision_audit_details(job, result))
+        return result
+
+    def _new_job(self, db, proposal, *, operation_id, reason, feedback=None,
+                 omit=None, keep=None, drift=None):
+        review_id = str(uuid.uuid4())
+        request = {
+            "schema_version": _SCHEMA_VERSION,
+            "review_id": review_id,
+            "proposal_id": proposal["proposal_id"],
+            "base_revision": proposal["revision"],
+            "operation_id": operation_id,
+            "feedback": feedback,
+            "reason": reason,
+            "omit_changes": list(omit or []),
+            "keep_current_fields": copy.deepcopy(list(keep or [])),
+            "attempts": 0,
+            "drift": list(drift or []),
+        }
+        db.execute("INSERT INTO keeper_revision_jobs VALUES(?,?,?,?,?,?)",
+                   (review_id, proposal["proposal_id"], proposal["revision"],
+                    "queued", json.dumps(request),
+                    json.dumps(self._revision_receipt(request, "queued"))))
+        proposal["status"] = "revising"
+        proposal["revision_job"] = review_id
+        proposal["review_id"] = review_id
+        proposal["revision_notes"] = keeper_revisions.revision_notes(
+            proposal, reason=reason, review_id=review_id, feedback=feedback)
+        return review_id
+
+    def _begin_revision(self, db, proposal, command, *, drift):
+        review_id = self._new_job(
+            db, proposal, operation_id=command["operation_id"],
+            reason="owner_drift", drift=drift)
+        decided_at = int(time.time())
+        result = {
+            "operation_id": command["operation_id"],
+            "decision": command["decision"],
+            "proposal_id": proposal["proposal_id"],
+            "revision": proposal["revision"],
+            "status": "revising",
+            "applied": [],
+            "review_id": review_id,
+            "code": "version_conflict",
+            "decided_at": decided_at,
+        }
+        if "reason" in command:
+            result["reason"] = command["reason"]
+        proposal["decision"] = result
+        event = {
+            "schema_version": _SCHEMA_VERSION,
+            "type": "keeper.revision_requested",
+            "operation_id": command["operation_id"],
+            "proposal_id": proposal["proposal_id"],
+            "revision": proposal["revision"],
+            "decision": command["decision"],
+            "status": "revising",
+            "actor": "explorer",
+            "expected_versions": command.get("expected_versions", []),
+            "applied": [],
+            "review_id": review_id,
+            "drift": list(drift or []),
+            "decided_at": decided_at,
+        }
+        if "reason" in command:
+            event["reason"] = command["reason"]
+        return result, event
+
+    def _adjust_revision(self, db, proposal, command):
+        # Adjusting is an explicit pre-dispatch request or a retry after a
+        # returned job. A revising proposal already has a worker generation and
+        # cannot be rewritten underneath it.
+        if proposal.get("status") not in ("pending", "returned"):
+            raise CommandError("revision_in_progress",
+                               "A Keeper revision worker already owns this proposal")
+        feedback = command.get("feedback")
+        review_id = self._new_job(
+            db, proposal, operation_id=command["operation_id"],
+            reason="explorer_adjustment", feedback=feedback,
+            omit=command.get("omit_changes"),
+            keep=command.get("keep_current_fields"))
+        result = {
+            "operation_id": command["operation_id"],
+            "decision": "adjust",
+            "proposal_id": proposal["proposal_id"],
+            "revision": proposal["revision"],
+            "status": "revising",
+            "applied": [],
+            "review_id": review_id,
+            "decided_at": int(time.time()),
+        }
+        if feedback is not None:
+            result["feedback"] = feedback
+        proposal["decision"] = result
+        db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                   (json.dumps(proposal), proposal["proposal_id"]))
+        self._audit_revision(db, proposal["proposal_id"],
+                             "keeper.revision_feedback", result,
+                             review_id=review_id, feedback=feedback,
+                             operation_id=command["operation_id"])
+        return result
+
+    def _cancel_revision(self, db, proposal, command):
+        now = int(time.time())
+        job = self._active_job(db, proposal["proposal_id"])
+        review_id = job["review_id"] if job is not None else None
+        result = {
+            "operation_id": command["operation_id"],
+            "decision": "cancel",
+            "proposal_id": proposal["proposal_id"],
+            "revision": proposal["revision"],
+            "status": "cancelled",
+            "applied": [],
+            "decided_at": now,
+        }
+        if review_id is not None:
+            result["review_id"] = review_id
+        if "feedback" in command:
+            result["feedback"] = command["feedback"]
+        if job is not None and job["status"] in ("queued", "running",
+                                                 "returned", "failed"):
+            self._save_job(db, job, "cancelled", result)
+        proposal["status"] = "cancelled"
+        proposal["decision"] = result
+        if review_id is not None:
+            proposal["revision_job"] = review_id
+            proposal["review_id"] = review_id
+        db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                   (json.dumps(proposal), proposal["proposal_id"]))
+        self._audit_revision(db, proposal["proposal_id"],
+                             "keeper.revision_cancelled", result,
+                             review_id=review_id,
+                             operation_id=command["operation_id"])
+        return result
+
+    def _persist_returned(self, db, proposal, job, result):
+        """Persist an explicit returned proposal state, never a silent revising."""
+        if proposal.get("status") != "revising" \
+                or proposal.get("revision") != job["base_revision"] \
+                or proposal.get("revision_job") != job["review_id"]:
+            return
+        proposal["status"] = "returned"
+        proposal.pop("decision", None)
+        proposal["review_id"] = job["review_id"]
+        proposal["revision_job"] = job["review_id"]
+        proposal["feedback"] = job["request"].get("feedback") or ""
+        reason = result.get("reason")
+        if reason is not None:
+            proposal["reason"] = reason
+        proposal["revision_notes"] = keeper_revisions.revision_notes(
+            proposal, reason=reason or "returned", review_id=job["review_id"],
+            feedback=job["request"].get("feedback"),
+            child_id=result.get("child_id"))
+        db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                   (json.dumps(proposal), proposal["proposal_id"]))
+
+    def _rebuild_revision(self, db, proposal, command, request, review_id):
+        previous_changes = proposal["changes"]
+        raw_changes = keeper_revisions.original_changes(command, previous_changes)
+        for raw, previous in zip(raw_changes, previous_changes):
+            raw["fields"] = keeper_revisions.revision_fields(
+                previous, raw.get("fields") or {})
+        selected = keeper_revisions.apply_adjustment(raw_changes, request)
+        if not selected:
+            raise _Returned("no_effect")
+        for index, raw in selected:
+            self._validate_retained_change(db, previous_changes[index], raw)
+            if raw["action"] == "create":
+                continue
+            record = self._read_owner(db, raw["kind"], raw["id"])
+            raw["expected_version"] = record["version"]
+            if raw["action"] == "update":
+                raw["fields"] = keeper_revisions.merge_latest_nested(
+                    raw["fields"], record)
+        scoped = dict(command)
+        scoped["groups"] = [{"changes": [raw for _, raw in selected]}]
+        plan = self._plan(db, scoped, omit_ineffective=True)
+        if not plan:
+            raise _Returned("no_effect")
+        if len(plan) != 1:
+            raise _Returned("group_changed")
+        changes = [copy.deepcopy(entry["proposal"]) for entry in plan[0]]
+        revised = copy.deepcopy(proposal)
+        for name in ("decision", "revision_job", "review_id", "reviewed_at",
+                     "previous_revision", "revision_notes", "conflicts",
+                     "feedback", "reason"):
+            revised.pop(name, None)
+        found = keeper_revisions.conflicts(previous_changes, changes)
+        revised.update({
+            "revision": proposal["revision"] + 1,
+            "status": "pending",
+            "changes": changes,
+            "conflicts": found,
+            "review_id": review_id,
+            "reviewed_at": int(time.time()),
+            "feedback": request.get("feedback") or "",
+            "revision_notes": keeper_revisions.revision_notes(
+                proposal, reason=request.get("reason") or "revision",
+                review_id=review_id, feedback=request.get("feedback"),
+                child_id=proposal.get("child_id"), conflicts=found),
+        })
+        return revised
+
+    def _validate_retained_change(self, db, previous, raw):
+        """Check the captured pins that still support this revised change."""
+        before = previous["before"] or {}
+        after = previous["after"] or {}
+        kind, action = raw["kind"], raw["action"]
+        fields = raw["fields"]
+        if kind == "theme" and action == "update" and "evidence" not in fields:
+            previous = {**previous, "after": {**after, "evidence": before.get("evidence", [])}}
+        validate_material_references(self.materials, db, [previous])
+        if kind == "theme" and (action == "create" or "related_cards" in fields):
+            self.themes._relations(db, after.get("related_cards", []))
+
+    @staticmethod
+    def _check_revision_pins(db, proposal):
+        task = AgentService.read_task_in_transaction(db, proposal["task_id"])
+        if task["version"] < proposal["task_version"]:
+            raise CommandError("version_conflict", "Task version moved backwards")
+        report = AgentService.read_turn_in_transaction(db, proposal["report_id"])
+        if report.get("task_id") != proposal["task_id"]:
+            raise CommandError("invalid_report", "Report belongs to another task")
+        if report.get("status") != "completed":
+            raise CommandError("invalid_report", "Report is not a completed turn")
+        if not isinstance(report.get("result"), str) or not report["result"].strip():
+            raise CommandError("invalid_report", "Report is empty")
+        if report["version"] != proposal["report_version"]:
+            raise CommandError("version_conflict", "Report version changed")
+
+    @staticmethod
+    def _revision_context(revised, request, review_id):
+        provenance = revised.get("provenance", "editor_test")
+        if not isinstance(provenance, dict):
+            provenance = {"source": provenance}
+        provenance = {
+            **provenance,
+            "proposal_id": revised["proposal_id"],
+            "revision": revised["revision"],
+            "review_id": review_id,
+        }
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "request_id": keeper_revisions.request_id(
+                review_id, request["fingerprint"]),
+            "review_id": review_id,
+            "proposal_id": revised["proposal_id"],
+            "revision": revised["revision"],
+            "task_id": revised["task_id"],
+            "task_version": revised["task_version"],
+            "report_id": revised["report_id"],
+            "report_version": revised["report_version"],
+            "provenance": provenance,
+            "feedback": request.get("feedback") or "",
+            "fingerprint": request.get("fingerprint"),
+            "groups": [{"proposal_id": revised["proposal_id"],
+                        "changes": copy.deepcopy(revised["changes"])}],
+        }
+
+    @staticmethod
+    def _revision_receipt(request, status, *, reason=None, child_id=None):
+        result = {
+            "schema_version": _SCHEMA_VERSION,
+            "review_id": request["review_id"],
+            "proposal_id": request["proposal_id"],
+            "revision": request["base_revision"],
+            "status": status,
+        }
+        if status == "completed":
+            result["proposal_status"] = "pending"
+            result["proposal_revision"] = request["base_revision"] + 1
+        elif status in ("returned", "failed"):
+            result["proposal_status"] = "returned"
+        if reason is not None:
+            result["reason"] = reason
+        if child_id is not None:
+            result["child_id"] = child_id
+        return result
+
+    @staticmethod
+    def _revision_failure(request, error):
+        if isinstance(error, _Returned):
+            reason = error.reason
+            evidence = error.evidence
+        else:
+            reason = error.code
+            evidence = getattr(error, "details", None)
+        result = KeeperService._revision_receipt(
+            request, "returned", reason=reason)
+        if isinstance(evidence, dict):
+            # Dict details are an atomic diagnostic object; never slice them.
+            result["evidence"] = [copy.deepcopy(evidence)]
+        elif isinstance(evidence, list):
+            result["evidence"] = copy.deepcopy(
+                evidence[:_MAX_TOTAL_CHANGES * _MAX_SOURCES])
+        elif evidence is not None:
+            result["evidence"] = [copy.deepcopy(evidence)]
+        return result
+
+    @staticmethod
+    def _stale_approval(proposal, command):
+        result = {
+            "operation_id": command["operation_id"],
+            "decision": command["decision"],
+            "proposal_id": proposal["proposal_id"],
+            "revision": command["revision"],
+            "status": "revising",
+            "reason": "version_conflict",
+            "applied": [],
+            "decided_at": int(time.time()),
+        }
+        if proposal.get("review_id") is not None:
+            result["review_id"] = proposal["review_id"]
+        return result
+
+    def _audit_stale_approval(self, db, proposal, result):
+        self._audit_revision(
+            db, proposal["proposal_id"], "keeper.decision_stale", result,
+            review_id=result.get("review_id") or proposal.get("review_id"),
+            operation_id=result["operation_id"],
+            reason=result["reason"])
+
+    @staticmethod
+    def _revision_audit_details(job, result):
+        return {
+            "review_id": job["review_id"],
+            "operation_id": f"revision:{job['review_id']}:{uuid.uuid4()}",
+            "attempts": job["request"].get("attempts", 0),
+            "result_status": result.get("status"),
+            "proposal_revision": result.get("proposal_revision"),
+        }
+
+    @staticmethod
+    def _record_audit(db, proposal_id, event):
+        db.execute("INSERT INTO keeper_audit(proposal_id,operation_id,event) "
+                   "VALUES(?,?,?)",
+                   (proposal_id, event["operation_id"], json.dumps(event)))
+
+    def _audit_revision(self, db, proposal_id, event_type, result, **details):
+        event = {
+            "schema_version": _SCHEMA_VERSION,
+            "type": event_type,
+            "proposal_id": proposal_id,
+            "status": result.get("status"),
+            "actor": ("explorer" if event_type in ("keeper.revision_feedback",
+                                                    "keeper.revision_cancelled")
+                      else "keeper"),
+            "review_id": details.get("review_id", result.get("review_id")),
+            "revision": result.get("revision"),
+            "applied": [],
+        }
+        for name in ("operation_id", "feedback", "attempts", "reason",
+                     "result_status", "proposal_revision"):
+            if details.get(name) is not None:
+                event[name] = details[name]
+        if result.get("reason") is not None:
+            event.setdefault("reason", result["reason"])
+        if result.get("child_id") is not None:
+            event["child_id"] = result["child_id"]
+        if "operation_id" not in event:
+            event["operation_id"] = f"revision:{event['review_id']}:{uuid.uuid4()}"
+        self._record_audit(db, proposal_id, event)
+
+    @staticmethod
+    def _load_proposal(db, proposal_id):
+        row = db.execute("SELECT result FROM keeper_proposals WHERE proposal_id=?",
+                         (proposal_id,)).fetchone()
+        if row is None:
+            raise CommandError("not_found", "Unknown Keeper proposal")
+        return json.loads(row[0])
+
+    @staticmethod
+    def _load_job(db, review_id):
+        row = db.execute(
+            "SELECT proposal_id,base_revision,status,request,result "
+            "FROM keeper_revision_jobs WHERE review_id=?",
+            (review_id,)).fetchone()
+        if row is None:
+            raise CommandError("not_found", "Unknown Keeper revision job")
+        return {"review_id": review_id, "proposal_id": row[0],
+                "base_revision": row[1], "status": row[2],
+                "request": json.loads(row[3]), "result": json.loads(row[4])}
+
+    @staticmethod
+    def _save_job(db, job, status, result):
+        job["status"] = status
+        job["result"] = result
+        db.execute("UPDATE keeper_revision_jobs SET status=?,request=?,result=? "
+                   "WHERE review_id=?",
+                   (status, json.dumps(job["request"]), json.dumps(result),
+                    job["review_id"]))
+
+    @staticmethod
+    def _active_job(db, proposal_id):
+        row = db.execute(
+            "SELECT review_id FROM keeper_revision_jobs WHERE proposal_id=? "
+            "ORDER BY rowid DESC LIMIT 1", (proposal_id,)).fetchone()
+        return KeeperService._load_job(db, row[0]) if row is not None else None
 
     @staticmethod
     def _check_approval_policy(db, changes, request):
@@ -667,13 +1331,15 @@ class KeeperService:
         encoded = value.encode("utf-8")[:_MAX_LABEL_BYTES]
         return encoded.decode("utf-8", "ignore")
 
-    def _plan(self, db, command):
+    def _plan(self, db, command, *, omit_ineffective=False):
         """Build and validate every candidate without any business write."""
         entries = []
         seen_creations = {}
         for group in command["groups"]:
             for change in group["changes"]:
                 entry = self._build_change(db, change)
+                if omit_ineffective and not keeper_revisions.has_effect(entry["proposal"]):
+                    continue
                 if entry["proposal"]["action"] == "create":
                     key = (entry["kind"],
                            _normalized_label(self._creation_label(entry)))
@@ -688,7 +1354,8 @@ class KeeperService:
                     if overlap:
                         raise _Returned("duplicate_entity", overlap)
                 entries.append(entry)
-        blocked = review_policy(db, entries, command)
+        blocked = review_policy(db, entries, command,
+                                require_matching_supersedes=not omit_ineffective)
         if blocked is not None:
             raise _Returned(blocked["reason"], [{key: value for key, value in blocked.items()
                                                 if key != "reason"}])
@@ -1088,7 +1755,8 @@ class KeeperService:
     def list(self, *, token, status="pending"):
         """List persisted proposals with a stable review status."""
         self._authorize(token)
-        if status not in ("pending", "approved", "rejected", "returned"):
+        if status not in ("pending", "approved", "rejected", "returned",
+                          "revising", "cancelled"):
             raise CommandError("invalid_command", "Unknown proposal status")
         with self._connect() as db:
             db.execute("BEGIN")

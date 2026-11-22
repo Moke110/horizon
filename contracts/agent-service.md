@@ -62,6 +62,8 @@ For `delegate(role=voyager)`, `input` is the retrieval UUID. The Python owner re
 
 Delegation operation identities are scoped by parent task, committed input version and provider tool-call identity. Repeating a call in one turn returns its existing child result; reusing a provider call identifier in a later turn creates a separate child.
 
+Keeper proposal revisions use the trusted Keeper dispatcher. The child's parent task and report version stay pinned to the original review even when the task accepts later turns. The child ledger records the proposal and review identifiers and the Explorer's bounded adjustment feedback for that task. A changed plan has a distinct review attempt identity, and replay of the same verified plan reuses its recorded child.
+
 ### Recoverable desktop turns
 
 `begin_turn` commits the user message and running turn together. `commit_turn` checks expected_version and commits the completed response with the assistant message; failed, cancelled and recovery_required states do not append a success response. Operation receipts precede version checks on replay. `recoverable_turns` returns running work after process loss. Pi restores the original persisted tool calls and their parameters after the turn marker; existing tool results are retained. Only SQLite commits establish business completion. A completed Pi response is a pending owner result until the turn transaction commits.

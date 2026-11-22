@@ -152,3 +152,28 @@ def test_audit_reads_events_through_the_service_and_echoes_identity():
                     "action": "approved"}],
     }
     assert keeper.audits == [("proposal-1", TOKEN)]
+
+
+def test_revise_uses_trusted_explorer_and_preserves_displayed_choices():
+    class Keeper(FakeKeeper):
+        def revise(self, command, *, token, principal):
+            self.calls.append((command, token, principal))
+            return {**command, "status": "revising", "applied": [],
+                    "review_id": "review-1"}
+
+    keeper = Keeper()
+    commands = bridge(keeper)
+    request = {"action": "keeper_revise", "schema_version": 1,
+               "operation_id": "feedback-1", "proposal_id": "proposal-1",
+               "revision": 3, "decision": "adjust", "feedback": "Keep the latest title.",
+               "keep_current_fields": [{"change_index": 0, "fields": ["title"]}]}
+    with pytest.raises(CommandError):
+        keeper_bridge_command(commands, {**request, "principal": "explorer"},
+                              test_enabled=False)
+    kind, result = keeper_bridge_command(commands, request, test_enabled=False)
+    assert kind == "keeper_revise" and result["review_id"] == "review-1"
+    assert len(keeper.calls) == 1
+    command, token, principal = keeper.calls[0]
+    assert "action" not in command
+    assert command["keep_current_fields"] == request["keep_current_fields"]
+    assert token == TOKEN and principal.role == "explorer" and principal.explicit_test is False
