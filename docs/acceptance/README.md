@@ -451,3 +451,25 @@ readback matched all three pending cards and confirmed no knowledge writes.
 Explicit desktop exit returned 0 with no remaining processes for the instance.
 The candidate's Windows suite passed 1,619 tests with 15 skips and two
 dependency warnings. [K6 acceptance evidence](https://github.com/Moke110/horizon/issues/210)
+
+## K7 atomic Keeper decisions — 2026-11-22
+
+The Windows x64 candidate `0.1.0-k7.1` built twice from `98c9c5b` with ZIP
+SHA-256 `b175b681f757647f4926334aa77a54817e410d41d7bc134ce4e18d0500f8c04d`
+and a matching 21,192-file manifest. The seven-stage installation and the
+distribution wrapper passed. Independent Windows clients returned the same
+receipt when they submitted one operation concurrently. An injected failure
+on the second write, a stale version and an unauthorized actor left knowledge
+and audit unchanged. An approved group could not be applied again.
+
+The installed runtime applied a mixed Card and Theme group atomically and
+left rejected knowledge unchanged. A repeated rejected change was suppressed
+with the same evidence even when an explanation was added. With new RFC 2606
+evidence and an explanation, the changed request returned to pending.
+
+The Explorer confirmed the GUI sequence, including restart. SQLite readback
+found one approval that advanced both targets to v2 and one rejection that left
+its target at v1. Each decision had one Explorer audit entry with the bound
+proposal, revision, operation and target versions. Both desktop exits returned
+0 with no remaining instance processes. The candidate's Windows suite passed
+1,655 tests with 15 skips and two dependency warnings. [K7 acceptance evidence](https://github.com/Moke110/horizon/issues/211)
