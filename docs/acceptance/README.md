@@ -430,3 +430,24 @@ changed from Kepler-1625b to TRAPPIST-1 after the Frontier edit, returning six
 qualifying candidates each, with different receipts and unchanged prior
 results. The workflow used no Feishu adapter. The candidate's Windows suite
 passed 1,587 tests with 15 skips and two dependency warnings. [K5 acceptance evidence](https://github.com/Moke110/horizon/issues/209)
+
+## K6 Keeper review and confirmation cards — 2026-11-22
+
+The Windows x64 candidate `0.1.0-k6.1` built twice from `fe36ed0` with ZIP
+SHA-256 `3c0649bdd9b100347b1c56c09ca4351d9dece73f68d9f891809fa8eeaa0fdfa5`
+and a matching 21,190-file manifest. The real seven-stage installation and the
+distribution wrapper passed. The installed runtime captured IANA Example
+Domains paragraphs `p3` and `p6` and ran a bounded Keeper subprocess on the
+same task as a completed, explicitly labeled pre-Editor test report.
+
+Keeper split unrelated create, update and delete changes into three pending
+cards and returned a separate request with missing evidence. Pin, role,
+source and replay checks passed. Pending cards left committed knowledge
+unchanged and a new plan obtained the only execution slot.
+
+The Explorer confirmed the GUI sequence. Their screenshot shows the read-only
+update diff, report version, task version and Keeper child association. SQLite
+readback matched all three pending cards and confirmed no knowledge writes.
+Explicit desktop exit returned 0 with no remaining processes for the instance.
+The candidate's Windows suite passed 1,619 tests with 15 skips and two
+dependency warnings. [K6 acceptance evidence](https://github.com/Moke110/horizon/issues/210)

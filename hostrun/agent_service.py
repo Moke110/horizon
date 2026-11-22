@@ -118,6 +118,38 @@ class AgentService:
         with self._connect() as db:
             return [json.loads(row[0]) for row in db.execute('SELECT result FROM agent_tasks ORDER BY rowid DESC')]
 
+    @classmethod
+    def read_task_in_transaction(cls, db, task_id):
+        """Read one committed task on a caller's open transaction."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise CommandError('not_found', 'Unknown task_id')
+        row = db.execute('SELECT result FROM agent_tasks WHERE task_id=?', (task_id,)).fetchone()
+        if row is None:
+            raise CommandError('not_found', 'Unknown task_id')
+        return json.loads(row[0])
+
+    @classmethod
+    def read_turn_in_transaction(cls, db, turn_id):
+        """Read one committed turn on a caller's open transaction."""
+        if not isinstance(turn_id, str) or not turn_id.strip():
+            raise CommandError('not_found', 'Unknown turn_id')
+        row = db.execute('SELECT result FROM agent_turns WHERE turn_id=?', (turn_id,)).fetchone()
+        if row is None:
+            raise CommandError('not_found', 'Unknown turn_id')
+        return json.loads(row[0])
+
+    def read_task(self, task_id, *, token):
+        """Read one committed task without exposing another task's messages."""
+        self._authorize(token)
+        with self._connect() as db:
+            return self.read_task_in_transaction(db, task_id)
+
+    def read_turn(self, turn_id, *, token):
+        """Read one committed turn; callers project only the fields they own."""
+        self._authorize(token)
+        with self._connect() as db:
+            return self.read_turn_in_transaction(db, turn_id)
+
     def events(self, *, token):
         self._authorize(token)
         with self._connect() as db:
@@ -175,16 +207,24 @@ class AgentService:
     def start_child(self, command, *, token):
         return self._child_command(command, token=token, finishing=False)
 
+    def start_keeper_child(self, command, *, token):
+        """Trusted host dispatch only: keeper is never selectable by model tools."""
+        return self._child_command(command, token=token, finishing=False, keeper=True)
+
     def attempt_child(self, command, *, token):
         return self._child_command(command, token=token, finishing=True, attempting=True)
 
     def finish_child(self, command, *, token):
         return self._child_command(command, token=token, finishing=True)
 
-    def _child_command(self, command, *, token, finishing, attempting=False):
+    def _child_command(self, command, *, token, finishing, attempting=False, keeper=False):
         self._authorize(token)
         if not isinstance(command, dict):
             raise CommandError('invalid_command', 'Command must be an object')
+        if keeper:
+            if command.get('role') not in (None, 'keeper'):
+                raise CommandError('invalid_command', 'Keeper role is host-assigned')
+            command = {**command, 'role': 'keeper'}
         if type(command.get('schema_version')) is not int or command['schema_version'] != 1:
             raise CommandError('unsupported_schema', 'Unsupported schema_version')
         operation = command.get('operation_id')
@@ -204,7 +244,9 @@ class AgentService:
                 if not isinstance(value, str) or len(value) > 100000:
                     raise CommandError('invalid_command', 'Child result exceeds bounded context')
         else:
-            if command.get('role') not in ('development_reader', 'development_summarizer', 'voyager'):
+            roles = ('development_reader', 'development_summarizer', 'voyager', 'keeper') if keeper else (
+                'development_reader', 'development_summarizer', 'voyager')
+            if command.get('role') not in roles:
                 raise CommandError('invalid_command', 'Unsupported child role')
             text = command.get('input_text')
             if not isinstance(text, str) or not text.strip() or len(text) > 16000:
@@ -223,7 +265,7 @@ class AgentService:
                     raise CommandError('not_found', 'Unknown child_id')
                 result = json.loads(row[0])
                 parent_turns = [json.loads(r[0]) for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(result['task_id'],))]
-                if any(t['input_version'] == result['input_version'] and t['status'] != 'running' for t in parent_turns):
+                if result.get('role') != 'keeper' and any(t['input_version'] == result['input_version'] and t['status'] != 'running' for t in parent_turns):
                     raise CommandError('version_conflict','Parent execution is not running')
                 if type(command.get('expected_version')) is not int or command['expected_version'] != result['version']:
                     raise CommandError('version_conflict', 'expected_version conflicts with child version')
@@ -242,10 +284,14 @@ class AgentService:
                 if not row:
                     raise CommandError('not_found', 'Unknown task_id')
                 parent = json.loads(row[0])
-                if type(command.get('input_version')) is not int or command['input_version'] != parent['version']:
-                    raise CommandError('version_conflict', 'input_version conflicts with current task version')
-                if any(json.loads(r[0])['status'] != 'running' for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(identity,)) if json.loads(r[0])['input_version'] == command['input_version']):
-                    raise CommandError('version_conflict','Parent execution is not running')
+                if keeper:
+                    if type(command.get('input_version')) is not int or not 1 <= command['input_version'] <= parent['version']:
+                        raise CommandError('version_conflict', 'input_version must not exceed the current task version')
+                else:
+                    if type(command.get('input_version')) is not int or command['input_version'] != parent['version']:
+                        raise CommandError('version_conflict', 'input_version conflicts with current task version')
+                    if any(json.loads(r[0])['status'] != 'running' for r in db.execute('SELECT result FROM agent_turns WHERE task_id=?',(identity,)) if json.loads(r[0])['input_version'] == command['input_version']):
+                        raise CommandError('version_conflict','Parent execution is not running')
                 child_id = str(uuid.uuid4())
                 result = {'schema_version':1,'operation_id':operation,'entity_id':child_id,'child_id':child_id,
                           'task_id':identity,'session_id':str(uuid.uuid4()),'parent_session_id':parent['session_id'],

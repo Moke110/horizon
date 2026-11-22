@@ -298,6 +298,11 @@ class FrontierService:
         return json.loads(row[0])
 
     @classmethod
+    def read_in_transaction(cls, db, frontier_id):
+        """Read one committed Frontier on the caller's open transaction."""
+        return cls._read(db, frontier_id)
+
+    @classmethod
     def resolve_in_transaction(cls, db, frontier_id, *, expected_version=None):
         """Read owned data on the authenticated caller's open transaction."""
         return resolve_frontier_scope(cls._read(db, frontier_id), expected_version=expected_version)
