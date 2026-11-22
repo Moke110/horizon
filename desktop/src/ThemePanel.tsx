@@ -50,6 +50,7 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   const [editing,setEditing]=useState<{theme_id:string;version:number}|null>(null);
   const [latest,setLatest]=useState<Theme|null>(null);
   const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
+  const [reason,setReason]=useState('');
   const [citation,setCitation]=useState<EvidenceView|null>(null);
   const citationReader=useRef<HTMLElement>(null);
   const pending=useRef<Pending|null>(null);
@@ -59,7 +60,7 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   committed.current=onCommitted;
   const send=(action:string,extra:object={},operation_id=crypto.randomUUID())=>onCommand({action,schema_version:1,operation_id,...extra});
   const draft=():ThemeDraft=>({judgement,conditions,relatedCards,evidence});
-  const clearDraft=()=>{setEditing(null);setLatest(null);setJudgement('');setConditions('');setRelatedCards([]);setEvidence([]);};
+  const clearDraft=()=>{setEditing(null);setLatest(null);setJudgement('');setConditions('');setRelatedCards([]);setEvidence([]);setReason('');};
   const populate=(theme:Theme)=>{
     const next=draftFrom(theme);
     setEditing({theme_id:theme.theme_id,version:theme.version});
@@ -87,6 +88,7 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
       conditions:lines(conditions),
       related_cards:relatedCards,
       evidence:evidence.map(({evidence_id,stance,reason,source})=>({...(evidence_id?{evidence_id}:{}) ,stance,reason,source})),
+      ...(reason.trim()?{reason:reason.trim()}:{}),
     };
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,theme_id:editing?.theme_id};
@@ -142,6 +144,7 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
     if(viewEvent.operation_id!==work.operation_id||selected.operation_id!==work.operation_id)return;
     if(work.theme_id&&work.theme_id!==selected.theme_id)return;
     pending.current=null;setSaving(false);populate(selected);
+    setReason('');
     setMessage(work.theme_id?`已保存为版本 ${selected.version}。`:`已创建为版本 ${selected.version}。`);
     committed.current?.(selected.theme_id,selected.version);
   },[viewEvent,selected]);
@@ -244,6 +247,8 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   {!materials.length&&!evidence.length&&<p>可在「资料」保存来源，再到这里引用证据。</p>}
   </fieldset>
   <p>证据为空或只有单一方向也可保存，命题会标记为「证据不足」。</p>
+  <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充反对证据"/></label>
+  <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
   <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建命题'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </fieldset></form>}
   {locked&&<p>已归档的命题以只读方式显示；判断、条件、证据与来源保留。</p>}

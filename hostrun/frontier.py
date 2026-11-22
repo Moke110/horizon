@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hostrun.agent_service import CommandError
+from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 
 FRONTIER_STATUSES = ("following", "paused", "resolved", "deleted")
@@ -132,6 +133,22 @@ def resolve_frontier_scope(frontier, *, expected_version=None):
 class FrontierService:
     """Authenticated public CRUD for local Frontiers in the stable data home."""
 
+    # Scope and hard constraints are patched leaf by leaf so a later edit to a
+    # disjoint leaf survives an undo. Deleted is terminal and never undoable.
+    HISTORY = {
+        "kind": "frontier",
+        "table": "frontiers",
+        "operations": "frontier_operations",
+        "events": "frontier_events",
+        "id_field": "frontier_id",
+        "event_type": "frontier.undo",
+        "editable": (("question",), ("scope", "text"),
+                     ("scope", "alternatives"), ("scope", "sources"),
+                     ("hard_constraints", "must_include"),
+                     ("hard_constraints", "exclude"), ("status",),
+                     ("relations",)),
+    }
+
     def __init__(self, home, *, token, clock=time.time, on_change=None):
         if not isinstance(token, str) or not token:
             raise ValueError("A launch token is required")
@@ -192,9 +209,32 @@ class FrontierService:
         except Exception:
             pass  # A disconnected viewer cannot undo committed work.
 
+    @staticmethod
+    def history_removed(db):
+        """A Frontier has no material citations to project as removed."""
+        return set()
+
+    @staticmethod
+    def history_project(frontier, removed):
+        return frontier
+
+    @staticmethod
+    def history_undoable(record):
+        return record.get("status") in ("following", "paused", "resolved")
+
+    def apply_history_undo(self, db, record, fields):
+        """Restore historical leaves and validate their combined Frontier scope."""
+        updated = json.loads(json.dumps(record))
+        for path, value in fields.items():
+            set_path(updated, path, value)
+        updated["scope"] = _validate_scope(updated["scope"])
+        updated["hard_constraints"] = _validate_constraints(updated["hard_constraints"])
+        return updated
+
     def create(self, command, *, token):
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_scope")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "create")
@@ -270,6 +310,7 @@ class FrontierService:
     def update(self, command, *, token):
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_scope")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "update")
@@ -311,6 +352,7 @@ class FrontierService:
         """Delete a Frontier by marking it terminal; history and materials stay."""
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_scope")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "delete")

@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hostrun.agent_service import CommandError
+from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 from hostrun.voyager_materials import MaterialsService
 
@@ -104,6 +105,20 @@ def _provenance(sources):
 class KnowledgeCardService:
     """Authenticated public CRUD for local Knowledge Cards."""
 
+    # Metadata the cross-owner history helper reads. Every mutable field is an
+    # atomic inverse-patch unit; only an ordinary update is undoable.
+    HISTORY = {
+        "kind": "card",
+        "table": "knowledge_cards",
+        "operations": "knowledge_card_operations",
+        "events": "knowledge_card_events",
+        "id_field": "card_id",
+        "event_type": "knowledge_card.undo",
+        "editable": (("title",), ("content",), ("aliases",),
+                     ("recall_terms",), ("sources",), ("relations",),
+                     ("questionable",)),
+    }
+
     def __init__(self, home, *, token, clock=time.time, on_change=None, materials=None):
         if not isinstance(token, str) or not token:
             raise ValueError("A launch token is required")
@@ -164,6 +179,30 @@ class KnowledgeCardService:
         except Exception:
             pass  # A disconnected viewer cannot undo committed work.
 
+    def history_removed(self, db):
+        """Material ids whose pinned snapshots were permanently removed."""
+        return self.materials.removed_references(db)
+
+    def history_project(self, card, removed):
+        """Project a stored snapshot without reporting removed sources live."""
+        return self._project_sources(card, removed)
+
+    @staticmethod
+    def history_undoable(record):
+        return record.get("status") == "active"
+
+    def apply_history_undo(self, db, record, fields):
+        """Apply trusted historical editable fields, reusing pinned citations."""
+        updated = json.loads(json.dumps(record))
+        for path, value in fields.items():
+            set_path(updated, path, value)
+        if ("relations",) in fields:
+            self._relations(db, record["card_id"], updated["relations"])
+        updated["provenance"], updated["source_pending"] = _provenance(
+            updated["sources"])
+        updated["known"] = True
+        return updated
+
     @staticmethod
     def _fields(command):
         fields = {}
@@ -219,6 +258,7 @@ class KnowledgeCardService:
     def create(self, command, *, token):
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_card")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "create")
@@ -366,6 +406,7 @@ class KnowledgeCardService:
     def update(self, command, *, token):
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_card")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "update")
@@ -409,6 +450,7 @@ class KnowledgeCardService:
         """Archive a card explicitly; the row and its history remain readable."""
         self._authorize(token)
         self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_card")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             encoded, previous = self._replay(db, command, "archive")

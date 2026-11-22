@@ -205,6 +205,8 @@ Open **知识库** in the desktop app. The left pane searches local knowledge an
 
 **当前有效** shows active Knowledge Cards and Themes and following Frontiers. Use the type filter to narrow the list, and the related-record filter to find records directly linked to a specific card or Theme. Choose **归档与停用** for archived Cards and Themes or paused, resolved, and deleted Frontiers. **待确认** is a separate view. Select a Theme and use **打开来源** in its evidence to open the cited portion of the saved snapshot without leaving the workbench.
 
+Select a record and open **版本历史** to see what changed, who changed it, when, and any reason supplied. To undo an edit, open its preview and check the proposed changes against the current version before confirming. An undo creates a new version, preserves earlier versions and leaves later changes to unrelated fields in place. If a later edit changed the same field, the preview shows the conflict and Horizon leaves the record as it is. History remains readable for archived or deleted records. The workbench uses local data and requires no Feishu account.
+
 ### Knowledge Base Frontiers
 
 Open **知识库** to create a Frontier: a focus question, original research scope, bilingual alternative queries, required and excluded terms, source identifiers, and an initial status of **关注中** (following), **已暂停** (paused) or **已解决** (resolved). Relations stay empty in this stage; an empty list is valid. Creating or editing a Frontier commits directly, without a Keeper approval step.
