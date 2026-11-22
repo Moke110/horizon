@@ -586,3 +586,11 @@ Numbers below are the one-based checkbox positions under each original ticket’
 | #211 | keeper_decisions.py version binding | keeper_decisions.py transaction | keeper_decisions.py rejection | keeper_decisions.py suppression | tests/test_keeper_decisions.py |
 | #212 | keeper_revisions.py stale version | KeeperProposalPanel.tsx | keeper_revisions.py adjustment | keeper_decisions.py decision guards | tests/test_keeper_revisions.py |
 | #213 | keeper_merge.py | keeper_evidence_policy.py | keeper_group_undo.py | tests/test_keeper_group_undo.py | KeeperGroupUndoPanel.tsx and #213 desktop evidence |
+
+## Development scratch relocation (#240)
+
+On 2026-11-23 the maintainer checkout retained old test runs and staging archives in `tmp/legacy-240/` under their original basenames. Of 766 selected root entries, 493 moved completely and 273 old test directories encountered Windows access denials. Each of those 273 has both a root path and a destination; inspect both before further cleanup. Eight additional historical build/reproduction directories moved by atomic rename. Seventeen other pytest/process-test directories refused rename. No ownership, ACL or junction changes were made. Only the reproducible root CPython cache file for `common.py` was deleted.
+
+The build-only dependency directories `cleanup-tool-inputs`, `v9-static-wheels` and `v9-browser-wheels` now live under `tmp/legacy-240/install/`. Historical path mentions in acceptance evidence describe where the original run occurred. Cleanup-tool assembly now stages its wheels in a unique directory under the checkout's `tmp/`. The General Software Development Workflow in Notion records this rule for relocatable development material; the saved rule was read back.
+
+Before any further removal, review the remaining root test paths and `.pytest_cache/` with their Windows owner. Preserve registered Git worktrees and review detached source copies, older `.a*`/short-named directories, candidate/acceptance homes, `.horizon/`, the shortcut, archives, PDFs, and the runtime state directories with the maintainer. In `install/`, the remaining candidate builds can contain registrations, data homes and evidence. The `return/` and `win_test_2026-11-09/` folders may be user handoffs. The old paths and their contents are not evidence of permission to remove them.
