@@ -211,6 +211,8 @@ Open **知识库 → 待确认** to review Keeper proposals. Each card groups re
 
 Under **要求调整**, choose which proposed fields to leave at their current values or which changes to remove. Explain your request in the feedback field. Keeper receives the feedback on the original task and reviews the remaining changes. A revised plan needs its own approval. Recorded decisions remain available after restarting the app. Proposals labeled **测试请求** come from an explicit development test request.
 
+For a proposed Card merge, check the Card that will remain active, the content and sources it will retain, and the relationship changes before approving the group. A Theme proposal can keep both supporting and opposing evidence and explain where the judgement applies. To reverse an approved proposal, open it under **已批准** and choose **预览整组撤销**. Check the current versions and the proposed restoration before confirming. If anyone has since edited a target, the preview shows the differences and the group stays unchanged.
+
 ### Knowledge Base Frontiers
 
 Open **知识库** to create a Frontier: a focus question, original research scope, bilingual alternative queries, required and excluded terms, source identifiers, and an initial status of **关注中** (following), **已暂停** (paused) or **已解决** (resolved). Relations stay empty in this stage; an empty list is valid. Creating or editing a Frontier commits directly, without a Keeper approval step.

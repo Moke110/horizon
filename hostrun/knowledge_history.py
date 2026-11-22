@@ -149,6 +149,7 @@ class KnowledgeHistoryService:
             if not isinstance(data, dict):
                 data = {}
             action = data.get("action")
+            origin = data.get("origin")
             command = data.get("command")
             if not isinstance(command, dict):
                 command = {}
@@ -156,6 +157,10 @@ class KnowledgeHistoryService:
             target_version = command.get("target_version")
             items.append({
                 "action": action if isinstance(action, str) else "update",
+                # Trusted caller attribution is stored beside the command, so a
+                # Keeper approval or a group reversal is never presented as an
+                # ordinary manual edit that a single-record undo may invert.
+                "origin": origin if isinstance(origin, str) else None,
                 "reason": reason if isinstance(reason, str) else None,
                 "target_version": target_version
                 if type(target_version) is int else None,
@@ -180,6 +185,7 @@ class KnowledgeHistoryService:
             "before": project(before, removed) if before is not None else None,
             "after": project(item["after"], removed),
             "can_preview": item["action"] in _UNDOABLE_ACTIONS
+            and item.get("origin") != "keeper"
             and item["before"] is not None
             and service.history_undoable(current),
         }
@@ -302,7 +308,10 @@ class KnowledgeHistoryService:
         if target is None:
             result["code"] = "not_found"
             return result, None
-        if target["action"] not in _UNDOABLE_ACTIONS or target["before"] is None:
+        if target["action"] not in _UNDOABLE_ACTIONS or target["before"] is None \
+                or target.get("origin") == "keeper":
+            # An original Keeper approval (and a group reversal receipt) is
+            # undone only through the whole-group Keeper undo, never one record.
             result["code"] = "undo_not_supported"
             return result, None
         later = [item for item in items if target_version < item["after"]["version"] <= current["version"]]
@@ -335,6 +344,45 @@ class KnowledgeHistoryService:
         result["preview_token"] = self._preview_token(
             kind, identifier, target_version, current["version"], result["changes"])
         return result, updated
+
+    @staticmethod
+    def write_version(db, meta, record, *, operation_id, action,
+                      command, event_type=None, origin=None):
+        """Write one owner version, its receipt and its event in one step.
+
+        ``record`` is the complete snapshot that is now current for the record,
+        including its new version, operation id and timestamp. The caller owns
+        the open transaction, so a later failure rolls the whole version back.
+        """
+        request = {"action": action, "command": command}
+        if origin == "keeper":
+            request["origin"] = "keeper"
+        encoded = json.dumps(request, sort_keys=True)
+        identifier = record[meta["id_field"]]
+        db.execute(
+            f"UPDATE {meta['table']} SET result=? WHERE {meta['id_field']}=?",
+            (json.dumps(record), identifier))
+        db.execute(
+            f"INSERT INTO {meta['operations']} VALUES(?,?,?)",
+            (operation_id, encoded, json.dumps(record)))
+        event = {
+            "schema_version": 1,
+            "type": event_type or meta["event_type"],
+            meta["id_field"]: identifier,
+            "operation_id": operation_id,
+            "version": record["version"],
+        }
+        if isinstance(command, dict):
+            if type(command.get("target_version")) is int:
+                event["target_version"] = command["target_version"]
+            if isinstance(command.get("proposal_id"), str):
+                event["proposal_id"] = command["proposal_id"]
+        if origin == "keeper":
+            event["origin"] = "keeper"
+        db.execute(
+            f"INSERT INTO {meta['events']}(operation_id,event) VALUES(?,?)",
+            (operation_id, json.dumps(event)))
+        return record
 
     @staticmethod
     def _encoded_receipt(command):
@@ -405,22 +453,10 @@ class KnowledgeHistoryService:
             updated["version"] = current["version"] + 1
             updated["updated_at"] = int(service.clock())
 
-            db.execute(
-                f"UPDATE {meta['table']} SET result=? WHERE {meta['id_field']}=?",
-                (json.dumps(updated), identifier))
-            db.execute(
-                f"INSERT INTO {meta['operations']} VALUES(?,?,?)",
-                (operation_id, encoded, json.dumps(updated)))
-            event = {
-                "schema_version": 1,
-                "type": meta["event_type"],
-                meta["id_field"]: identifier,
-                "operation_id": operation_id,
-                "version": updated["version"],
-                "target_version": target_version,
-            }
-            db.execute(
-                f"INSERT INTO {meta['events']}(operation_id,event) VALUES(?,?)",
-                (operation_id, json.dumps(event)))
+            stored = {key: value for key, value in command.items()
+                      if key != "action"}
+            self.write_version(db, meta, updated,
+                               operation_id=operation_id, action="undo",
+                               command=stored)
         service._notify(updated)
         return updated

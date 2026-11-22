@@ -3,7 +3,7 @@ import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEven
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
 import {KnowledgeHistoryPanel,type HistoryKind,type HistoryRecord} from './KnowledgeHistoryPanel';
-import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,type KeeperProposalStatus,type KeeperRevisionDecision,type KeeperKeepFields,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal,keeperChangedFields,hasPublishedKeeperRevision,KEEPER_FEEDBACK_LIMIT,keeperFeedbackByteLength} from './KeeperProposalPanel';
+import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,type KeeperProposalStatus,type KeeperRevisionDecision,type KeeperKeepFields,type KeeperUndoReceipt,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal,keeperChangedFields,hasPublishedKeeperRevision,KEEPER_FEEDBACK_LIMIT,keeperFeedbackByteLength} from './KeeperProposalPanel';
 
 type MaterialOption={material_id:string;title:string;version?:number};
 type EntityType='card'|'theme'|'frontier';
@@ -116,6 +116,7 @@ const proposalSearchText=(proposal:KeeperProposal)=>[
   typeof proposal.decision==='string'?proposal.decision:proposal.decision?.decision,
   proposal.request_id,proposal.task_id,
   proposal.report_id,proposal.child_id,proposal.provenance,
+  proposal.undo?.id,proposal.undo?.status,proposal.undo?.reason,
   ...(proposal.changes||[]).flatMap(change=>[
     change.kind,change.action,change.id,change.reason,
     JSON.stringify(change.before??''),JSON.stringify(change.after??''),
@@ -357,6 +358,18 @@ export function KnowledgeWorkbench({
       (buttons.find(button=>button.dataset.proposalId===proposal_id)||buttons[0])?.focus();
     },0);
   };
+  /** Keep the undo receipt separate from the original decision and reload it via keeper_open. */
+  const groupUndoApplied=(receipt:KeeperUndoReceipt)=>{
+    const proposal=pendingProposalRef.current;
+    if(proposal&&(!receipt.proposal_id||proposal.proposal_id===receipt.proposal_id)){
+      const next={...proposal,undo:receipt};
+      pendingProposalRef.current=next;
+      setPendingProposal(next);
+    }
+    const proposalId=receipt.proposal_id||proposal?.proposal_id||pendingSelectionRef.current?.proposal_id;
+    if(proposalId)reopenSelectedProposal(proposalId);
+    requestKeeperList('approved',{silent:true});
+  };
 
   useEffect(()=>{
     const unsubscribe=window.horizon.subscribe(event=>{
@@ -467,7 +480,11 @@ export function KnowledgeWorkbench({
           setDecisionRefreshError('');
         }
         setPendingOpenError('');
-        setPendingProposal(proposal);
+        const prior=pendingProposalRef.current;
+        const nextProposal=prior&&prior.proposal_id===proposal.proposal_id
+          &&prior.undo&&!proposal.undo?{...proposal,undo:prior.undo}:proposal;
+        pendingProposalRef.current=nextProposal;
+        setPendingProposal(nextProposal);
         const incomingStatus=asKeeperStatus(proposal.status);
         rememberKeeperState(proposal.proposal_id,incomingRevision,incomingStatus,
           incomingRevision===null||incomingRevision>=knownRevision);
@@ -1205,7 +1222,7 @@ export function KnowledgeWorkbench({
     <section className="workbench-detail" aria-label={scope==='pending'?`Keeper ${currentKeeperStatusLabel}提议详情`:'知识库详情'}>
       {scope==='pending'
         ?(pendingSelection
-          ?<KeeperProposalPanel key={pendingSelection.nonce} proposalId={pendingSelection.proposal_id} proposal={pendingProposal} loading={pendingOpenLoading} error={pendingOpenError} deciding={deciding} decidingAction={decidingAction} decisionError={decisionError} decisionNotice={decisionNotice||decisionRefreshError} receipt={decisionReceipt} onRetry={retryPendingOpen} onDecide={decideProposal} onRevise={reviseProposal} onClose={closePendingProposal}/>
+          ?<KeeperProposalPanel key={pendingSelection.nonce} proposalId={pendingSelection.proposal_id} proposal={pendingProposal} loading={pendingOpenLoading} error={pendingOpenError} deciding={deciding} decidingAction={decidingAction} decisionError={decisionError} decisionNotice={decisionNotice||decisionRefreshError} receipt={decisionReceipt} onRetry={retryPendingOpen} onDecide={decideProposal} onRevise={reviseProposal} onUndoCommand={onCommand} onUndoApplied={groupUndoApplied} onClose={closePendingProposal}/>
           :<div className="workbench-empty workbench-pending-intro">
             <h2>Keeper {currentKeeperStatusLabel}</h2>
             <p>左侧按 Keeper 持久状态列出{currentKeeperStatusLabel}提议，默认打开待确认。选择一条后，这里显示整组确认卡片：按知识卡片、命题、关注问题分组的变更、变更前/后、理由、固定来源与任务/报道链接。</p>

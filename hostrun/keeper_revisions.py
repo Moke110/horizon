@@ -205,6 +205,9 @@ def validate_adjustment(proposal, command):
             raise CommandError(
                 "invalid_revision",
                 "keep_current_fields only applies to proposed updates")
+        if change.get("merge_from"):
+            raise CommandError("invalid_revision",
+                               "The merge derives its survivor from both pinned Cards")
         editable = _EDITABLE_FIELDS.get(change.get("kind"), ())
         for name in entry["fields"]:
             if name not in editable or not _field_changed(change, name):
@@ -245,8 +248,13 @@ def has_effect(change):
         return True
     before = change.get("before") or {}
     after = change.get("after") or {}
-    return any(before.get(name) != after.get(name)
-               for name in _EDITABLE_FIELDS.get(change.get("kind"), ()))
+    if any(before.get(name) != after.get(name)
+           for name in _EDITABLE_FIELDS.get(change.get("kind"), ())):
+        return True
+    if change.get("merge_from") is not None:
+        return True
+    return change.get("add_sources") is True \
+        and before.get("sources") != after.get("sources")
 
 
 def snapshot(proposal):
@@ -326,6 +334,9 @@ def _creation_label(change):
 
 
 def _matches(displayed, raw):
+    supplemented = displayed.get("supplemented_title")
+    if supplemented and raw.get("kind") == "card" and raw.get("action") == "create":
+        return _normalized_label(raw["fields"].get("title")) == supplemented
     if displayed["action"] != raw["action"] \
             or displayed["kind"] != raw["kind"]:
         return False
@@ -352,7 +363,13 @@ def original_changes(command, proposal_changes):
         if index is None:
             raise CommandError("invalid_revision",
                                "The original request no longer describes this proposal")
-        selected.append(remaining.pop(index))
+        raw = remaining.pop(index)
+        if displayed.get("supplemented_title") and raw["action"] == "create":
+            raw.update(action="update", id=displayed["id"],
+                       expected_version=displayed["expected_version"],
+                       fields={"add_sources": True},
+                       supplemented_title=displayed["supplemented_title"])
+        selected.append(raw)
     if not selected:
         raise CommandError("invalid_revision", "A revision requires at least one change")
     return selected
@@ -370,6 +387,11 @@ def revision_fields(previous, fields):
     after = previous.get("after") or {}
     carried = {}
     for name, value in fields.items():
+        if name in ("merge_from", "add_sources"):
+            # A merge marker is an explicit request fact, not a before/after
+            # value; a K8 rebuild must keep it and recalculate the survivor.
+            carried[name] = copy.deepcopy(value)
+            continue
         if name in _NESTED_FIELDS and isinstance(value, dict):
             old = before.get(name) if isinstance(before.get(name), dict) else {}
             new = after.get(name) if isinstance(after.get(name), dict) else {}

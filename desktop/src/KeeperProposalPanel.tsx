@@ -1,4 +1,5 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {KeeperGroupUndoPanel} from './KeeperGroupUndoPanel';
 
 export type KeeperKind='card'|'theme'|'frontier';
 export type KeeperAction='create'|'update'|'delete';
@@ -12,6 +13,8 @@ export type KeeperSource={
   locator?:string|null;
   excerpt?:string|null;
 };
+export type KeeperMergeFrom={card_id:string;version?:number|null;title?:string|null};
+export type KeeperGroupMerge={survivor?:unknown;donor?:unknown;merge_from?:KeeperMergeFrom|null;relations?:unknown;incoming?:unknown;outgoing?:unknown;[key:string]:unknown};
 export type KeeperChange={
   kind:KeeperKind;
   action:KeeperAction|string;
@@ -21,6 +24,10 @@ export type KeeperChange={
   after?:unknown;
   reason?:string|null;
   sources?:KeeperSource[];
+  /** Explicit donor reference for a card merge; the donor delete stays in the same group. */
+  merge_from?:KeeperMergeFrom|null;
+  /** Optional group-level merge metadata that names the same survivor and donor. */
+  merge?:KeeperGroupMerge|null;
 };
 export type KeeperKeepFields={change_index:number;fields:string[]};
 /** Owner-editable fields; only these can be kept at their current value. */
@@ -29,7 +36,55 @@ export const KEEPER_EDITABLE_FIELDS:Record<KeeperKind,string[]>={
   theme:['judgement','conditions','related_cards','evidence'],
   frontier:['question','scope','hard_constraints','relations','status'],
 };
-export type KeeperApplied={kind:string;id:string;version:number};
+export type KeeperApplied={kind:string;id:string;version:number;status?:string};
+export type KeeperUndoFieldChange={
+  field:string;
+  approved?:unknown;
+  current?:unknown;
+  inverse?:unknown;
+  before?:unknown;
+  applied?:unknown;
+  proposed?:unknown;
+  conflict?:boolean;
+};
+export type KeeperUndoChange={
+  kind:string;
+  id:string;
+  target_version:number;
+  current_version:number;
+  action?:string;
+  approval_action?:string;
+  before?:unknown;
+  applied?:unknown;
+  current?:unknown;
+  proposed?:unknown;
+  conflict?:boolean;
+  /** Field-level inverse differences from the K9 backend preview targets. */
+  field_changes?:KeeperUndoFieldChange[];
+};
+export type KeeperGroupUndoPreview={
+  operation_id?:string;
+  proposal_id?:string;
+  revision?:number;
+  can_undo?:boolean;
+  code?:string|null;
+  message?:string;
+  preview_token?:string;
+  expected_versions?:number[];
+  changes?:KeeperUndoChange[];
+};
+/** Persisted whole-group undo receipt returned by keeper_open under proposal.undo. */
+export type KeeperUndoReceipt={
+  id?:string|null;
+  revision?:number|null;
+  status?:string|null;
+  proposal_id?:string|null;
+  operation_id?:string|null;
+  applied?:KeeperApplied[];
+  reason?:string|null;
+  undone_at?:string|number|null;
+  [key:string]:unknown;
+};
 export type KeeperDecision={
   operation_id:string;
   decision:KeeperDecisionChoice|KeeperRevisionDecision;
@@ -78,6 +133,8 @@ export type KeeperProposal={
   supersedes_proposal_id?:string;
   new_evidence_reason?:string;
   applied?:KeeperApplied[];
+  merge?:KeeperGroupMerge|null;
+  undo?:KeeperUndoReceipt|null;
   reason?:string|null;
   feedback?:string|null;
   decision_operation_id?:string|null;
@@ -198,6 +255,198 @@ const changeHeadline=(change:KeeperChange):string=>{
   const record=change.action==='delete'?change.before:change.after??change.before;
   return recordTitle(record)||(typeof change.id==='string'&&change.id?change.id:'未命名变更');
 };
+const changeRecord=(change:KeeperChange,side:'before'|'after'):Record<string,unknown>|null=>{
+  const value=side==='before'?change.before:change.after;
+  return isRecord(value)?value:null;
+};
+const asMergeFrom=(value:unknown):KeeperMergeFrom|null=>{
+  if(!isRecord(value))return null;
+  const card_id=typeof value.card_id==='string'?value.card_id:typeof value.id==='string'?value.id:'';
+  if(!card_id)return null;
+  return {
+    card_id,
+    version:typeof value.version==='number'?value.version:null,
+    title:typeof value.title==='string'?value.title:null,
+  };
+};
+const mergeMetadataOf=(proposal:KeeperProposal):KeeperGroupMerge[]=>{
+  const result:KeeperGroupMerge[]=[];
+  if(isRecord(proposal.merge))result.push(proposal.merge as KeeperGroupMerge);
+  for(const change of proposal.changes||[])if(isRecord(change.merge))result.push(change.merge as KeeperGroupMerge);
+  return result;
+};
+const metadataSurvivorId=(metadata:KeeperGroupMerge):string=>{
+  const survivor=isRecord(metadata.survivor)?metadata.survivor:null;
+  return (typeof metadata.survivor_id==='string'?metadata.survivor_id:'')
+    ||(survivor&&typeof survivor.card_id==='string'?survivor.card_id:'')
+    ||(survivor&&typeof survivor.id==='string'?survivor.id:'')
+    ||(typeof metadata.card_id==='string'?metadata.card_id:'');
+};
+const metadataDonorRef=(metadata:KeeperGroupMerge):KeeperMergeFrom|null=>{
+  const donor=isRecord(metadata.donor)?metadata.donor:null;
+  const explicit=asMergeFrom(metadata.merge_from)||asMergeFrom(donor);
+  if(explicit)return explicit;
+  const id=typeof metadata.donor_id==='string'?metadata.donor_id:'';
+  if(!id)return null;
+  return {
+    card_id:id,
+    version:typeof metadata.donor_version==='number'?metadata.donor_version:null,
+    title:typeof metadata.donor_title==='string'?metadata.donor_title:null,
+  };
+};
+export type KeeperCardMerge={survivor:KeeperChange;donor:KeeperChange;donorRef:KeeperMergeFrom;metadata?:KeeperGroupMerge};
+/**
+ * A merge is only rendered for a card update paired with its donor delete in
+ * the same group. The update may name the donor through merge_from, or a
+ * matching group/proposal merge metadata block may name both cards.
+ */
+export const keeperCardMerges=(proposal:KeeperProposal):KeeperCardMerge[]=>{
+  const changes=Array.isArray(proposal.changes)?proposal.changes:[];
+  const result:KeeperCardMerge[]=[];
+  const add=(survivor:KeeperChange,donorRef:KeeperMergeFrom,metadata?:KeeperGroupMerge)=>{
+    const donor=changes.find(change=>change.kind==='card'
+      &&change.action==='delete'&&change.id===donorRef.card_id);
+    if(!donor)return;
+    if(result.some(item=>item.survivor===survivor&&item.donor===donor))return;
+    result.push({survivor,donor,donorRef,metadata});
+  };
+  for(const change of changes){
+    if(change.kind!=='card'||change.action!=='update')continue;
+    const ref=asMergeFrom(change.merge_from);
+    if(ref)add(change,ref,isRecord(change.merge)?change.merge as KeeperGroupMerge:undefined);
+  }
+  for(const metadata of mergeMetadataOf(proposal)){
+    const survivorId=metadataSurvivorId(metadata);
+    const donorRef=metadataDonorRef(metadata);
+    if(!survivorId||!donorRef)continue;
+    const survivor=changes.find(change=>change.kind==='card'
+      &&change.action==='update'&&change.id===survivorId);
+    if(survivor)add(survivor,donorRef,metadata);
+  }
+  return result;
+};
+type MergeSourceView={material_id?:string;title?:string;material_version?:number;locator?:string;excerpt?:string;status?:string};
+const sourceViews=(value:unknown):MergeSourceView[]=>{
+  if(!Array.isArray(value))return [];
+  return value.flatMap<MergeSourceView>(item=>{
+    if(typeof item==='string')return [{locator:item}];
+    if(!isRecord(item))return [];
+    const source=isRecord(item.source)?item.source:item;
+    return [{
+      material_id:typeof source.material_id==='string'?source.material_id:undefined,
+      title:typeof source.title==='string'?source.title:undefined,
+      material_version:typeof source.material_version==='number'?source.material_version:undefined,
+      locator:typeof source.locator==='string'?source.locator:undefined,
+      excerpt:typeof source.excerpt==='string'?source.excerpt:undefined,
+      status:typeof source.status==='string'?source.status:undefined,
+    }];
+  });
+};
+type RelationView={id:string;version?:number};
+const relationViews=(value:unknown):RelationView[]=>{
+  if(!Array.isArray(value))return [];
+  return value.flatMap(item=>{
+    if(typeof item==='string')return [{id:item}];
+    if(!isRecord(item))return [];
+    const id=typeof item.card_id==='string'?item.card_id:typeof item.id==='string'?item.id:'';
+    if(!id)return [];
+    return [{id,version:typeof item.version==='number'?item.version:undefined}];
+  });
+};
+const relationName=(relation:RelationView):string=>relation.version===undefined
+  ?relation.id:`${relation.id}（v${relation.version}）`;
+const relationValue=(metadata:KeeperGroupMerge|undefined,key:'outgoing'|'inbound'):unknown=>{
+  if(!metadata)return undefined;
+  const relations=isRecord(metadata.relations)?metadata.relations:null;
+  if(relations&&relations[key]!==undefined)return relations[key];
+  if(key==='inbound'){
+    if(metadata.inbound!==undefined)return metadata.inbound;
+    if(metadata.incoming!==undefined)return metadata.incoming;
+  }else if(metadata.outgoing!==undefined)return metadata.outgoing;
+  return undefined;
+};
+type RelationRedirect={kind:'card'|'theme';id:string;before:string[];after:string[]};
+const relationIds=(value:unknown):string[]=>relationViews(value).map(relation=>relation.id);
+/** Inbound redirects are read from the same checked group changes, never guessed. */
+const inboundRedirects=(changes:KeeperChange[],survivorId:string,donorId:string):RelationRedirect[]=>{
+  const result:RelationRedirect[]=[];
+  const consider=(change:KeeperChange,field:'relations'|'related_cards')=>{
+    if(!change.id||change.action!=='update')return;
+    const before=relationIds(changeRecord(change,'before')?.[field]);
+    const after=relationIds(changeRecord(change,'after')?.[field]);
+    if(!before.includes(donorId)||!after.includes(survivorId))return;
+    result.push({kind:change.kind==='theme'?'theme':'card',id:change.id,before,after});
+  };
+  for(const change of changes){
+    if(change.id===survivorId)continue;
+    if(change.kind==='card')consider(change,'relations');
+    if(change.kind==='theme')consider(change,'related_cards');
+  }
+  return result;
+};
+type ThemeEvidenceView={stance:'supports'|'opposes';reason:string;source:MergeSourceView};
+type ThemeEvidenceSnapshotView={supports:ThemeEvidenceView[];opposes:ThemeEvidenceView[]};
+const evidenceItem=(value:unknown,stance:'supports'|'opposes'):ThemeEvidenceView|null=>{
+  if(!isRecord(value))return null;
+  const source=isRecord(value.source)?value.source
+    :isRecord(value.snapshot)?value.snapshot:isRecord(value.evidence)?value.evidence:value;
+  const reason=typeof value.reason==='string'?value.reason
+    :typeof value.rationale==='string'?value.rationale
+    :typeof value.note==='string'?value.note:'';
+  const view:ThemeEvidenceView={
+    stance,
+    reason,
+    source:{
+      material_id:typeof source.material_id==='string'?source.material_id:undefined,
+      title:typeof source.title==='string'?source.title:undefined,
+      material_version:typeof source.material_version==='number'?source.material_version:undefined,
+      locator:typeof source.locator==='string'?source.locator:undefined,
+      excerpt:typeof source.excerpt==='string'?source.excerpt:undefined,
+      status:typeof source.status==='string'?source.status:undefined,
+    },
+  };
+  return view.reason||view.source.material_id||view.source.locator||view.source.excerpt?view:null;
+};
+const evidenceGroup=(value:unknown,stance:'supports'|'opposes'):ThemeEvidenceView[]=>{
+  if(Array.isArray(value))return value.flatMap(item=>{
+    const view=evidenceItem(item,stance);
+    return view?[view]:[];
+  });
+  if(isRecord(value)){
+    for(const key of ['items','evidence','sources']){
+      const nested=value[key];
+      if(Array.isArray(nested))return evidenceGroup(nested,stance);
+    }
+    const view=evidenceItem(value,stance);
+    return view?[view]:[];
+  }
+  return [];
+};
+/** Accepts canonical Theme evidence arrays and normalized supports/opposes snapshots. */
+const themeEvidenceSnapshot=(value:unknown):ThemeEvidenceSnapshotView=>{
+  const snapshot=isRecord(value)?value:null;
+  if(!snapshot)return {supports:[],opposes:[]};
+  const evidence=snapshot.evidence??snapshot.evidence_snapshot??snapshot;
+  if(Array.isArray(evidence)){
+    const supports:ThemeEvidenceView[]=[];
+    const opposes:ThemeEvidenceView[]=[];
+    for(const item of evidence){
+      if(!isRecord(item))continue;
+      const stance=item.stance==='opposes'||item.side==='opposes'||item.direction==='opposes'
+        ?'opposes':'supports';
+      const view=evidenceItem(item,stance);
+      if(view)(stance==='opposes'?opposes:supports).push(view);
+    }
+    return {supports,opposes};
+  }
+  if(isRecord(evidence)){
+    return {
+      supports:evidenceGroup(evidence.supports??evidence.support??evidence.supporting,'supports'),
+      opposes:evidenceGroup(evidence.opposes??evidence.oppose??evidence.opposing,'opposes'),
+    };
+  }
+  return {supports:[],opposes:[]};
+};
 export const keeperProposalTitle=(proposal:KeeperProposal):string=>{
   const changes=Array.isArray(proposal.changes)?proposal.changes:[];
   for(const change of changes){
@@ -238,6 +487,170 @@ function SourceList({sources}:{sources:KeeperSource[]}){
   </div>;
 }
 
+function MergeSourceList({title,sources}:{title:string;sources:MergeSourceView[]}){
+  return <div className="keeper-merge-source-list">
+    <h5>{title}</h5>
+    {sources.length?<ul>
+      {sources.map((source,index)=><li key={`${source.material_id||source.title||'source'}:${index}`}>
+        <p className="keeper-source-pin">
+          {source.material_id?`资料 ${source.material_id}`:source.title||'来源未记录'}
+          {typeof source.material_version==='number'?` · 固定版本 v${source.material_version}`:''}
+          {source.status==='removed'?' · 原资料已永久移除':''}
+        </p>
+        {source.locator&&<p className="keeper-source-locator">定位：{source.locator}</p>}
+        {source.excerpt&&<blockquote>{source.excerpt}</blockquote>}
+      </li>)}
+    </ul>:<p className="keeper-value-empty">未记录</p>}
+  </div>;
+}
+
+function RelationChangeView({label,value,missingNote}:{label:string;value:unknown;missingNote:string}){
+  const record=isRecord(value)?value:null;
+  if(!record)return <section className="keeper-relation-change">
+    <h5>{label}</h5>
+    <p className="keeper-value-empty">{missingNote}</p>
+  </section>;
+  const before=relationViews(record.before);
+  const after=relationViews(record.after);
+  const explicitAdded=relationViews(record.added);
+  const explicitRemoved=relationViews(record.removed);
+  const hasPair='before' in record||'after' in record||before.length>0||after.length>0;
+  if(!hasPair&&!explicitAdded.length&&!explicitRemoved.length)return <section className="keeper-relation-change">
+    <h5>{label}</h5>
+    <p className="keeper-value-empty">预检未提供{label}变化。</p>
+  </section>;
+  const added=explicitAdded.length?explicitAdded:after.filter(item=>!before.some(current=>current.id===item.id));
+  const removed=explicitRemoved.length?explicitRemoved:before.filter(item=>!after.some(current=>current.id===item.id));
+  return <section className="keeper-relation-change">
+    <h5>{label}</h5>
+    {hasPair&&<>
+      <p><span>变更前：</span>{before.map(relationName).join('、')||'无'}</p>
+      <p><span>变更后：</span>{after.map(relationName).join('、')||'无'}</p>
+    </>}
+    <p><span>新增：</span>{added.map(relationName).join('、')||'无'}</p>
+    <p><span>移除：</span>{removed.map(relationName).join('、')||'无'}</p>
+  </section>;
+}
+
+function RelationRedirectView({redirects}:{redirects:RelationRedirect[]}){
+  return <section className="keeper-relation-change">
+    <h5>入向关系</h5>
+    <ul className="keeper-redirects">
+      {redirects.map((redirect,index)=><li key={`${redirect.kind}:${redirect.id}:${index}`}>
+        <p className="keeper-redirect-head"><strong>{keeperKindLabel(redirect.kind)}</strong> · {redirect.id}</p>
+        <p><span>变更前：</span>{redirect.before.join('、')||'无'}</p>
+        <p><span>变更后：</span>{redirect.after.join('、')||'无'}</p>
+      </li>)}
+    </ul>
+  </section>;
+}
+
+function MergeSection({merges,changes}:{merges:KeeperCardMerge[];changes:KeeperChange[]}){
+  if(!merges.length)return null;
+  return <section className="keeper-merge" aria-label="合并知识卡片">
+    <h3>合并知识卡片</h3>
+    <p>本组包含卡片合并：保留卡片接收捐赠卡片的正文与来源，捐赠卡片在同一整组中删除。以下只展开提议携带的已校验快照，不在客户端推断合并结果。</p>
+    {merges.map(({survivor,donor,donorRef,metadata})=>{
+      const survivorBefore=changeRecord(survivor,'before');
+      const survivorAfter=changeRecord(survivor,'after');
+      const donorBefore=changeRecord(donor,'before');
+      const survivorTitle=recordTitle(survivorAfter)||recordTitle(survivorBefore)||survivor.id||'未命名保留卡片';
+      const donorTitle=donorRef.title||recordTitle(donorBefore)||donorRef.card_id;
+      const donorVersion=typeof donorRef.version==='number'?donorRef.version:donor.expected_version;
+      const outgoing=relationValue(metadata,'outgoing')??{
+        before:survivorBefore?.relations,
+        after:survivorAfter?.relations,
+      };
+      const inbound=relationValue(metadata,'inbound');
+      const redirects=inboundRedirects(changes,survivor.id||'',donorRef.card_id);
+      const donorRelations=relationViews(donorBefore?.relations);
+      return <article className="keeper-merge-card" key={`${survivor.id||'survivor'}:${donorRef.card_id}`}>
+        <header className="keeper-change-head">
+          <span className="keeper-action">合并</span>
+          <strong>{survivorTitle} ← {donorTitle}</strong>
+        </header>
+        <dl className="keeper-merge-meta">
+          <dt>保留卡片</dt>
+          <dd>{survivor.id||'未命名'} · {survivorTitle} · {typeof survivor.expected_version==='number'?`校验 v${survivor.expected_version}`:'缺少固定版本'}</dd>
+          <dt>并入卡片</dt>
+          <dd>{donorRef.card_id} · {donorTitle} · {typeof donorVersion==='number'?`校验 v${donorVersion}`:'缺少固定版本'} · 同组删除</dd>
+        </dl>
+        <div className="keeper-merge-pair">
+          <section className="keeper-merge-side">
+            <h4>保留正文 · 合并前</h4>
+            <ValueText value={survivorBefore?.content}/>
+          </section>
+          <section className="keeper-merge-side">
+            <h4>保留正文 · 合并后</h4>
+            <ValueText value={survivorAfter?.content}/>
+          </section>
+        </div>
+        <section className="keeper-merge-sources">
+          <h4>来源证据</h4>
+          <div className="keeper-merge-pair">
+            <MergeSourceList title="保留卡片 · 合并前" sources={sourceViews(survivorBefore?.sources)}/>
+            <MergeSourceList title="保留卡片 · 合并后" sources={sourceViews(survivorAfter?.sources)}/>
+          </div>
+          <MergeSourceList title="并入卡片来源" sources={sourceViews(donorBefore?.sources)}/>
+        </section>
+        <div className="keeper-merge-relations">
+          <div className="keeper-relation-stack">
+            <RelationChangeView label="出向关系" value={outgoing} missingNote="没有记录出向关系。"/>
+            {donorRelations.length>0&&<p className="keeper-relation-note">并入卡片原有关联：{donorRelations.map(relationName).join('、')}</p>}
+          </div>
+          {redirects.length?<RelationRedirectView redirects={redirects}/>
+            :<RelationChangeView label="入向关系" value={inbound} missingNote="没有入向关系需要调整。"/>}
+        </div>
+      </article>;
+    })}
+  </section>;
+}
+
+function ThemeEvidenceSide({title,items}:{title:string;items:ThemeEvidenceView[]}){
+  return <section className="keeper-theme-side">
+    <h5>{title} · {items.length} 条</h5>
+    {items.length?<ul>
+      {items.map((item,index)=><li key={`${item.source.material_id||'source'}:${index}`}>
+        <p className="keeper-source-pin">
+          {item.source.title||(item.source.material_id?`资料 ${item.source.material_id}`:'来源未记录')}
+          {typeof item.source.material_version==='number'?` · 固定版本 v${item.source.material_version}`:''}
+        </p>
+        {item.reason&&<p className="keeper-theme-reason">理由：{item.reason}</p>}
+        {item.source.locator&&<p className="keeper-source-locator">定位：{item.source.locator}</p>}
+        {item.source.excerpt&&<blockquote>{item.source.excerpt}</blockquote>}
+      </li>)}
+    </ul>:<p className="keeper-value-empty">无</p>}
+  </section>;
+}
+
+function ThemeEvidenceSnapshot({value}:{value:unknown}){
+  const snapshot=themeEvidenceSnapshot(value);
+  if(!snapshot.supports.length&&!snapshot.opposes.length)return null;
+  return <section className="keeper-theme-evidence" aria-label="命题证据快照">
+    <h4>命题证据快照</h4>
+    <div className="keeper-theme-evidence-sides">
+      <ThemeEvidenceSide title="支持" items={snapshot.supports}/>
+      <ThemeEvidenceSide title="反对" items={snapshot.opposes}/>
+    </div>
+  </section>;
+}
+
+function UndoReceipt({receipt}:{receipt:KeeperUndoReceipt}){
+  const applied=Array.isArray(receipt.applied)?receipt.applied:[];
+  return <section className="keeper-receipt keeper-undo-receipt" aria-label="整组撤销回执">
+    <h3>整组撤销已生效</h3>
+    <dl>
+      <dt>撤销编号</dt><dd>{receipt.id||receipt.operation_id||'未记录'}</dd>
+      <dt>状态</dt><dd>{receipt.status==='undone'?'已撤销':receipt.status||'已撤销'}</dd>
+      <dt>提议修订</dt><dd>{typeof receipt.revision==='number'?`v${receipt.revision}`:'未记录'}</dd>
+      {receipt.reason&&<><dt>撤销理由</dt><dd>{receipt.reason}</dd></>}
+      {receipt.undone_at!==null&&receipt.undone_at!==undefined&&<><dt>撤销时间</dt><dd>{timeLabel(receipt.undone_at)}</dd></>}
+    </dl>
+    <h4>已恢复对象</h4>
+    {applied.length?<AppliedList applied={applied}/>:<p className="keeper-receipt-empty">撤销回执没有列出对象；请重新打开提议核对。</p>}
+  </section>;
+}
+
 function ChangeCard({change}:{change:KeeperChange}){
   const sources=Array.isArray(change.sources)?change.sources:[];
   return <article className="keeper-change">
@@ -257,6 +670,7 @@ function ChangeCard({change}:{change:KeeperChange}){
         <ValueText value={change.after}/>
       </section>
     </div>
+    {change.kind==='theme'&&<ThemeEvidenceSnapshot value={change.after??change.before}/>}
     {change.reason&&<p className="keeper-reason"><strong>理由：</strong>{change.reason}</p>}
     <SourceList sources={sources}/>
   </article>;
@@ -399,7 +813,7 @@ const deepEqual=(left:unknown,right:unknown):boolean=>
  * outside the owner-editable list are never offered or sent.
  */
 export const keeperChangedFields=(change:KeeperChange):string[]=>{
-  if(change.action!=='update')return [];
+  if(change.action!=='update'||change.merge_from)return [];
   const before=change.before;
   const after=change.after;
   if(!isRecord(before)||!isRecord(after))return [];
@@ -528,6 +942,7 @@ function RevisionNotesSection({proposal,notes}:{proposal:KeeperProposal;notes:Ke
 export function KeeperProposalPanel({
   proposalId,proposal,loading,error,onRetry,onClose,
   deciding=false,decidingAction=null,decisionError='',decisionNotice='',receipt=null,onDecide,onRevise,
+  onUndoCommand,onUndoApplied,
 }:{
   proposalId:string;
   proposal:KeeperProposal|null;
@@ -542,6 +957,8 @@ export function KeeperProposalPanel({
   receipt?:KeeperDecision|null;
   onDecide?:(decision:KeeperDecisionChoice,reason:string)=>void;
   onRevise?:(decision:KeeperRevisionDecision,feedback:string,omitChanges:number[],keepCurrentFields:KeeperKeepFields[])=>void;
+  onUndoCommand?:(command:unknown)=>void;
+  onUndoApplied?:(receipt:KeeperUndoReceipt)=>void;
 }){
   const heading=useRef<HTMLHeadingElement>(null);
   const [reason,setReason]=useState('');
@@ -556,6 +973,7 @@ export function KeeperProposalPanel({
     setKeep(new Set());
   },[proposalId,proposal?.revision]);
   const changes=proposal&&Array.isArray(proposal.changes)?proposal.changes:[];
+  const merges=proposal?keeperCardMerges(proposal):[];
   const groups:{kind:string;changes:KeeperChange[]}[]=[];
   changes.forEach(change=>{
     let group=groups.find(item=>item.kind===change.kind);
@@ -655,6 +1073,7 @@ export function KeeperProposalPanel({
     {terminal&&proposal&&(effectiveStatus==='returned'
       ?<ReturnedReceipt proposal={proposal} notes={revisionNotes}/>
       :<TerminalReceipt decision={effectiveDecision} proposal={proposal}/>)}
+    {proposal?.undo&&<UndoReceipt receipt={proposal.undo}/>}
     {terminal&&decisionNotice&&<div className="keeper-decision-notice" role="alert"><p>{decisionNotice}</p></div>}
     {revising&&proposal&&<section className="keeper-revision-progress" aria-label="Keeper 正在修订">
       <h3>Keeper 正在修订{revisionLabel}</h3>
@@ -707,13 +1126,14 @@ export function KeeperProposalPanel({
       <p className={`keeper-feedback-count${feedbackTooLong?' keeper-feedback-over':''}`} aria-live="polite">
         {feedbackBytes} / {KEEPER_FEEDBACK_LIMIT} 字节{feedbackTooLong?' · 超出上限，暂不能提交':''}
       </p>
-      <fieldset className="keeper-omit" disabled={deciding}>
+      <fieldset className="keeper-omit" disabled={deciding||merges.length>0}>
         <legend>本次整项移除的变更（可选）</legend>
         {changes.map((change,index)=><label className="keeper-omit-row" key={`${change.kind}:${change.id||'new'}:${index}`}>
           <input type="checkbox" checked={omit.has(index)} onChange={()=>toggleOmit(index)}/>
           <span>第 {index+1} 项 · {keeperKindLabel(change.kind)} · {keeperActionLabel(change.action)} · {changeHeadline(change)}</span>
         </label>)}
       </fieldset>
+      {merges.length>0&&<p>合并和它的关系调整作为一组复核。</p>}
       <fieldset className="keeper-keep" disabled={deciding}>
         <legend>要求 Keeper 保留当前字段（可选）</legend>
         {changes.map((change,index)=>{
@@ -743,6 +1163,9 @@ export function KeeperProposalPanel({
       </div>
       {omitsEveryChange&&<p className="keeper-decision-note" role="status">如果想放弃全部变更，可以取消该提议。</p>}
     </section>}
+    {merges.length>0&&<MergeSection merges={merges} changes={changes}/>}
+    {proposal&&effectiveStatus==='approved'&&!proposal.undo&&onUndoCommand&&onUndoApplied
+      &&<KeeperGroupUndoPanel proposal={proposal} onCommand={onUndoCommand} onUndone={onUndoApplied}/>}
     {groups.length?groups.map(group=><section className="keeper-group" key={group.kind} aria-label={`${keeperKindLabel(group.kind)}变更`}>
       <h3>{keeperKindLabel(group.kind)} · {group.changes.length} 项</h3>
       {group.changes.map((change,index)=><ChangeCard key={`${change.kind}:${change.id||'new'}:${index}`} change={change}/>)}

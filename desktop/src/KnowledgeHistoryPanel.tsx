@@ -47,7 +47,7 @@ const TYPE_LABEL:Record<HistoryKind,string>={card:'知识卡片',theme:'命题',
 const ACTION_LABEL:Record<string,string>={
   create:'创建',created:'创建',update:'编辑',updated:'编辑',edit:'编辑',
   archive:'归档',archived:'归档',delete:'删除',deleted:'删除',
-  undo:'撤销',restore:'撤销',restored:'撤销',
+  undo:'撤销',restore:'撤销',restored:'撤销',group_undo:'Keeper 整组撤销',
 };
 const CODE_LABEL:Record<string,string>={
   version_conflict:'记录在预览之后又有修改，请重新预览',

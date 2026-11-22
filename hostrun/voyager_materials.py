@@ -510,10 +510,24 @@ class MaterialsService(MaterialLifecycle):
         """Verify and bind a Knowledge Card citation on the caller's transaction."""
         self._authorize(token)
         material = _record(db, material_id)
+        self._check_knowledge_excerpt(material, excerpt)
+        return self._bind_reference(db, material, f"card:{card_id}")
+
+    def validate_knowledge_pin(self, db, citation):
+        """Verify the exact saved Card snapshot before copying its citation."""
+        material = _record(db, citation["material_id"])
+        snapshot = material["snapshot"]
+        if any(citation.get(field) != actual for field, actual in (
+                ("material_version", material["version"]),
+                ("content_hash", snapshot["content_hash"]),
+                ("snapshot_id", snapshot.get("snapshot_id")))):
+            raise CommandError('version_conflict', '资料快照已更新，请重新核对来源')
+        self._check_knowledge_excerpt(material, citation["excerpt"])
+
+    def _check_knowledge_excerpt(self, material, excerpt):
         body = self._read_blob(material['snapshot']['content_hash']).decode('utf8')
         if ' '.join(excerpt.split()) not in ' '.join(body.split()):
             raise CommandError('invalid_source', '摘录不在所选资料的快照中')
-        return self._bind_reference(db, material, f"card:{card_id}")
 
     def theme_reference(self, db, citation, *, theme_id, token):
         """Verify and bind a Theme evidence citation on the caller's transaction."""

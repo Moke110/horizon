@@ -32,7 +32,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from hostrun import keeper_revisions
+from hostrun import keeper_merge, keeper_revisions
 from hostrun.agent_service import AgentService, CommandError
 from hostrun.frontier import (
     FrontierService, _validate_constraints, _validate_question,
@@ -46,7 +46,7 @@ from hostrun.keeper_decisions import (
 from hostrun.keeper_evidence_policy import review_policy
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.knowledge_cards import _provenance as _card_provenance
-from hostrun.knowledge_themes import KnowledgeThemeService, _sufficiency
+from hostrun.knowledge_themes import KnowledgeThemeService, _MAX_EVIDENCE, _sufficiency
 from hostrun.managed_database import database_connection
 
 _SCHEMA_VERSION = 1
@@ -156,6 +156,10 @@ def _validate_change(value, *, index):
     fields = value["fields"]
     if not isinstance(fields, dict):
         raise CommandError("invalid_command", "fields must be an object")
+    if "merge_from" in fields:
+        if kind != "card" or action != "update":
+            raise CommandError("invalid_command", "Only a Card update can merge another Card")
+        keeper_merge.parse_merge_from(fields["merge_from"])
     reason = _bounded_text(value["reason"], name="reason",
                            byte_limit=_MAX_REASON_BYTES)
     source_values = _bounded_list(value["sources"], name="sources",
@@ -527,6 +531,13 @@ class KeeperService:
                     self._record_audit(db, proposal["proposal_id"], event)
                     return result
                 self._check_approval_policy(db, changes, request)
+                self._validate_merge_component(
+                    db,
+                    [{"kind": change["kind"], "id": change["id"],
+                      "before": change.get("before"),
+                      "proposal": change,
+                      "after": change.get("after")} for change in changes],
+                    at_approval=True)
                 validate_relations_against_deletions(changes)
                 validate_material_references(self.materials, db, changes)
                 for change in changes:
@@ -969,15 +980,56 @@ class KeeperService:
         selected = keeper_revisions.apply_adjustment(raw_changes, request)
         if not selected:
             raise _Returned("no_effect")
+        merge_pins = {change["merge_from"]["card_id"]:
+                      change["merge_from"]["version"]
+                      for change in previous_changes
+                      if change.get("merge_from") is not None}
+        if merge_pins and request.get("omit_changes"):
+            # Merging is an atomic confirmation: its donor archive and every
+            # redirect cannot be partially omitted before publication.
+            raise _Returned("incomplete_merge")
+        survivor_ids = {change["id"] for change in previous_changes
+                        if change.get("merge_from") is not None}
+        survivor_versions = {
+            survivor_id: self._read_owner(db, "card", survivor_id)["version"]
+            for survivor_id in survivor_ids}
         for index, raw in selected:
-            self._validate_retained_change(db, previous_changes[index], raw)
+            previous = previous_changes[index]
+            if survivor_versions and previous.get("kind") == "theme" \
+                    and isinstance(raw.get("fields", {}).get("related_cards"), list):
+                # A merge survivor may have drifted; its redirect is recalculated
+                # against the fresh version below, so validate that fresh pin.
+                previous = copy.deepcopy(previous)
+                for relation in (previous.get("after") or {}).get(
+                        "related_cards", []):
+                    if relation.get("card_id") in survivor_versions:
+                        relation["version"] = survivor_versions[
+                            relation["card_id"]]
+            self._validate_retained_change(db, previous, raw)
             if raw["action"] == "create":
                 continue
             record = self._read_owner(db, raw["kind"], raw["id"])
-            raw["expected_version"] = record["version"]
+            if raw["action"] == "delete" and raw["id"] in merge_pins:
+                # The explicit donor pin stays stable; a moved donor fails
+                # safely instead of being silently rebound to its latest form.
+                raw["expected_version"] = merge_pins[raw["id"]]
+            else:
+                raw["expected_version"] = record["version"]
+            if raw["id"] in survivor_ids:
+                survivor_versions[raw["id"]] = record["version"]
             if raw["action"] == "update":
                 raw["fields"] = keeper_revisions.merge_latest_nested(
                     raw["fields"], record)
+        for _, raw in selected:
+            if raw["kind"] != "theme" or raw["action"] != "update":
+                continue
+            related = raw["fields"].get("related_cards")
+            if not isinstance(related, list):
+                continue
+            for relation in related:
+                survivor_version = survivor_versions.get(relation.get("card_id"))
+                if survivor_version is not None:
+                    relation["version"] = survivor_version
         scoped = dict(command)
         scoped["groups"] = [{"changes": [raw for _, raw in selected]}]
         plan = self._plan(db, scoped, omit_ineffective=True)
@@ -1282,16 +1334,19 @@ class KeeperService:
         """A bounded projection: no report body, task messages or raw material text."""
         owners = []
         groups = []
-        for group in command["groups"]:
+        for group in self._merge_review_groups(db, command["groups"]):
             changes = []
             for change in group["changes"]:
+                sources = [self._theme_source(source, self._pin_source(db, source))
+                           for source in change["sources"]]
+                if not sources and change["kind"] == "theme" and "evidence" in change["fields"]:
+                    sources = self._build_change(db, change)["proposal"]["sources"]
                 changes.append({
                     "kind": change["kind"], "action": change["action"],
                     "id": change.get("id"),
                     "expected_version": change.get("expected_version"),
                     "fields": change["fields"], "reason": change["reason"],
-                    "sources": [self._theme_source(source, self._pin_source(db, source))
-                                for source in change["sources"]],
+                    "sources": sources,
                 })
                 if change["action"] != "create":
                     record = self._read_owner(db, change["kind"], change["id"])
@@ -1335,7 +1390,8 @@ class KeeperService:
         """Build and validate every candidate without any business write."""
         entries = []
         seen_creations = {}
-        for group in command["groups"]:
+        targets = set()
+        for group in self._merge_review_groups(db, command["groups"]):
             for change in group["changes"]:
                 entry = self._build_change(db, change)
                 if omit_ineffective and not keeper_revisions.has_effect(entry["proposal"]):
@@ -1350,16 +1406,103 @@ class KeeperService:
                             "request_duplicate": True,
                         }])
                     seen_creations[key] = entry
-                    overlap = self._existing_overlap(db, entry)
-                    if overlap:
-                        raise _Returned("duplicate_entity", overlap)
+                    supplemented = self._supplement_duplicate_card(db, entry)
+                    if supplemented is not None:
+                        entry = supplemented
+                    else:
+                        overlap = self._existing_overlap(db, entry)
+                        if overlap:
+                            raise _Returned("duplicate_entity", overlap)
+                if entry["id"] is not None:
+                    target = entry["kind"], entry["id"]
+                    if target in targets:
+                        raise CommandError("duplicate_target",
+                                           "A reviewed target appears more than once")
+                    targets.add(target)
                 entries.append(entry)
         blocked = review_policy(db, entries, command,
                                 require_matching_supersedes=not omit_ineffective)
         if blocked is not None:
             raise _Returned(blocked["reason"], [{key: value for key, value in blocked.items()
                                                 if key != "reason"}])
-        return list(self._components(entries))
+        components = list(self._components(entries))
+        for component in components:
+            self._validate_merge_component(db, component)
+        return components
+
+    def _merge_review_groups(self, db, groups):
+        """Use the same verified merge evidence for plan and worker dispatch."""
+        cards = {change.get("id"): change for group in groups for change in group["changes"]
+                 if change["kind"] == "card" and change.get("id")}
+        related = {}
+        for identity, change in cards.items():
+            if keeper_merge.MERGE_FROM in change["fields"]:
+                donor = keeper_merge.parse_merge_from(change["fields"][keeper_merge.MERGE_FROM])["card_id"]
+                related[identity] = donor
+                related[donor] = identity
+        return [{"changes": [
+            self._merge_missing_evidence(db, change, cards.get(related[change["id"]]))
+            if change["kind"] == "card" and not change["sources"]
+            and change.get("id") in related else change
+            for change in group["changes"]]} for group in groups]
+
+    def _merge_missing_evidence(self, db, change, other):
+        record = self._read_owner(db, "card", change["id"])
+        for saved in record.get("sources", []):
+            source = {field: saved.get(field) for field in _SOURCE_FIELDS}
+            if type(source["material_version"]) is not int:
+                continue
+            try:
+                self._pin_source(db, source)
+            except _Returned:
+                continue
+            return {**change, "sources": [source]}
+        if other is not None and other["sources"]:
+            return {**change, "sources": other["sources"][:1]}
+        return change
+
+    def _supplement_duplicate_card(self, db, entry):
+        """An exact-title creation with genuinely new citations supplements existing.
+
+        The existing Card keeps every field and its content. Only new exact
+        citations are added, through an ordinary owner update. An unchanged
+        same-evidence creation is left to the existing duplicate reply, and a
+        near name never reaches this path.
+        """
+        if entry["kind"] != "card" \
+                or entry["proposal"]["action"] != "create":
+            return None
+        label = _normalized_label(self._creation_label(entry))
+        matches = [record for record in KnowledgeCardService.query_all_in_transaction(db)
+                   if record.get("status") == "active" and record.get("known")
+                   and _normalized_label(record.get("title") or "") == label]
+        if len(matches) != 1:
+            return None
+        record = matches[0]
+        existing_keys = {keeper_merge.source_key(source)
+                         for source in record.get("sources") or []}
+        additions = [source for source in entry["proposal"]["sources"]
+                     if keeper_merge.source_key(source) not in existing_keys]
+        if not additions:
+            return None
+        sources = keeper_merge.union_sources(
+            record.get("sources"), [self._card_source(source, source)
+                                    for source in additions])
+        if len(sources) > 16:
+            raise CommandError("invalid_card", "来源数量超出限制")
+        updated = copy.deepcopy(record)
+        updated["sources"] = sources
+        updated["provenance"], updated["source_pending"] = _card_provenance(sources)
+        updated["known"] = True
+        updated["version"] = record["version"] + 1
+        reason = {"reason": entry["proposal"]["reason"]}
+        proposal = self._proposal_change(
+            "card", "update", record["card_id"], record["version"],
+            record, updated, reason, additions)
+        proposal[keeper_merge.ADD_SOURCES] = True
+        proposal["supplemented_title"] = label
+        return {"kind": "card", "id": record["card_id"],
+                "before": record, "after": updated, "proposal": proposal}
 
     @staticmethod
     def _creation_label(entry):
@@ -1411,10 +1554,17 @@ class KeeperService:
             proposal = self._theme_change(db, change, citations)
         else:
             proposal = self._frontier_change(db, change, citations)
-        if not citations:
-            raise _Returned("missing_evidence")
         proposal["sources"] = [self._theme_source(source, reference)
                                for source, reference in citations]
+        if not proposal["sources"] and kind == "theme" and action != "delete" \
+                and "evidence" in change["fields"]:
+            existing = {item["evidence_id"] for item in
+                        (proposal["before"] or {}).get("evidence", [])}
+            proposal["sources"] = [item["source"] for item in
+                                   proposal["after"]["evidence"]
+                                   if item["evidence_id"] not in existing]
+        if not proposal["sources"]:
+            raise _Returned("missing_evidence")
         return {"kind": kind, "id": proposal["id"],
                 "before": proposal["before"], "after": proposal["after"],
                 "proposal": proposal}
@@ -1464,9 +1614,28 @@ class KeeperService:
     def _card_change(self, db, change, citations):
         action = change["action"]
         fields_in = change["fields"]
-        if set(fields_in) - _CARD_FIELDS:
+        merge_value = fields_in.get(keeper_merge.MERGE_FROM)
+        add_value = fields_in.get(keeper_merge.ADD_SOURCES)
+        editable = {name: value for name, value in fields_in.items()
+                    if name not in (keeper_merge.MERGE_FROM,
+                                    keeper_merge.ADD_SOURCES)}
+        if set(editable) - _CARD_FIELDS:
             raise CommandError("invalid_command", "Unsupported card fields")
+        merge_from = keeper_merge.parse_merge_from(merge_value) \
+            if merge_value is not None else None
+        add_sources = keeper_merge.parse_add_sources(add_value) \
+            if add_value is not None else None
+        if merge_from is not None and add_sources is not None:
+            raise CommandError(
+                "invalid_command", "A merge and an explicit source addition differ")
+        if merge_from is not None and editable:
+            raise CommandError(
+                "invalid_command",
+                "A merge derives every editable field from both pinned cards")
         if action == "delete":
+            if merge_from is not None or add_sources is not None:
+                raise CommandError(
+                    "invalid_command", "A delete carries no merge or source fields")
             card = self._require_owner(db, "card", change)
             if card["status"] == "archived":
                 raise CommandError("invalid_transition", "Knowledge Card is already archived")
@@ -1477,8 +1646,11 @@ class KeeperService:
                                          change, change["sources"])
         if len(change["sources"]) > 16:
             raise CommandError("invalid_card", "来源数量超出限制")
-        fields = KnowledgeCardService._fields(fields_in)
+        fields = KnowledgeCardService._fields(editable)
         if action == "create":
+            if merge_from is not None or add_sources is not None:
+                raise CommandError(
+                    "invalid_command", "A creation cannot merge or add sources")
             if "title" not in fields or "content" not in fields:
                 raise CommandError("invalid_card", "title and content are required")
             if not citations:
@@ -1508,21 +1680,79 @@ class KeeperService:
         card = self._require_owner(db, "card", change)
         if card["status"] == "archived":
             raise CommandError("invalid_transition", "Archived Knowledge Cards are read-only")
-        if "sources" in fields_in:
+        if "sources" in editable:
             raise CommandError("invalid_command", "Sources belong on the change")
         relations = card["relations"]
         if "relations" in fields:
             relations = self.cards._relations(db, card["card_id"], fields["relations"])
+        requested_sources = [self._card_source(source, reference)
+                             for source, reference in citations]
+        if merge_from is not None:
+            if merge_from["card_id"] == card["card_id"]:
+                raise CommandError("invalid_command", "A card cannot merge into itself")
+            donor = self._require_owner(db, "card", {
+                "id": merge_from["card_id"],
+                "expected_version": merge_from["version"],
+            })
+            if donor["status"] != "active" or not donor["known"]:
+                raise CommandError(
+                    "invalid_transition", "A merge donor must be an active Card")
+            sources = keeper_merge.merge_source_union(
+                card.get("sources"),
+                self._pin_merge_card_sources(db, donor),
+                requested_sources)
+            if len(sources) > 16:
+                raise CommandError("invalid_card", "来源数量超出限制")
+            updated = keeper_merge.survivor_after(card, donor, sources)
+            editable_merge = {key: updated[key] for key in _CARD_FIELDS}
+            KnowledgeCardService._fields(editable_merge)
+            self.cards._relations(db, card["card_id"], updated["relations"])
+            updated["provenance"], updated["source_pending"] = _card_provenance(sources)
+            proposal = self._proposal_change(
+                "card", "update", card["card_id"], change["expected_version"],
+                card, updated, change, sources)
+            proposal["merge_from"] = {**merge_from, "title": donor["title"]}
+            return proposal
         if not citations and not card["sources"]:
             raise _Returned("missing_evidence")
         updated = copy.deepcopy(card)
         updated.update(fields)
         updated["relations"] = relations
+        if add_sources:
+            sources = keeper_merge.union_sources(
+                card.get("sources"), requested_sources)
+            if len(sources) > 16:
+                raise CommandError("invalid_card", "来源数量超出限制")
+            updated["sources"] = sources
+            updated["provenance"], updated["source_pending"] = _card_provenance(sources)
         updated["known"] = True
         updated["version"] = card["version"] + 1
-        return self._proposal_change("card", "update", card["card_id"],
-                                     change["expected_version"], card, updated,
-                                     change, change["sources"])
+        proposal = self._proposal_change(
+            "card", "update", card["card_id"], change["expected_version"],
+            card, updated, change, updated["sources"] if add_sources
+            else change["sources"])
+        if add_sources:
+            proposal[keeper_merge.ADD_SOURCES] = True
+            if change.get("supplemented_title"):
+                proposal["supplemented_title"] = change["supplemented_title"]
+        return proposal
+
+    def _pin_merge_card_sources(self, db, card):
+        """Re-verify every historical card pin before it joins another card.
+
+        The current owner must still expose the exact material version and
+        digest this card pinned. A removed or metadata-sensitive historical pin
+        is a conflict, never a silent rebind to the latest material.
+        """
+        sources = card.get("sources") or []
+        for source in sources:
+            try:
+                self.materials.validate_knowledge_pin(db, source)
+            except CommandError as error:
+                raise CommandError(
+                    "version_conflict",
+                    "A historical card citation no longer matches") from error
+        return sources
 
     @staticmethod
     def _dedupe_card_sources(citations):
@@ -1577,7 +1807,8 @@ class KeeperService:
         if "related_cards" in fields:
             related = self.themes._relations(db, fields["related_cards"])
         if "evidence" in fields:
-            evidence = self._theme_evidence(db, fields["evidence"], theme["evidence"])
+            evidence = self._theme_evidence(
+                db, fields["evidence"], theme["evidence"], merge=True)
         else:
             evidence = copy.deepcopy(theme["evidence"])
         if not evidence and not theme["evidence"] and not citations:
@@ -1593,8 +1824,10 @@ class KeeperService:
                                      change["expected_version"], theme, updated,
                                      change, change["sources"])
 
-    def _theme_evidence(self, db, entries, current):
+    def _theme_evidence(self, db, entries, current, *, merge=False):
         existing = {entry["evidence_id"]: entry for entry in current}
+        if merge:
+            return self._merge_theme_evidence(db, entries, current, existing)
         resolved = []
         for entry in entries:
             evidence_id = entry.get("evidence_id")
@@ -1621,6 +1854,50 @@ class KeeperService:
             resolved.append({"evidence_id": evidence_id, "stance": entry["stance"],
                              "reason": entry["reason"], "source": pinned_source})
         return resolved
+
+    def _merge_theme_evidence(self, db, entries, current, existing):
+        """Append new evidence and preserve existing citations and directions."""
+        resolved = [copy.deepcopy(entry) for entry in current]
+        by_id = {entry["evidence_id"]: entry for entry in resolved}
+        seen = {self._evidence_key(entry) for entry in current}
+        for entry in entries:
+            evidence_id = entry.get("evidence_id")
+            source = entry["source"]
+            if evidence_id is not None:
+                if evidence_id not in existing:
+                    raise CommandError("not_found", "Unknown evidence")
+                previous = by_id[evidence_id]
+                pinned = previous["source"]
+                if entry["stance"] != previous["stance"] or any(
+                        source.get(name, pinned.get(name)) != pinned.get(name)
+                        for name in ("material_id", "locator", "excerpt", "material_version")):
+                    raise CommandError("invalid_evidence",
+                                       "A saved evidence ID keeps its citation and direction")
+                previous["reason"] = entry["reason"]
+                continue
+            if "material_version" not in source:
+                raise CommandError(
+                    "invalid_command", "New evidence requires a material version")
+            reference = self._pin_source(db, source)
+            pinned_source = self._theme_source(source, reference)
+            item = {"evidence_id": str(uuid.uuid4()),
+                    "stance": entry["stance"], "reason": entry["reason"],
+                    "source": pinned_source}
+            key = self._evidence_key(item)
+            if key not in seen:
+                resolved.append(item)
+                seen.add(key)
+        if len(resolved) > _MAX_EVIDENCE:
+            raise CommandError("invalid_theme", "Evidence exceeds the Theme limit")
+        return resolved
+
+    @staticmethod
+    def _evidence_key(entry):
+        source = entry["source"]
+        anchor = source.get("anchor") or {}
+        return (entry["stance"], source.get("material_id"),
+                source.get("material_version"), source.get("content_hash"),
+                anchor.get("id") or source.get("locator"), source.get("excerpt"))
 
     def _frontier_change(self, db, change, citations):
         action = change["action"]
@@ -1693,6 +1970,127 @@ class KeeperService:
             "sources": [dict(source) for source in sources],
         }
 
+    @staticmethod
+    def _merge_marker(entry):
+        if not isinstance(entry, dict):
+            return None
+        return (entry.get("proposal") or {}).get(keeper_merge.MERGE_FROM)
+
+    def _inbound_redirects(self, db, donor_id, survivor_id, survivor_version):
+        """Active Cards and Themes that must explicitly replace the donor."""
+        expected = {}
+        for record in KnowledgeCardService.query_all_in_transaction(db):
+            if record.get("status") != "active" or not record.get("known") \
+                    or record.get("card_id") in (donor_id, survivor_id):
+                continue
+            if donor_id in (record.get("relations") or []):
+                expected[("card", record["card_id"])] = (
+                    "relations",
+                    keeper_merge.redirect_relations(
+                        record, donor_id, survivor_id))
+        for record in KnowledgeThemeService.query_all_in_transaction(db):
+            if record.get("status") != "active" or not record.get("known"):
+                continue
+            if any(relation.get("card_id") == donor_id
+                   for relation in record.get("related_cards") or []):
+                expected[("theme", record["theme_id"])] = (
+                    "related_cards",
+                    keeper_merge.redirect_related_cards(
+                        record, donor_id, survivor_id, survivor_version))
+        return expected
+
+    def _validate_merge_component(self, db, component, *, at_approval=False):
+        """One complete, connected merge: survivor, donor archive and redirects."""
+        merges = [entry for entry in component
+                  if entry.get("kind") == "card"
+                  and self._merge_marker(entry) is not None]
+        if not merges:
+            return
+
+        def fail(detail):
+            if at_approval:
+                raise CommandError("incomplete_merge", detail)
+            raise _Returned("incomplete_merge", [{
+                "problem": "incomplete_merge", "detail": detail}])
+
+        if len(merges) != 1:
+            fail("A component may contain one merge only")
+        merge = merges[0]
+        marker = self._merge_marker(merge)
+        donor_id = marker["card_id"]
+        survivor_id = merge["id"]
+        donor = next((entry for entry in component
+                      if entry.get("kind") == "card"
+                      and entry.get("id") == donor_id
+                      and (entry.get("proposal") or {}).get("action") == "delete"),
+                     None)
+        if donor is None:
+            fail("A merge requires the donor Card archive in the same component")
+        if donor["proposal"].get("expected_version") != marker["version"]:
+            fail("The donor archive must pin merge_from.version")
+        if donor["proposal"].get("id") != donor_id:
+            fail("The donor archive targets another Card")
+        introduced = set(merge["proposal"]["after"]["relations"]) - set(merge["before"]["relations"])
+        for identity in sorted(introduced):
+            related = self._read_owner(db, "card", identity)
+            if related.get("status") != "active" or not related.get("known"):
+                fail("A newly carried relationship needs an active Card")
+        if at_approval:
+            survivor_current = self._read_owner(db, "card", survivor_id)
+            donor_current = self._read_owner(db, "card", donor_id)
+            if survivor_current["version"] \
+                    != merge["proposal"].get("expected_version") \
+                    or donor_current["version"] != marker["version"]:
+                raise CommandError(
+                    "version_conflict", "A merge pin changed before approval")
+            if donor_current.get("status") != "active" \
+                    or not donor_current.get("known"):
+                fail("The donor is no longer an active Card")
+            # Re-verify both historical pin sets from this transaction snapshot;
+            # an unverifiable pin is a conflict, never a silent rebind.
+            self._pin_merge_card_sources(db, donor_current)
+        expected = self._inbound_redirects(
+            db, donor_id, survivor_id, merge["before"]["version"])
+        redirects = {(entry.get("kind"), entry.get("id")): entry
+                     for entry in component
+                     if entry is not merge and entry is not donor}
+        for key, (field, value) in expected.items():
+            entry = redirects.get(key)
+            if entry is None \
+                    or (entry.get("proposal") or {}).get("action") != "update":
+                fail("Every active inbound relationship needs an explicit redirect")
+            actual = (entry["proposal"].get("after") or {}).get(field)
+            if not self._redirect_matches(field, actual, value):
+                fail("A redirect must replace the donor and preserve every other edge")
+        for entry in redirects.values():
+            after = (entry.get("proposal") or {}).get("after") or {}
+            if after.get("status") != "active":
+                continue
+            if entry.get("kind") == "card" \
+                    and donor_id in (after.get("relations") or []):
+                fail("A redirect still references the archived donor")
+            if entry.get("kind") == "theme" \
+                    and any(relation.get("card_id") == donor_id
+                            for relation in after.get("related_cards") or []):
+                fail("A redirect still references the archived donor")
+
+    @staticmethod
+    def _redirect_matches(field, actual, expected):
+        """Order-insensitive, duplicate-free redirect comparison."""
+        if not isinstance(actual, list):
+            return False
+        if field == "relations":
+            return len(actual) == len(set(actual)) \
+                and set(actual) == set(expected)
+        values = {}
+        for item in actual:
+            if not isinstance(item, dict) or "card_id" not in item \
+                    or item["card_id"] in values:
+                return False
+            values[item["card_id"]] = item.get("version")
+        return values == {item["card_id"]: item.get("version")
+                          for item in expected}
+
     def _components(self, entries):
         remaining = set(range(len(entries)))
         while remaining:
@@ -1728,6 +2126,10 @@ class KeeperService:
 
     def _linked(self, first, second):
         if first["kind"] == second["kind"] == "card":
+            for source, target in ((first, second), (second, first)):
+                marker = self._merge_marker(source)
+                if marker is not None and marker["card_id"] == target["id"]:
+                    return True
             return (second["id"] in self._card_relation_ids(first)
                     or first["id"] in self._card_relation_ids(second))
         if {first["kind"], second["kind"]} == {"theme", "card"}:
