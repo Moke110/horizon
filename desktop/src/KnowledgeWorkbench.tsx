@@ -3,12 +3,17 @@ import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEven
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
 import {KnowledgeHistoryPanel,type HistoryKind,type HistoryRecord} from './KnowledgeHistoryPanel';
-import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge} from './KeeperProposalPanel';
+import {KeeperProposalPanel,type KeeperProposal,type KeeperListEvent,type KeeperDecision,type KeeperDecisionChoice,keeperKindLabel,keeperProposalTitle,keeperStatusLabel,keeperTestBadge,keeperDecisionFromProposal} from './KeeperProposalPanel';
 
 type MaterialOption={material_id:string;title:string;version?:number};
 type EntityType='card'|'theme'|'frontier';
 type TypeFilter='all'|EntityType;
 type ScopeFilter='active'|'inactive'|'pending';
+type KeeperStatus='pending'|'approved'|'rejected';
+type KeeperSelection={proposal_id:string;revision:number|null;status:KeeperStatus;nonce:string};
+type KeeperListState=Record<KeeperStatus,KeeperListEvent|null>;
+type KeeperListRequests=Record<KeeperStatus,string|null>;
+type KeeperDecisionWork={operation_id:string;proposal_id:string;revision:number;decision:KeeperDecisionChoice};
 type ActiveSelection={type:EntityType;mode:'create'|'open';id?:string;version?:number;nonce:string;previousView?:string};
 type PanelRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 type RelationTarget={kind:'card'|'theme';id:string};
@@ -33,11 +38,18 @@ type SearchValues={query:string;type:TypeFilter;scope:ScopeFilter;relationTarget
 type SearchRequest={operation_id:string;values:SearchValues;offset:number};
 
 const PAGE_SIZE=20;
+const KEEPER_STATUSES:KeeperStatus[]=['pending','approved','rejected'];
+const KEEPER_STATUS_LABEL:Record<KeeperStatus,string>={pending:'待确认',approved:'已批准',rejected:'已拒绝'};
+const EMPTY_KEEPER_LISTS:KeeperListState={pending:null,approved:null,rejected:null};
+const EMPTY_KEEPER_REQUESTS:KeeperListRequests={pending:null,approved:null,rejected:null};
 const TYPE_LABEL:Record<EntityType,string>={card:'知识卡片',theme:'命题',frontier:'关注问题'};
 const STATUS_LABEL:Record<string,string>={active:'有效',archived:'已归档',following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 const truncate=(value:string,length=56)=>value.length>length?value.slice(0,length)+'…':value;
 const proposalSearchText=(proposal:KeeperProposal)=>[
-  proposal.proposal_id,proposal.status,proposal.request_id,proposal.task_id,
+  proposal.proposal_id,proposal.status,proposal.reason,
+  keeperDecisionFromProposal(proposal)?.status,keeperDecisionFromProposal(proposal)?.reason,
+  typeof proposal.decision==='string'?proposal.decision:proposal.decision?.decision,
+  proposal.request_id,proposal.task_id,
   proposal.report_id,proposal.child_id,proposal.provenance,
   ...(proposal.changes||[]).flatMap(change=>[
     change.kind,change.action,change.id,change.reason,
@@ -102,13 +114,18 @@ export function KnowledgeWorkbench({
   const [pageData,setPageData]=useState<SearchPage|null>(null);
   const [loading,setLoading]=useState(true);
   const [searchError,setSearchError]=useState('');
-  const [pendingData,setPendingData]=useState<KeeperListEvent|null>(null);
-  const [pendingLoading,setPendingLoading]=useState(false);
-  const [pendingError,setPendingError]=useState('');
-  const [pendingSelection,setPendingSelection]=useState<{proposal_id:string;nonce:string}|null>(null);
+  const [keeperStatus,setKeeperStatus]=useState<KeeperStatus>('pending');
+  const [keeperData,setKeeperData]=useState<KeeperListState>(EMPTY_KEEPER_LISTS);
+  const [keeperLoading,setKeeperLoading]=useState(false);
+  const [keeperError,setKeeperError]=useState('');
+  const [pendingSelection,setPendingSelection]=useState<KeeperSelection|null>(null);
   const [pendingProposal,setPendingProposal]=useState<KeeperProposal|null>(null);
   const [pendingOpenLoading,setPendingOpenLoading]=useState(false);
   const [pendingOpenError,setPendingOpenError]=useState('');
+  const [decisionPending,setDecisionPending]=useState<KeeperDecisionWork|null>(null);
+  const [decisionError,setDecisionError]=useState('');
+  const [decisionReceipt,setDecisionReceipt]=useState<KeeperDecision|null>(null);
+  const [decisionRefreshError,setDecisionRefreshError]=useState('');
   const results=useRef<HTMLUListElement>(null);
   const detailHeading=useRef<HTMLHeadingElement>(null);
   const historyButton=useRef<HTMLButtonElement>(null);
@@ -117,13 +134,22 @@ export function KnowledgeWorkbench({
   const pendingFocusAfterRefresh=useRef(false);
   const skipHeadingFocus=useRef(false);
   const pendingActive=useRef(false);
-  const pendingRefreshQueued=useRef(false);
-  const pendingListPending=useRef<string|null>(null);
+  const keeperStatusRef=useRef<KeeperStatus>('pending');
+  const keeperRefreshQueued=useRef<Record<KeeperStatus,boolean>>({pending:false,approved:false,rejected:false});
+  const keeperListPending=useRef<KeeperListRequests>({...EMPTY_KEEPER_REQUESTS});
+  const keeperDataRef=useRef<KeeperListState>(EMPTY_KEEPER_LISTS);
   const pendingOpenPending=useRef<{operation_id:string;proposal_id:string}|null>(null);
-  const pendingSelected=useRef<string|null>(null);
+  const decisionRefreshPending=useRef<{operation_id:string;proposal_id:string;revision:number;status:KeeperStatus}|null>(null);
+  const decisionWork=useRef<KeeperDecisionWork|null>(null);
+  const pendingSelectionRef=useRef<KeeperSelection|null>(null);
+  const pendingProposalRef=useRef<KeeperProposal|null>(null);
   const pendingCountCallback=useRef(onPendingCount);
   pendingActive.current=scope==='pending';
-  pendingSelected.current=pendingSelection?.proposal_id||null;
+  keeperStatusRef.current=keeperStatus;
+  keeperDataRef.current=keeperData;
+  pendingSelectionRef.current=pendingSelection;
+  pendingProposalRef.current=pendingProposal;
+  decisionWork.current=decisionPending;
   pendingCountCallback.current=onPendingCount;
 
   const searchNow=(values:SearchValues,offset:number,background=false)=>{
@@ -145,20 +171,30 @@ export function KnowledgeWorkbench({
     });
   };
 
-  const requestPendingList=()=>{
+  const requestKeeperList=(status:KeeperStatus,{silent=false}:{silent?:boolean}={})=>{
+    if(keeperListPending.current[status]){
+      keeperRefreshQueued.current[status]=true;
+      return;
+    }
     const operation_id=crypto.randomUUID();
-    pendingListPending.current=operation_id;
-    setPendingLoading(true);
-    setPendingError('');
-    onCommand({action:'keeper_list',schema_version:1,operation_id,status:'pending'});
+    keeperListPending.current[status]=operation_id;
+    if(!silent){
+      setKeeperLoading(true);
+      setKeeperError('');
+    }
+    onCommand({action:'keeper_list',schema_version:1,operation_id,status});
   };
   const openProposal=(proposal:KeeperProposal)=>{
     const operation_id=crypto.randomUUID();
+    const revision=typeof proposal.revision==='number'?proposal.revision:null;
     pendingOpenPending.current={operation_id,proposal_id:proposal.proposal_id};
-    setPendingSelection({proposal_id:proposal.proposal_id,nonce:crypto.randomUUID()});
+    setPendingSelection({proposal_id:proposal.proposal_id,revision,status:keeperStatus,nonce:crypto.randomUUID()});
     setPendingProposal(Array.isArray(proposal.changes)&&proposal.changes.length?proposal:null);
     setPendingOpenLoading(true);
     setPendingOpenError('');
+    setDecisionError('');
+    setDecisionReceipt(null);
+    setDecisionRefreshError('');
     onCommand({action:'keeper_open',schema_version:1,operation_id,proposal_id:proposal.proposal_id});
   };
   const retryPendingOpen=()=>{
@@ -173,10 +209,14 @@ export function KnowledgeWorkbench({
   const closePendingProposal=()=>{
     const proposal_id=pendingSelection?.proposal_id;
     pendingOpenPending.current=null;
+    decisionRefreshPending.current=null;
     setPendingSelection(null);
     setPendingProposal(null);
     setPendingOpenLoading(false);
     setPendingOpenError('');
+    setDecisionError('');
+    setDecisionReceipt(null);
+    setDecisionRefreshError('');
     window.setTimeout(()=>{
       const list=results.current;
       if(!list)return;
@@ -189,34 +229,54 @@ export function KnowledgeWorkbench({
     const unsubscribe=window.horizon.subscribe(event=>{
       const latest=latestSearch.current;
       if(event.kind==='keeper_list'){
-        const operation_id=pendingListPending.current;
-        if(!operation_id||event.data?.operation_id!==operation_id)return;
-        pendingListPending.current=null;
+        const operation_id=event.data?.operation_id;
+        const status=KEEPER_STATUSES.find(item=>keeperListPending.current[item]===operation_id);
+        if(!status)return;
+        keeperListPending.current[status]=null;
         const proposals:KeeperProposal[]=Array.isArray(event.data?.proposals)?event.data.proposals:[];
-        setPendingLoading(false);
-        setPendingError('');
-        setPendingData({operation_id,proposals});
-        pendingCountCallback.current?.(proposals.length);
-        if(pendingSelected.current&&!proposals.some(item=>item.proposal_id===pendingSelected.current)){
-          pendingOpenPending.current=null;
-          setPendingSelection(null);
-          setPendingProposal(null);
-          setPendingOpenLoading(false);
-          setPendingOpenError('');
+        const nextData={...keeperDataRef.current,[status]:{operation_id,proposals}};
+        keeperDataRef.current=nextData;
+        setKeeperData(nextData);
+        const active=keeperStatusRef.current===status;
+        if(active){
+          setKeeperLoading(false);
+          setKeeperError('');
         }
-        if(pendingFocusAfterRefresh.current){
+        if(status==='pending')pendingCountCallback.current?.(proposals.length);
+        if(active&&pendingFocusAfterRefresh.current){
           pendingFocusAfterRefresh.current=false;
           if(proposals.length>0){
             window.setTimeout(()=>results.current?.querySelector<HTMLButtonElement>('button[data-pending-result]')?.focus(),0);
           }
         }
-        if(pendingRefreshQueued.current){
-          pendingRefreshQueued.current=false;
-          requestPendingList();
+        if(keeperRefreshQueued.current[status]){
+          keeperRefreshQueued.current[status]=false;
+          requestKeeperList(status,{silent:!active});
         }
         return;
       }
       if(event.kind==='keeper_open'){
+        const refresh=decisionRefreshPending.current;
+        if(refresh&&event.data?.operation_id===refresh.operation_id){
+          decisionRefreshPending.current=null;
+          const proposal=event.data.proposal as KeeperProposal|undefined;
+          const selected=pendingSelectionRef.current;
+          if(!proposal||typeof proposal!=='object'||proposal.proposal_id!==refresh.proposal_id){
+            setDecisionRefreshError('决定已提交，但重新读取持久状态不完整；可以重试打开该提议。');
+            return;
+          }
+          if(!selected||selected.proposal_id!==refresh.proposal_id){
+            setDecisionRefreshError('');
+            return;
+          }
+          setPendingProposal(proposal);
+          if(proposal.status===refresh.status){
+            setDecisionRefreshError('');
+          }else{
+            setDecisionRefreshError('决定回执已返回，但持久状态与回执不一致；请重新打开提议核对。');
+          }
+          return;
+        }
         const work=pendingOpenPending.current;
         if(!work||event.data?.operation_id!==work.operation_id)return;
         const proposal=event.data.proposal as KeeperProposal|undefined;
@@ -229,13 +289,68 @@ export function KnowledgeWorkbench({
         }
         setPendingOpenError('');
         setPendingProposal(proposal);
+        setPendingSelection(current=>current&&current.proposal_id===proposal.proposal_id
+          ?{...current,revision:typeof proposal.revision==='number'?proposal.revision:current.revision}
+          :current);
+        return;
+      }
+      if(event.kind==='keeper_decide'){
+        const work=decisionWork.current;
+        if(!work||event.data?.operation_id!==work.operation_id)return;
+        if(event.data?.proposal_id!==work.proposal_id||event.data?.revision!==work.revision){
+          decisionWork.current=null;
+          setDecisionPending(null);
+          const selected=pendingSelectionRef.current;
+          if(selected?.proposal_id===work.proposal_id&&selected?.revision===work.revision){
+            setDecisionError('决定响应与当前提议或修订不匹配；未确认成功，可重试。');
+          }
+          return;
+        }
+        const expectedStatus=work.decision==='approve'?'approved':'rejected';
+        if(event.data?.status!==expectedStatus){
+          decisionWork.current=null;
+          setDecisionPending(null);
+          const selected=pendingSelectionRef.current;
+          if(selected?.proposal_id===work.proposal_id&&selected?.revision===work.revision){
+            setDecisionError('决定响应与当前提议不匹配；未确认成功，可重试。');
+          }
+          return;
+        }
+        const result=event.data as KeeperDecision;
+        decisionWork.current=null;
+        setDecisionPending(null);
+        setDecisionError('');
+        const selected=pendingSelectionRef.current;
+        const proposal=pendingProposalRef.current;
+        const sameSelection=selected?.proposal_id===work.proposal_id
+          &&selected?.revision===work.revision
+          &&proposal?.proposal_id===work.proposal_id
+          &&proposal?.revision===work.revision;
+        if(sameSelection&&selected&&proposal){
+          setDecisionReceipt(result);
+          setDecisionRefreshError('');
+          const nextProposal:KeeperProposal={...proposal,status:expectedStatus,decision:result};
+          pendingProposalRef.current=nextProposal;
+          setPendingProposal(nextProposal);
+          const nextSelection:KeeperSelection={...selected,status:expectedStatus,revision:work.revision};
+          pendingSelectionRef.current=nextSelection;
+          setPendingSelection(nextSelection);
+          keeperStatusRef.current=expectedStatus;
+          setKeeperStatus(expectedStatus);
+          requestKeeperList(expectedStatus);
+          const operation_id=crypto.randomUUID();
+          decisionRefreshPending.current={operation_id,proposal_id:work.proposal_id,
+            revision:work.revision,status:expectedStatus};
+          onCommand({action:'keeper_open',schema_version:1,operation_id,
+            proposal_id:work.proposal_id});
+        }else{
+          requestKeeperList(expectedStatus,{silent:true});
+        }
+        requestKeeperList('pending',{silent:true});
         return;
       }
       if(event.kind==='keeper_review'){
-        if(pendingActive.current){
-          if(pendingListPending.current)pendingRefreshQueued.current=true;
-          else requestPendingList();
-        }
+        requestKeeperList('pending',{silent:!pendingActive.current});
         return;
       }
       if(event.kind==='knowledge_search'){
@@ -263,13 +378,34 @@ export function KnowledgeWorkbench({
       if(event.kind==='command_error'&&event.data?.operation_id){
         const operation_id=event.data.operation_id;
         const message=event.data.message||event.data.code||'请求未能完成；可重试。';
-        if(pendingListPending.current===operation_id){
-          pendingListPending.current=null;
+        const listStatus=KEEPER_STATUSES.find(item=>keeperListPending.current[item]===operation_id);
+        if(listStatus){
+          keeperListPending.current[listStatus]=null;
           pendingFocusAfterRefresh.current=false;
-          pendingRefreshQueued.current=false;
-          setPendingLoading(false);
-          setPendingError(message);
-          pendingCountCallback.current?.(null);
+          keeperRefreshQueued.current[listStatus]=false;
+          if(keeperStatusRef.current===listStatus){
+            setKeeperLoading(false);
+            setKeeperError(message);
+            if(listStatus==='pending'&&!keeperDataRef.current.pending){
+              pendingCountCallback.current?.(null);
+            }
+          }
+          return;
+        }
+        const work=decisionWork.current;
+        if(work&&work.operation_id===operation_id){
+          decisionWork.current=null;
+          setDecisionPending(null);
+          const selected=pendingSelectionRef.current;
+          const proposal=pendingProposalRef.current;
+          if(selected?.proposal_id===work.proposal_id&&proposal?.revision===work.revision){
+            setDecisionError(message);
+          }
+          return;
+        }
+        if(decisionRefreshPending.current?.operation_id===operation_id){
+          decisionRefreshPending.current=null;
+          setDecisionRefreshError(message);
           return;
         }
         if(pendingOpenPending.current?.operation_id===operation_id){
@@ -322,18 +458,24 @@ export function KnowledgeWorkbench({
     if(!openPendingNonce)return;
     focusAfterSearch.current=false;
     pendingFocusAfterRefresh.current=false;
-    pendingRefreshQueued.current=false;
+    keeperRefreshQueued.current={pending:false,approved:false,rejected:false};
     setType('all');
     setScope('pending');
     setQuery('');
     setRelationTarget('');
     setPage(0);
     setHistoryOpen(false);
+    keeperStatusRef.current='pending';
+    setKeeperStatus('pending');
     setPendingSelection(null);
     setPendingProposal(null);
     setPendingOpenLoading(false);
     setPendingOpenError('');
-    requestPendingList();
+    setDecisionPending(null);
+    setDecisionError('');
+    setDecisionReceipt(null);
+    setDecisionRefreshError('');
+    requestKeeperList('pending');
   },[openPendingNonce]);
 
   useEffect(()=>{
@@ -346,12 +488,14 @@ export function KnowledgeWorkbench({
   const currentPage=Math.min(page,pageCount-1);
   const rows=pageData?.results||[];
   const loadingBlocking=loading&&!pageData&&!searchError;
-  const pendingProposals=pendingData?.proposals||[];
+  const keeperList=keeperData[keeperStatus];
+  const pendingProposals=keeperList?.proposals||[];
   const pendingNeedle=query.trim().toLowerCase();
   const pendingRows=pendingProposals.filter(proposal=>
     (type==='all'||(proposal.changes||[]).some(change=>change.kind===type))
     &&(!pendingNeedle||proposalSearchText(proposal).includes(pendingNeedle)));
-  const pendingLoadingBlocking=pendingLoading&&!pendingData&&!pendingError;
+  const pendingLoadingBlocking=keeperLoading&&!keeperList&&!keeperError;
+  const currentKeeperStatusLabel=KEEPER_STATUS_LABEL[keeperStatus];
   const target=targetOf(relationTarget);
 
   const activeCard=active?.type==='card'
@@ -421,30 +565,53 @@ export function KnowledgeWorkbench({
     window.setTimeout(()=>historyButton.current?.focus(),0);
   };
   const changeType=(next:TypeFilter)=>{focusAfterSearch.current=false;pendingFocusAfterRefresh.current=false;setType(next);setPage(0);if(scope!=='pending')searchNow({query,type:next,scope,relationTarget},0);};
-  const changeScope=(next:ScopeFilter)=>{
-    focusAfterSearch.current=false;
-    pendingFocusAfterRefresh.current=false;
-    pendingRefreshQueued.current=false;
-    setScope(next);
-    setPage(0);
+  const clearDecisionView=()=>{
     setPendingSelection(null);
     setPendingProposal(null);
     setPendingOpenLoading(false);
     setPendingOpenError('');
-    if(next==='pending')requestPendingList();
-    else searchNow({query,type,scope:next,relationTarget},0);
+    setDecisionError('');
+    setDecisionReceipt(null);
+    setDecisionRefreshError('');
+    pendingOpenPending.current=null;
+    decisionRefreshPending.current=null;
+  };
+  const changeScope=(next:ScopeFilter)=>{
+    focusAfterSearch.current=false;
+    pendingFocusAfterRefresh.current=false;
+    keeperRefreshQueued.current={pending:false,approved:false,rejected:false};
+    setScope(next);
+    setPage(0);
+    clearDecisionView();
+    if(next==='pending'){
+      if(keeperData[keeperStatus])setKeeperLoading(false);
+      requestKeeperList(keeperStatus,{silent:!!keeperData[keeperStatus]});
+    }else searchNow({query,type,scope:next,relationTarget},0);
+  };
+  const changeKeeperStatus=(next:KeeperStatus)=>{
+    if(next===keeperStatus)return;
+    pendingFocusAfterRefresh.current=false;
+    keeperStatusRef.current=next;
+    setKeeperStatus(next);
+    clearDecisionView();
+    setKeeperError('');
+    if(keeperData[next])setKeeperLoading(false);
+    requestKeeperList(next,{silent:!!keeperData[next]});
   };
   const changeRelation=(next:string)=>{focusAfterSearch.current=false;setRelationTarget(next);setPage(0);if(scope!=='pending')searchNow({query,type,scope,relationTarget:next},0);};
   const submit=()=>{
     setPage(0);
     if(scope==='pending'){
       pendingFocusAfterRefresh.current=true;
-      requestPendingList();
+      requestKeeperList(keeperStatus);
       return;
     }
     focusAfterSearch.current=true;
     searchNow({query,type,scope,relationTarget},0);
   };
+  const deciding=!!decisionPending
+    &&pendingSelection?.proposal_id===decisionPending.proposal_id
+    &&pendingSelection?.revision===decisionPending.revision;
   const goPage=(next:number)=>{
     const values=latestSearch.current?.values||{query,type,scope,relationTarget};
     setPage(next);
@@ -452,11 +619,44 @@ export function KnowledgeWorkbench({
   };
   const retry=()=>{
     if(scope==='pending'){
-      requestPendingList();
+      requestKeeperList(keeperStatus);
       return;
     }
     const latest=latestSearch.current;
     if(latest)searchNow(latest.values,latest.offset);
+  };
+  const decideProposal=(decision:KeeperDecisionChoice,reason:string)=>{
+    const selected=pendingSelection;
+    const proposal=pendingProposal;
+    if(!selected||!proposal||decisionWork.current||selected.status!=='pending')return;
+    if(proposal.proposal_id!==selected.proposal_id||proposal.status!=='pending')return;
+    const revision=typeof proposal.revision==='number'?proposal.revision:0;
+    if(!Number.isInteger(revision)||revision<1){
+      setDecisionError('提议缺少有效修订，暂不能决定；请重新打开提议核对。');
+      return;
+    }
+    const changes=Array.isArray(proposal.changes)?proposal.changes:[];
+    if(!changes.length){
+      setDecisionError('提议没有可决定的变更。');
+      return;
+    }
+    const expected_versions=changes.map(change=>change.action==='create'?null:change.expected_version);
+    if(expected_versions.some((version,index)=>changes[index].action!=='create'
+      &&!(typeof version==='number'&&Number.isInteger(version)&&version>0))){
+      setDecisionError('提议中的更新或删除缺少固定版本，暂不能决定；请重新打开提议核对。');
+      return;
+    }
+    const operation_id=crypto.randomUUID();
+    const work:KeeperDecisionWork={operation_id,proposal_id:proposal.proposal_id,revision,decision};
+    decisionWork.current=work;
+    setDecisionPending(work);
+    setDecisionError('');
+    const trimmed=reason.trim();
+    onCommand({
+      action:'keeper_decide',schema_version:1,operation_id,
+      proposal_id:proposal.proposal_id,revision,expected_versions,decision,
+      ...(trimmed?{reason:trimmed}:{}),
+    });
   };
 
   return <div className="workbench">
@@ -481,7 +681,7 @@ export function KnowledgeWorkbench({
           {cards.length>0&&<optgroup label="知识卡片">{cards.map(card=><option key={card.card_id} value={`card:${card.card_id}`}>{truncate(card.title)}{card.status==='archived'?'（已归档）':''} · v{card.version}</option>)}</optgroup>}
           {themes.length>0&&<optgroup label="命题">{themes.map(theme=><option key={theme.theme_id} value={`theme:${theme.theme_id}`}>{truncate(theme.judgement)}{theme.status==='archived'?'（已归档）':''} · v{theme.version}</option>)}</optgroup>}
         </select></label>
-        <div className="workbench-filter-actions"><span>{scope==='pending'?'待确认范围按 Keeper 实际返回的提议筛选；不提供审批操作':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?'刷新待确认':'搜索'}</button></div>
+        <div className="workbench-filter-actions"><span>{scope==='pending'?'确认卡按 Keeper 持久状态筛选；在右侧对整组批准或拒绝':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</button></div>
       </form>
       <div className="workbench-create" role="group" aria-label="新建知识库记录">
         <span>新建</span>
@@ -489,27 +689,34 @@ export function KnowledgeWorkbench({
         <button type="button" onClick={()=>startCreate('theme')}>命题</button>
         <button type="button" onClick={()=>startCreate('frontier')}>关注问题</button>
       </div>
+      {scope==='pending'&&<div className="workbench-keeper-tabs" role="tablist" aria-label="确认卡状态">
+        {KEEPER_STATUSES.map(item=><button key={item} type="button" role="tab" aria-selected={keeperStatus===item} className={keeperStatus===item?'selected':''} onClick={()=>changeKeeperStatus(item)}>
+          {KEEPER_STATUS_LABEL[item]}
+          {item==='pending'&&keeperData.pending?` ${keeperData.pending.proposals.length}`:''}
+        </button>)}
+      </div>}
       <p className="workbench-count" aria-live="polite">{scope==='pending'
-        ?(pendingLoading?(pendingData?'正在刷新待确认提议…':'正在读取待确认提议…'):pendingError&&!pendingData?'待确认提议未完成':`共 ${pendingProposals.length} 条待确认提议${pendingRows.length!==pendingProposals.length?` · 当前筛选 ${pendingRows.length} 条`:''}`)
+        ?(keeperLoading?(keeperList?`正在刷新${currentKeeperStatusLabel}提议…`:`正在读取${currentKeeperStatusLabel}提议…`):keeperError&&!keeperList?`${currentKeeperStatusLabel}提议未完成`:`共 ${pendingProposals.length} 条${currentKeeperStatusLabel}提议${pendingRows.length!==pendingProposals.length?` · 当前筛选 ${pendingRows.length} 条`:''}`)
         :<>{loading?'正在搜索…':searchError?'搜索未完成':`共 ${pageData?.total||0} 条`}{!loading&&!searchError&&pageCount>1?` · 第 ${currentPage+1}/${pageCount} 页`:''}</>}</p>
       {scope==='pending'
-        ?(pendingLoadingBlocking?<p className="workbench-status" role="status">正在读取 Keeper 待确认提议…</p>
-          :pendingError&&!pendingData?<div className="workbench-error" role="alert"><p>{pendingError}</p><button type="button" onClick={retry}>重试</button></div>
+        ?(pendingLoadingBlocking?<p className="workbench-status" role="status">正在读取 Keeper {currentKeeperStatusLabel}提议…</p>
+          :keeperError&&!keeperList?<div className="workbench-error" role="alert"><p>{keeperError}</p><button type="button" onClick={retry}>重试</button></div>
           :<>
-            {pendingError&&<div className="workbench-error workbench-error-inline" role="alert"><p>{pendingError}</p><button type="button" onClick={retry}>重试</button></div>}
-            {pendingData&&pendingProposals.length===0?<div className="workbench-empty workbench-pending" role="status">
-              <h3>待确认：当前为空</h3>
-              <p>Keeper 返回的待确认提议为 0 条；这里不会显示未经确认的提议，也不提供审批操作。</p>
+            {keeperError&&<div className="workbench-error workbench-error-inline" role="alert"><p>{keeperError}</p><button type="button" onClick={retry}>重试</button></div>}
+            {keeperList&&pendingProposals.length===0?<div className="workbench-empty workbench-pending" role="status">
+              <h3>{currentKeeperStatusLabel}：当前为空</h3>
+              <p>{keeperStatus==='pending'?'Keeper 返回的待确认提议为 0 条；这里不会显示未经确认的提议。':'该状态没有 Keeper 提议；已批准和已拒绝会保留持久回执供重新打开。'}</p>
             </div>
-            :pendingRows.length===0?<div className="workbench-empty" role="status"><p>{pendingData?`没有匹配当前筛选的待确认提议；实际返回 ${pendingProposals.length} 条。`:'尚未读取待确认提议。'}</p></div>
-            :<ul className="workbench-results" ref={results} aria-label="待确认提议">
+            :pendingRows.length===0?<div className="workbench-empty" role="status"><p>{keeperList?`没有匹配当前筛选的${currentKeeperStatusLabel}提议；实际返回 ${pendingProposals.length} 条。`:`尚未读取${currentKeeperStatusLabel}提议。`}</p></div>
+            :<ul className="workbench-results" ref={results} aria-label={`${currentKeeperStatusLabel}提议`}>
               {pendingRows.map(proposal=>{
                 const changes=Array.isArray(proposal.changes)?proposal.changes:[];
                 const kinds=Array.from(new Set(changes.map(change=>change.kind)));
-                const reason=changes.map(change=>change.reason).find(Boolean);
-                const status=keeperStatusLabel(proposal.status);
+                const persistedDecision=keeperDecisionFromProposal(proposal);
+                const reason=persistedDecision?.reason||changes.map(change=>change.reason).find(Boolean);
+                const status=keeperStatusLabel(proposal.status||persistedDecision?.status);
                 const badge=keeperTestBadge(proposal);
-                const selected=pendingSelection?.proposal_id===proposal.proposal_id;
+                const selected=pendingSelection?.proposal_id===proposal.proposal_id&&pendingSelection.status===keeperStatus;
                 return <li key={proposal.proposal_id}>
                   <button type="button" data-pending-result data-proposal-id={proposal.proposal_id} className={selected?'selected':''} aria-current={selected?true:undefined} onClick={()=>openProposal(proposal)}>
                     <span className="workbench-result-title">{keeperProposalTitle(proposal)}</span>
@@ -550,15 +757,15 @@ export function KnowledgeWorkbench({
         <button type="button" disabled={currentPage>=pageCount-1} onClick={()=>goPage(currentPage+1)}>下一页</button>
       </nav>}
     </section>
-    <section className="workbench-detail" aria-label={scope==='pending'?'待确认提议详情':'知识库详情'}>
+    <section className="workbench-detail" aria-label={scope==='pending'?`Keeper ${currentKeeperStatusLabel}提议详情`:'知识库详情'}>
       {scope==='pending'
         ?(pendingSelection
-          ?<KeeperProposalPanel key={pendingSelection.nonce} proposalId={pendingSelection.proposal_id} proposal={pendingProposal} loading={pendingOpenLoading} error={pendingOpenError} onRetry={retryPendingOpen} onClose={closePendingProposal}/>
+          ?<KeeperProposalPanel key={pendingSelection.nonce} proposalId={pendingSelection.proposal_id} proposal={pendingProposal} loading={pendingOpenLoading} error={pendingOpenError} deciding={deciding} decisionError={decisionError} decisionNotice={decisionRefreshError} receipt={decisionReceipt} onRetry={retryPendingOpen} onDecide={decideProposal} onClose={closePendingProposal}/>
           :<div className="workbench-empty workbench-pending-intro">
-            <h2>Keeper 待确认</h2>
-            <p>左侧列出 Keeper 实际返回的待确认提议。选择一条后，这里显示只读确认卡片：按知识卡片、命题、关注问题分组的变更、变更前/后、理由、固定来源与任务/报道链接。</p>
-            <p>此视图不创建请求，也不提供批准、停止、拒绝或调整操作。</p>
-            {pendingData&&pendingProposals.length>0&&<p>当前有 {pendingProposals.length} 条待确认提议，请从左侧选择。</p>}
+            <h2>Keeper {currentKeeperStatusLabel}</h2>
+            <p>左侧按 Keeper 持久状态列出{currentKeeperStatusLabel}提议，默认打开待确认。选择一条后，这里显示整组确认卡片：按知识卡片、命题、关注问题分组的变更、变更前/后、理由、固定来源与任务/报道链接。</p>
+            <p>{keeperStatus==='pending'?'待确认卡片可对整组批准或拒绝，并填写可选决定理由；批准和拒绝都绑定提议修订与每个对象的固定版本。':'已批准和已拒绝卡片只读显示持久回执；重新打开工作台或切换状态后仍读取同一结果。'}</p>
+            {keeperList&&pendingProposals.length>0&&<p>当前有 {pendingProposals.length} 条{currentKeeperStatusLabel}提议，请从左侧选择。</p>}
           </div>)
         :active?<>
           <header className="workbench-detail-head">
@@ -579,7 +786,7 @@ export function KnowledgeWorkbench({
         </>:<div className="workbench-empty">
           <h2>知识库工作台</h2>
           <p>从左侧选择一条已提交记录，在右侧读取完整版本并编辑、保存或检查来源；也可以新建知识卡片、命题或关注问题。</p>
-          <p>搜索支持当前有效、归档与停用、待确认范围；待确认视图只显示 Keeper 实际返回的待确认提议。</p>
+          <p>搜索支持当前有效、归档与停用、待确认范围；待确认范围按 Keeper 持久状态分为待确认、已批准和已拒绝。</p>
         </div>}
     </section>
   </div>;

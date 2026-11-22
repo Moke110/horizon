@@ -231,8 +231,13 @@ class KnowledgeThemeService:
             raise CommandError("invalid_command", "schema_version and operation_id required")
 
     @staticmethod
-    def _replay(db, command, action):
-        encoded = json.dumps({"action": action, "command": command}, sort_keys=True)
+    def _replay(db, command, action, origin="manual"):
+        request = {"action": action, "command": command}
+        if origin == "keeper":
+            # Trusted attribution is recorded beside, not inside, the command,
+            # so a caller-supplied command field can never claim it.
+            request["origin"] = "keeper"
+        encoded = json.dumps(request, sort_keys=True)
         row = db.execute("SELECT request,result FROM knowledge_theme_operations WHERE operation_id=?",
                          (command["operation_id"],)).fetchone()
         if row:
@@ -247,6 +252,17 @@ class KnowledgeThemeService:
                             "version": theme["version"], "status": theme["status"]})
         except Exception:
             pass  # A disconnected viewer cannot undo committed work.
+
+    def notify_committed(self, theme):
+        """Notify after a trusted caller's group transaction has committed."""
+        self._notify(theme)
+
+    @staticmethod
+    def _event_json(event, origin):
+        # Keeper attribution is trusted caller metadata, not command input.
+        if origin == "keeper":
+            event["origin"] = "keeper"
+        return json.dumps(event)
 
     def history_removed(self, db):
         """Material ids whose pinned snapshots were permanently removed."""
@@ -353,13 +369,33 @@ class KnowledgeThemeService:
 
     def create(self, command, *, token):
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_theme")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "create")
-            if previous is not None:
-                return previous
+            theme, changed = self.apply_in_transaction(
+                db, "create", command, token=token)
+        if changed:
+            self.notify_committed(theme)
+        return theme
+
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual"):
+        """Apply one Theme write on the caller's open transaction.
+
+        ``delete`` and ``archive`` share the public archive semantics and the
+        same operation receipt. The caller owns BEGIN, COMMIT and notification.
+        """
+        self._authorize(token)
+        self._validate_command(command)
+        validate_reason(command.get("reason"), code="invalid_theme")
+        if origin not in ("manual", "keeper"):
+            raise ValueError("Unknown Theme origin")
+        if action == "delete":
+            action = "archive"
+        if action not in ("create", "update", "archive"):
+            raise CommandError("invalid_command", "Unknown Theme action")
+        encoded, previous = self._replay(db, command, action, origin)
+        if previous is not None:
+            return previous, False
+        if action == "create":
             theme_id = str(uuid.uuid4())
             now = int(self.clock())
             fields = self._fields(command, allow_assigned_id=False)
@@ -379,7 +415,7 @@ class KnowledgeThemeService:
                 "evidence": evidence,
                 "evidence_sufficiency": _sufficiency(evidence),
                 "known": True,
-                "origin": "manual",
+                "origin": "keeper" if origin == "keeper" else "manual",
                 "status": "active",
                 "created_at": now,
                 "updated_at": now,
@@ -389,12 +425,56 @@ class KnowledgeThemeService:
             db.execute("INSERT INTO knowledge_theme_operations VALUES(?,?,?)",
                        (command["operation_id"], encoded, json.dumps(theme)))
             db.execute("INSERT INTO knowledge_theme_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({
+                       (command["operation_id"], self._event_json({
                            "schema_version": 1, "type": "knowledge_theme.created",
                            "theme_id": theme_id,
-                           "operation_id": command["operation_id"]})))
-        self._notify(theme)
-        return theme
+                           "operation_id": command["operation_id"]}, origin)))
+            return theme, True
+        theme = self._read(db, command.get("theme_id"))
+        if action == "update":
+            fields = self._fields(command, allow_assigned_id=True)
+            if type(command.get("expected_version")) is not int \
+                    or command["expected_version"] != theme["version"]:
+                self._conflict(command, theme, fields)
+            if theme["status"] == "archived":
+                raise CommandError("invalid_transition", "已归档的命题不能编辑")
+            if "status" in command:
+                raise CommandError("invalid_status", "请用归档操作改变命题状态")
+            if "related_cards" in fields:
+                fields["related_cards"] = self._relations(db, fields["related_cards"])
+            if "evidence" in fields:
+                fields["evidence"] = self._resolve_evidence(
+                    db, theme["theme_id"], fields["evidence"], theme["evidence"])
+            updated = dict(theme)
+            updated["operation_id"] = command["operation_id"]
+            updated.update(fields)
+            updated["evidence_sufficiency"] = _sufficiency(updated["evidence"])
+            updated["known"] = True
+            event_type = "knowledge_theme.updated"
+        else:
+            if type(command.get("expected_version")) is not int \
+                    or command["expected_version"] != theme["version"]:
+                self._conflict(command, theme, {})
+            if theme["status"] == "archived":
+                raise CommandError("invalid_transition", "该命题已归档")
+            updated = dict(theme)
+            updated["operation_id"] = command["operation_id"]
+            updated["status"] = "archived"
+            updated["known"] = False
+            event_type = "knowledge_theme.archived"
+        updated["version"] = theme["version"] + 1
+        updated["updated_at"] = int(self.clock())
+        db.execute("UPDATE knowledge_themes SET result=? WHERE theme_id=?",
+                   (json.dumps(updated), theme["theme_id"]))
+        db.execute("INSERT INTO knowledge_theme_operations VALUES(?,?,?)",
+                   (command["operation_id"], encoded, json.dumps(updated)))
+        db.execute("INSERT INTO knowledge_theme_events(operation_id,event) VALUES(?,?)",
+                   (command["operation_id"], self._event_json({
+                       "schema_version": 1, "type": event_type,
+                       "theme_id": theme["theme_id"],
+                       "operation_id": command["operation_id"],
+                       "version": updated["version"]}, origin)))
+        return updated, True
 
     @classmethod
     def query_all_in_transaction(cls, db):
@@ -517,78 +597,21 @@ class KnowledgeThemeService:
 
     def update(self, command, *, token):
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_theme")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "update")
-            if previous is not None:
-                return previous
-            theme = self._read(db, command.get("theme_id"))
-            fields = self._fields(command, allow_assigned_id=True)
-            if type(command.get("expected_version")) is not int \
-                    or command["expected_version"] != theme["version"]:
-                self._conflict(command, theme, fields)
-            if theme["status"] == "archived":
-                raise CommandError("invalid_transition", "已归档的命题不能编辑")
-            if "status" in command:
-                raise CommandError("invalid_status", "请用归档操作改变命题状态")
-            if "related_cards" in fields:
-                fields["related_cards"] = self._relations(db, fields["related_cards"])
-            if "evidence" in fields:
-                fields["evidence"] = self._resolve_evidence(
-                    db, theme["theme_id"], fields["evidence"], theme["evidence"])
-            updated = dict(theme)
-            updated["operation_id"] = command["operation_id"]
-            updated.update(fields)
-            updated["evidence_sufficiency"] = _sufficiency(updated["evidence"])
-            updated["known"] = True
-            updated["version"] = theme["version"] + 1
-            updated["updated_at"] = int(self.clock())
-            db.execute("UPDATE knowledge_themes SET result=? WHERE theme_id=?",
-                       (json.dumps(updated), theme["theme_id"]))
-            db.execute("INSERT INTO knowledge_theme_operations VALUES(?,?,?)",
-                       (command["operation_id"], encoded, json.dumps(updated)))
-            db.execute("INSERT INTO knowledge_theme_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({
-                           "schema_version": 1, "type": "knowledge_theme.updated",
-                           "theme_id": theme["theme_id"],
-                           "operation_id": command["operation_id"],
-                           "version": updated["version"]})))
-        self._notify(updated)
-        return updated
+            theme, changed = self.apply_in_transaction(
+                db, "update", command, token=token)
+        if changed:
+            self.notify_committed(theme)
+        return theme
 
     def archive(self, command, *, token):
         """Archive a Theme explicitly; the row and its history remain readable."""
         self._authorize(token)
-        self._validate_command(command)
-        validate_reason(command.get("reason"), code="invalid_theme")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            encoded, previous = self._replay(db, command, "archive")
-            if previous is not None:
-                return previous
-            theme = self._read(db, command.get("theme_id"))
-            if type(command.get("expected_version")) is not int \
-                    or command["expected_version"] != theme["version"]:
-                self._conflict(command, theme, {})
-            if theme["status"] == "archived":
-                raise CommandError("invalid_transition", "该命题已归档")
-            updated = dict(theme)
-            updated["operation_id"] = command["operation_id"]
-            updated["status"] = "archived"
-            updated["known"] = False
-            updated["version"] = theme["version"] + 1
-            updated["updated_at"] = int(self.clock())
-            db.execute("UPDATE knowledge_themes SET result=? WHERE theme_id=?",
-                       (json.dumps(updated), theme["theme_id"]))
-            db.execute("INSERT INTO knowledge_theme_operations VALUES(?,?,?)",
-                       (command["operation_id"], encoded, json.dumps(updated)))
-            db.execute("INSERT INTO knowledge_theme_events(operation_id,event) VALUES(?,?)",
-                       (command["operation_id"], json.dumps({
-                           "schema_version": 1, "type": "knowledge_theme.archived",
-                           "theme_id": theme["theme_id"],
-                           "operation_id": command["operation_id"],
-                           "version": updated["version"]})))
-        self._notify(updated)
-        return updated
+            theme, changed = self.apply_in_transaction(
+                db, "archive", command, token=token)
+        if changed:
+            self.notify_committed(theme)
+        return theme

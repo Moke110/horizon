@@ -25,6 +25,7 @@ import copy
 import hmac
 import json
 import re
+import time
 import unicodedata
 import uuid
 from contextlib import contextmanager
@@ -36,6 +37,12 @@ from hostrun.frontier import (
     FrontierService, _validate_constraints, _validate_question,
     _validate_relations, _validate_scope, _validate_status,
 )
+from hostrun.keeper_decisions import (
+    applied_result, apply_order, check_expected_versions, owner_command,
+    owner_operation_id, validate_decision, validate_material_references,
+    validate_relations_against_deletions,
+)
+from hostrun.keeper_evidence_policy import review_policy
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.knowledge_cards import _provenance as _card_provenance
 from hostrun.knowledge_themes import KnowledgeThemeService, _sufficiency
@@ -64,6 +71,7 @@ _FRONTIER_FIELDS = {"question", "scope", "hard_constraints", "relations",
                     "status"}
 _TOP_LEVEL_FIELDS = {"schema_version", "operation_id", "task_id",
                      "task_version", "report_id", "report_version", "groups"}
+_RECONSIDERATION_FIELDS = {"supersedes_proposal_id", "new_evidence_reason"}
 _SOURCE_FIELDS = {"material_id", "material_version", "locator", "excerpt"}
 _EVIDENCE_ERRORS = {"not_found", "version_conflict", "invalid_source",
                     "ambiguous_source", "invalid_material", "snapshot_corrupt",
@@ -173,7 +181,7 @@ def _validate_command(command):
     if type(command.get("schema_version")) is not int \
             or command["schema_version"] != _SCHEMA_VERSION:
         raise CommandError("unsupported_schema", "Unsupported schema_version")
-    if set(command) != _TOP_LEVEL_FIELDS:
+    if set(command) not in (_TOP_LEVEL_FIELDS, _TOP_LEVEL_FIELDS | _RECONSIDERATION_FIELDS):
         raise CommandError("invalid_command", "Command contains unsupported fields")
     try:
         encoded = json.dumps(command, sort_keys=True, ensure_ascii=False)
@@ -214,6 +222,15 @@ def _validate_command(command):
                                    "A target appears more than once in the request")
             targets.add(target)
         normalized_groups.append({"changes": normalized})
+    reconsideration = {}
+    if "supersedes_proposal_id" in command:
+        reconsideration = {
+            "supersedes_proposal_id": _bounded_identifier(
+                command["supersedes_proposal_id"], name="supersedes_proposal_id"),
+            "new_evidence_reason": _bounded_text(
+                command["new_evidence_reason"], name="new_evidence_reason",
+                byte_limit=_MAX_REASON_BYTES),
+        }
     return {
         "schema_version": _SCHEMA_VERSION,
         "operation_id": operation,
@@ -221,7 +238,7 @@ def _validate_command(command):
         "task_version": command["task_version"],
         "report_id": report_id,
         "report_version": command["report_version"],
-        "groups": normalized_groups,
+        "groups": normalized_groups, **reconsideration,
     }
 
 
@@ -258,6 +275,10 @@ class KeeperService:
                    "operation_id TEXT PRIMARY KEY, request TEXT NOT NULL, result TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS keeper_proposals("
                    "proposal_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, result TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS keeper_audit("
+                   "sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+                   "proposal_id TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, "
+                   "event TEXT NOT NULL)")
 
     @contextmanager
     def _connect(self):
@@ -279,6 +300,13 @@ class KeeperService:
             raise PermissionError("A trusted Keeper principal is required")
         if principal.role != "editor" or principal.explicit_test is not True:
             raise PermissionError("This principal cannot submit Keeper requests")
+
+    @staticmethod
+    def _check_explorer(principal):
+        if not isinstance(principal, KeeperPrincipal):
+            raise PermissionError("A trusted Explorer principal is required")
+        if principal.role != "explorer" or principal.explicit_test is not False:
+            raise PermissionError("Only a trusted Explorer can decide Keeper proposals")
 
     @staticmethod
     def _check_pins(db, command):
@@ -405,6 +433,146 @@ class KeeperService:
             self._persist_request(db, receipt, command)
         return _receipt_result(receipt)
 
+    def decide(self, command, *, token, principal=None):
+        """Approve or reject one pending proposal in one atomic transaction."""
+        self._authorize(token)
+        self._check_explorer(principal)
+        command = validate_decision(command)
+        encoded = json.dumps({"action": "decide", "command": command},
+                             sort_keys=True, ensure_ascii=False)
+        notifications = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute(
+                "SELECT request,result FROM keeper_operations WHERE operation_id=?",
+                (command["operation_id"],)).fetchone()
+            if previous is not None:
+                if previous[0] != encoded:
+                    raise CommandError(
+                        "operation_conflict",
+                        "operation_id conflicts with a previous decision")
+                return json.loads(previous[1])
+            row = db.execute("SELECT result FROM keeper_proposals WHERE proposal_id=?",
+                             (command["proposal_id"],)).fetchone()
+            if row is None:
+                raise CommandError("not_found", "Unknown Keeper proposal")
+            proposal = json.loads(row[0])
+            if proposal.get("status") != "pending":
+                raise CommandError("already_decided",
+                                   "Keeper proposal has already been decided")
+            if proposal.get("revision") != command["revision"]:
+                raise CommandError("version_conflict",
+                                   "Keeper proposal revision changed")
+            changes = proposal["changes"]
+            check_expected_versions(command, changes)
+            applied = []
+            if command["decision"] == "approve":
+                request, _ = self._load_request(db, proposal["request_id"])
+                self._check_approval_policy(db, changes, request)
+                validate_relations_against_deletions(changes)
+                validate_material_references(self.materials, db, changes)
+                for change in changes:
+                    if change["action"] == "create":
+                        if self._existing_overlap(db, {"kind": change["kind"], "proposal": change}):
+                            raise CommandError("duplicate_entity", "An equivalent record already exists")
+                        continue
+                    record = self._read_owner(db, change["kind"], change["id"])
+                    if record["version"] != change["expected_version"]:
+                        error = CommandError("version_conflict",
+                                             "Owner version changed")
+                        error.details = {
+                            "kind": change["kind"], "id": change["id"],
+                            "expected_version": change["expected_version"],
+                            "current_version": record["version"],
+                        }
+                        raise error
+                results = {}
+                for index, change in apply_order(changes):
+                    action, prepared = owner_command(
+                        change["kind"], change,
+                        owner_operation_id(command["proposal_id"],
+                                           command["revision"], index))
+                    record, changed = self._apply_owner(
+                        db, change["kind"], action, prepared)
+                    results[index] = applied_result(change["kind"], record)
+                    if changed:
+                        notifications.append((change["kind"], record))
+                applied = [results[index] for index in range(len(changes))]
+            status = "approved" if command["decision"] == "approve" else "rejected"
+            decided_at = int(time.time())
+            result = {
+                "operation_id": command["operation_id"],
+                "decision": command["decision"],
+                "proposal_id": command["proposal_id"],
+                "revision": command["revision"],
+                "status": status,
+                "applied": applied,
+                "decided_at": decided_at,
+            }
+            if "reason" in command:
+                result["reason"] = command["reason"]
+            proposal.update(status=status, decision=result)
+            db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                       (json.dumps(proposal), command["proposal_id"]))
+            db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                       (command["operation_id"], encoded, json.dumps(result)))
+            event = {
+                "schema_version": _SCHEMA_VERSION,
+                "type": "keeper.decision",
+                "operation_id": command["operation_id"],
+                "proposal_id": command["proposal_id"],
+                "revision": command["revision"],
+                "decision": command["decision"],
+                "status": status,
+                "actor": "explorer",
+                "expected_versions": command["expected_versions"],
+                "applied": applied,
+                "decided_at": decided_at,
+            }
+            if "reason" in command:
+                event["reason"] = command["reason"]
+            db.execute("INSERT INTO keeper_audit(proposal_id,operation_id,event) "
+                       "VALUES(?,?,?)",
+                       (command["proposal_id"], command["operation_id"],
+                        json.dumps(event)))
+        for kind, record in notifications:
+            self._notify_owner(kind, record)
+        return result
+
+    @staticmethod
+    def _check_approval_policy(db, changes, request):
+        blocked = review_policy(db, changes, request, require_matching_supersedes=False)
+        if blocked is not None:
+            error = CommandError(blocked["reason"], "Keeper proposal now conflicts with an earlier decision")
+            error.details = blocked
+            raise error
+
+    def _apply_owner(self, db, kind, action, command):
+        service = {"card": self.cards, "theme": self.themes,
+                   "frontier": self.frontiers}[kind]
+        return service.apply_in_transaction(
+            db, action, command, token=self._token, origin="keeper")
+
+    def _notify_owner(self, kind, record):
+        service = {"card": self.cards, "theme": self.themes,
+                   "frontier": self.frontiers}[kind]
+        service.notify_committed(record)
+
+    def audit(self, proposal_id, *, token):
+        """Read the persisted decision audit events for one proposal."""
+        self._authorize(token)
+        if not isinstance(proposal_id, str) or not proposal_id.strip():
+            raise CommandError("not_found", "Unknown Keeper proposal")
+        with self._connect() as db:
+            db.execute("BEGIN")
+            row = db.execute("SELECT 1 FROM keeper_proposals WHERE proposal_id=?",
+                             (proposal_id,)).fetchone()
+            if row is None:
+                raise CommandError("not_found", "Unknown Keeper proposal")
+            rows = db.execute("SELECT event FROM keeper_audit WHERE proposal_id=? "
+                              "ORDER BY sequence", (proposal_id,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
     @staticmethod
     def _load_request(db, request_id):
         row = db.execute("SELECT request,result FROM keeper_requests WHERE request_id=?",
@@ -520,6 +688,10 @@ class KeeperService:
                     if overlap:
                         raise _Returned("duplicate_entity", overlap)
                 entries.append(entry)
+        blocked = review_policy(db, entries, command)
+        if blocked is not None:
+            raise _Returned(blocked["reason"], [{key: value for key, value in blocked.items()
+                                                if key != "reason"}])
         return list(self._components(entries))
 
     @staticmethod
@@ -910,6 +1082,7 @@ class KeeperService:
             "provenance": "editor_test",
             "child_id": receipt.get("child_id"),
             "changes": [copy.deepcopy(entry["proposal"]) for entry in entries],
+            **{field: command[field] for field in _RECONSIDERATION_FIELDS if field in command},
         }
 
     def list(self, *, token, status="pending"):

@@ -140,3 +140,43 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .keeper-source blockquote{margin:6px 0 0;color:#d8dae2;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
 .keeper-empty{margin:16px 0 0}
 @media(max-width:980px){.keeper-proposal-head{flex-direction:column}.keeper-proposal-actions{width:100%;align-items:flex-start}.keeper-badges{justify-content:flex-start}.keeper-values{grid-template-columns:1fr}}
+
+.workbench-keeper-tabs{display:flex;gap:6px;padding:10px 18px;border-bottom:1px solid #303035;background:#17171a}
+.workbench-keeper-tabs button{border:1px solid #3c3d44;border-radius:7px;padding:6px 10px;color:#a9abb5;font-size:12px}
+.workbench-keeper-tabs button:hover{background:#26262b}
+.workbench-keeper-tabs button.selected{background:#2c3242;border-color:#53698f;color:#dce4f7}
+.keeper-decision{border:1px solid #4a5470;border-radius:10px;padding:14px;margin:0 0 18px;background:#1a1d24}
+.keeper-decision h3{margin:0 0 6px;font-size:15px;font-weight:560;line-height:1.5}
+.keeper-decision>p{margin:0 0 10px;color:#a9abb5;font-size:12px;line-height:1.65}
+.keeper-decision-targets{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:5px}
+.keeper-decision-targets li{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px;border:1px solid #34343b;border-radius:7px;padding:7px 9px;background:#18181c;font-size:11.5px;line-height:1.55}
+.keeper-decision-kind{color:#a9bde6}
+.keeper-decision-name{flex:1;min-width:180px;color:#e3e4e9;overflow-wrap:anywhere}
+.keeper-decision-version{color:#8d909a;white-space:nowrap}
+.keeper-decision-reason{display:block;margin:10px 0;color:#b9bbc4;font-size:12px}
+.keeper-decision-reason textarea{display:block;width:100%;min-height:68px;margin-top:5px;resize:vertical}
+.keeper-decision-actions{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.keeper-decision-actions button{border:1px solid #3c3d44;padding:8px 13px;font-size:12.5px}
+.keeper-decision-actions .keeper-approve{background:#4f6da9;border-color:#617dbc;color:#fff}
+.keeper-decision-actions .keeper-approve:hover{background:#5b79b4}
+.keeper-decision-actions .keeper-reject{background:#3a2529;border-color:#70454c;color:#e0b8b8}
+.keeper-decision-actions .keeper-reject:hover{background:#482c31}
+.keeper-decision-actions button:disabled{background:#2a2a2e;border-color:#3c3d44;color:#8d909a}
+.keeper-decision-warning,.keeper-decision-error{border:1px solid #6d4a4a;border-radius:7px;padding:8px 10px;color:#e0b8b8;font-size:12px;line-height:1.65;background:#241b1d}
+.keeper-decision-error p{margin:0}
+.keeper-decision-note{margin:7px 0 0;color:#8d909a;font-size:11.5px;line-height:1.6}
+.keeper-decision-notice{border:1px solid #6a5a3d;border-radius:7px;padding:8px 10px;color:#e7c27d;font-size:12px;line-height:1.65;background:#2a251c;margin:0 0 18px}
+.keeper-decision-notice p{margin:0}
+.keeper-receipt{border:1px solid #4f6a58;border-radius:10px;padding:14px;margin:0 0 18px;background:#1d2822}
+.keeper-receipt-rejected{border-color:#70454c;background:#2a2023}
+.keeper-receipt h3{margin:0 0 5px;font-size:15px;font-weight:560}
+.keeper-receipt>p{margin:0 0 10px;color:#a9abb5;font-size:12px;line-height:1.65}
+.keeper-receipt dl{display:grid;grid-template-columns:minmax(86px,auto) minmax(0,1fr);gap:5px 14px;margin:0 0 10px;font-size:12px;line-height:1.6}
+.keeper-receipt dt{color:#8f929c}
+.keeper-receipt dd{margin:0;overflow-wrap:anywhere}
+.keeper-receipt h4{margin:10px 0 6px;font-size:12px;font-weight:550;color:#b9bbc4}
+.keeper-applied{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.keeper-applied li{display:flex;flex-wrap:wrap;gap:8px;border:1px solid #34343b;border-radius:6px;padding:6px 8px;background:#18181c;font-size:11.5px;line-height:1.5}
+.keeper-applied-id{flex:1;min-width:160px;overflow-wrap:anywhere;color:#d9dbe2}
+.keeper-receipt-empty{margin:0;color:#8d909a;font-size:12px;line-height:1.6}
+@media(max-width:980px){.keeper-decision-targets li{display:grid;grid-template-columns:auto 1fr}.keeper-decision-name{min-width:0}.keeper-decision-version{grid-column:1/-1}.keeper-receipt dl{grid-template-columns:1fr}.keeper-receipt dt{margin-top:5px}}

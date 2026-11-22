@@ -25,7 +25,7 @@ from hostrun.keeper_runtime import KeeperRuntime, review_event, test_principal
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
 
-_AUTHORITY_FIELDS = ('role', 'principal', 'output', 'provenance')
+_AUTHORITY_FIELDS = ('role', 'principal', 'actor', 'output', 'provenance')
 
 
 def keeper_test_requests_enabled():
@@ -42,10 +42,14 @@ def _reject_caller_authority(command, request=None):
 
 
 def keeper_bridge_command(commands, command, *, test_enabled):
-    """Route only the read actions and the explicitly gated test request."""
+    """Route reads, Explorer decisions and the explicitly gated test request."""
     action = command.get('action')
     if action in ('keeper_list', 'keeper_open'):
         return commands.read(command)
+    if action == 'keeper_decide':
+        return commands.decide(command)
+    if action == 'keeper_audit':
+        return commands.audit(command)
     if action == 'keeper_test_request':
         if not test_enabled:
             raise CommandError('invalid_command', 'Keeper test requests are disabled')
@@ -58,7 +62,7 @@ def keeper_bridge_command(commands, command, *, test_enabled):
 
 
 class KeeperCommands:
-    """Read-only Keeper GUI queries plus explicit, asynchronous test review."""
+    """Keeper reads, trusted Explorer decisions and explicit test review."""
 
     def __init__(self, service, runtime, *, token, emit):
         self._service = service
@@ -86,6 +90,98 @@ class KeeperCommands:
             return 'keeper_open', {'operation_id': command.get('operation_id'),
                                    'proposal': proposal}
         raise CommandError('invalid_command', 'Unknown Keeper action')
+
+    @staticmethod
+    def _decide_command(command):
+        """Normalize the Explorer payload; the principal is never caller-supplied."""
+        _reject_caller_authority(command)
+        if type(command.get('schema_version')) is not int \
+                or command['schema_version'] != 1:
+            raise CommandError('unsupported_schema', 'Unsupported schema_version')
+        operation_id = command.get('operation_id')
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise CommandError('invalid_command', 'operation_id is required')
+        proposal_id = command.get('proposal_id')
+        if not isinstance(proposal_id, str) or not proposal_id.strip():
+            raise CommandError('invalid_command', 'proposal_id is required')
+        revision = command.get('revision')
+        if type(revision) is not int or revision < 1:
+            raise CommandError('invalid_command', 'revision must be a positive integer')
+        decision = command.get('decision')
+        if decision not in ('approve', 'reject'):
+            raise CommandError('invalid_command', 'decision must be approve or reject')
+        expected_versions = command.get('expected_versions')
+        if not isinstance(expected_versions, list) or not expected_versions:
+            raise CommandError('invalid_command',
+                               'expected_versions must be a nonempty list')
+        for version in expected_versions:
+            if version is None:
+                continue
+            if type(version) is not int or version < 1:
+                raise CommandError('invalid_command',
+                                   'expected_versions entries must be positive integers or null')
+        payload = {
+            'schema_version': 1, 'operation_id': operation_id,
+            'proposal_id': proposal_id, 'revision': revision,
+            'expected_versions': list(expected_versions), 'decision': decision,
+        }
+        if 'reason' in command:
+            reason = command['reason']
+            if reason is not None and not isinstance(reason, str):
+                raise CommandError('invalid_command', 'reason must be text')
+            if reason is not None:
+                payload['reason'] = reason
+        return payload
+
+    def decide(self, command):
+        """Apply one whole-group Explorer decision under a trusted Explorer principal."""
+        payload = self._decide_command(command)
+        from hostrun.keeper import KeeperPrincipal
+        try:
+            result = self._service().decide(
+                payload, token=self.token,
+                principal=KeeperPrincipal('explorer', False))
+        except CommandError:
+            raise
+        except PermissionError as error:
+            raise CommandError('unauthorized',
+                               'Keeper decision was not authorized') from error
+        except Exception as error:
+            raise CommandError('keeper_failed',
+                               'Keeper decision could not be completed') from error
+        if not isinstance(result, dict):
+            raise CommandError('invalid_response', 'Keeper decision returned no receipt')
+        for field in ('operation_id', 'proposal_id', 'revision', 'decision'):
+            if result.get(field) != payload[field]:
+                raise CommandError('invalid_response',
+                                   'Keeper decision receipt does not match the request')
+        expected_status = 'approved' if payload['decision'] == 'approve' else 'rejected'
+        if result.get('status') != expected_status:
+            raise CommandError('invalid_response',
+                               'Keeper decision receipt has an unexpected status')
+        if not isinstance(result.get('applied'), list):
+            raise CommandError('invalid_response',
+                               'Keeper decision receipt has no applied list')
+        return 'keeper_decide', result
+
+    @staticmethod
+    def _audit_command(command):
+        _reject_caller_authority(command)
+        operation_id = command.get('operation_id')
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise CommandError('invalid_command', 'operation_id is required')
+        proposal_id = command.get('proposal_id')
+        if not isinstance(proposal_id, str) or not proposal_id.strip():
+            raise CommandError('invalid_command', 'proposal_id is required')
+        return operation_id, proposal_id
+
+    def audit(self, command):
+        """Read the persisted decision audit events for one proposal."""
+        operation_id, proposal_id = self._audit_command(command)
+        events = self._service().audit(proposal_id, token=self.token)
+        return 'keeper_audit', {'operation_id': operation_id,
+                                'proposal_id': proposal_id,
+                                'events': events}
 
     def test_request(self, command):
         request = command.get('request')
@@ -619,8 +715,8 @@ def serve(resolved):
                         emit('material_package', package)
                         if action == 'materials_archive':
                             emit('material_archive_list', materials.list_summaries(archived=True, token=token))
-                    elif action in ('keeper_list', 'keeper_open', 'keeper_test_request',
-                                    'keeper_request'):
+                    elif action in ('keeper_list', 'keeper_open', 'keeper_decide',
+                                    'keeper_audit', 'keeper_test_request', 'keeper_request'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         result = keeper_bridge_command(keeper_commands, cmd,
                                                        test_enabled=keeper_test_enabled)
