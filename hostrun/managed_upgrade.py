@@ -67,9 +67,10 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
             directories = record['application_directories']
             previous = json.loads(io_path(code / 'manifest.json').read_text(encoding='utf-8'))
             old_names = [row['path'] for row in previous['files']] + ['manifest.json', '.horizon/current', '.horizon/dist.lock.json']
+            old_name_set = set(old_names)
             old_digests = {}
             # Validate every target before creating any upgrade contents.
-            for name in set(old_names) | set(payloads):
+            for name in old_name_set | set(payloads):
                 path = code / name
                 relative = path.relative_to(root).as_posix()
                 if not dist._safe_relpath(name):
@@ -81,11 +82,11 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                             stat = io_path(path).stat()
                             if inventory.get(relative) != [stat.st_dev, stat.st_ino]:
                                 raise cleanup.InstanceInvalid('Unowned upgrade target')
-                            if name in old_names:
+                            if name in old_name_set:
                                 old_digests[name] = hashlib.sha256(io_path(path).read_bytes()).hexdigest()
                         finally:
                             pin.close()
-                elif name in old_names:
+                elif name in old_name_set:
                     raise cleanup.InstanceInvalid('Missing installed file')
             operation = transaction_id or uuid.uuid4().hex
             if operation in record.get('code_transactions', {}):
@@ -96,11 +97,16 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
             record['upgrade'] = operation
             cleanup._write_registration(registration, record)
 
+            unrecorded_directories = 0
+
             def save():
+                nonlocal unrecorded_directories
                 cleanup._write_registration(registration, record)
+                unrecorded_directories = 0
 
             directory_pins = {}
             def directory(path):
+                nonlocal unrecorded_directories
                 if path in directory_pins:
                     return directory_pins[path]
                 parent = directory(path.parent) if path != code else None
@@ -117,7 +123,11 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 held.callback(pin.close)
                 stat = io_path(path).stat()
                 directories[relative] = [stat.st_dev, stat.st_ino]
-                save()  # A receipt failure leaves an unclaimed empty directory, never adopted.
+                # Unrecorded directory trees contain no file payloads. File content writes and
+                # moves always publish their receipts, including any remaining directories.
+                unrecorded_directories += 1
+                if unrecorded_directories == _BATCH_SIZE:
+                    save()
                 directory_pins[path] = pin
                 return pin
 

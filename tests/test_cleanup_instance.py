@@ -2849,7 +2849,7 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
     module = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
     def package(version):
         files = {**PACKAGE_FILES, 'hostrun/agent_service.py': module,
-                 **{f'hostrun/payload/file-{i:03}.txt': version for i in range(65)}}
+                 **{f'hostrun/payload/dir-{i:03}/file.txt': version for i in range(65)}}
         source = _write_tree(tmp_path.parent / ('source-' + version), files)
         return build(source=source, out=tmp_path.parent / version, version=version,
                      channel='stable', commit='test', compat=_host_compat())
@@ -2885,11 +2885,11 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
         import zipfile
         with zipfile.ZipFile(second['artifact']['path']) as archive:
             assert all((operation / 'new' / name).read_bytes() == archive.read(name) for name in prior_names)
-        assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.1.0' for i in range(65))
+        assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.1.0' for i in range(65))
         AgentService(home, token='test')
         return
     assert result['status'] == 'ok', result
-    assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.2.0' for i in range(65))
+    assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.2.0' for i in range(65))
     AgentService(home, token='test')
     assert len(writes) < 100
 
