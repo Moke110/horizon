@@ -103,11 +103,15 @@ def prepare_synthesis(reports, home, task_id, command, *, token):
 
 
 def commit_synthesis(reports, operation, task_id, command, context, evidence, versions, reposts, result, *, token):
-    if result.get("outcome") == "no_new" and not command.get("expand_known", False):
+    if (result.get("outcome") == "no_new" and not command.get("report_id")
+            and not command.get("expand_known", False)):
         if result.get("claims"):
             raise CommandError("invalid_report", "无新增结果不能包含报道正文")
         return {"outcome": "no_new", "gaps": context["gaps"]}
+    options = {key:command[key] for key in ("expand_known", "retrieval_id") if command.get(key)}
     report = reports.save_synthesis(operation, task_id, command["question"], evidence, versions,
         result.get("claims"), gaps=context["gaps"], reposts=reposts,
-        selected_material_ids=command["material_ids"], token=token)
+        selected_material_ids=command["material_ids"], token=token,
+        report_id=command.get("report_id"), base_version=command.get("base_version"),
+        synthesis_options=options)
     return {"report_id": report["report_id"], "version": report["version"]}

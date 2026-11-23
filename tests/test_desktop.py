@@ -469,3 +469,29 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     assert app.delegate(ask) == saved
     report_id = json.loads(saved["result"])["report_id"]
     assert ReportService(tmp_path, token=token).citation(report_id, task["task_id"], 0, 0, token=token)["segment"] == body
+
+def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypatch):
+    from hostrun import desktop_worker as module
+    from hostrun.agent_service import AgentService
+
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='s')
+    app.service_token = 's'
+    task = app.service.create_task({'schema_version':1,'operation_id':'task','title':'Late PDF'}, token='s')
+    app.task_id = task['task_id']
+    turn = app.service.begin_turn({'schema_version':1,'operation_id':'late','task_id':app.task_id,
+        'expected_version':1,'text':'A queued follow-up'}, token='s')
+    app.turn = {**turn, 'late_editor_input': 'captured-material-id'}
+    app.input_version = turn['input_version']
+    app.version_provider = lambda: {}
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *args, **kwargs: pytest.fail('Started a parent model'))
+    calls = []
+    def delegate(event):
+        calls.append(event)
+        return {'status': 'succeeded', 'result': '{"report_id":"report","version":2}'}
+    monkeypatch.setattr(app, 'delegate', delegate)
+    app.run_agent(turn['text'], turn['session_id'])
+    assert calls == [{'requestId':'late-fulltext-editor','role':'editor','input':'captured-material-id'}]
+    committed, = app.service.list_turns(app.task_id, token='s')
+    assert committed['status'] == 'completed'
+    assert committed['result'] == '{"report_id":"report","version":2}'

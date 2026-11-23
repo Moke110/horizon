@@ -619,3 +619,15 @@ After separating the caption, the maintainer confirmed dragging the global bar. 
 - Passed 98 focused checks, the Agent and Electron source builds, and the desktop TypeScript check. Earlier provider truncation and wrong-locator responses produced no saved report. The passing rerun covered short output and uniquely matched excerpts within the original selected source. The synthesis source context has a 14 KB total budget across readable inputs. The user confirmed visible Electron reading of all three saved reports, the different maturity levels, the expanded known-background label and citation passage opening for both RFCs. Model generation was verified through the desktop worker probe.
 
 - A follow-up review check passed for automatically surfacing a rate-limited retrieval source from selected material provenance and suppressing that retrieval's gaps in another task. The focused report, Voyager and desktop regression run passed 57 checks.
+
+## Editor report feedback and revisions (#216)
+
+Windows development-machine model check: configured DeepSeek Flash used the captured IANA Example Domains page. The follow-up rejected the transfer premise against the source and marked the alleged fee and future date as unsupported, proposing official sources for further retrieval. The same report ID retained its original v1 claims and rating, v2 had no inherited rating, and all 14 v2 citations reopened their exact excerpts. The model key was removed from the isolated test home.
+
+Related source tests: 44 passed, including late full text, replay, rating withdrawal, stale feedback and report conflicts, old-version reads, private desktop worker, scheduling and process behavior. Agent and desktop builds and desktop typecheck passed. The user used the isolated Windows Electron shortcut and confirmed version-specific rating save, the independence of v2 feedback from v1, and rating withdrawal. This visible rating check used prepared reports. Model-driven rewrites were verified separately through the desktop worker.
+
+Scheduled supplement check: DeepSeek Flash revised a stored summary from a supplied fixture PDF in the original plan's task. The plan queue completed only after v2 was stored under the original report ID. Both v2 citations reopened the PDF passage. The plan's coverage and scheduling state were unchanged. The PDF and catalog record were test fixtures; the model call and queue were real.
+
+Integrated synthesis rewrite: DeepSeek Flash compared the two RFC Editor snapshots recorded above and corrected the three-to-two maturity-level change in report `90107b06` v2. The original question, selected material IDs, and v1 remained unchanged. All 19 v2 citations reopened the correct snapshot (5 from RFC 2026 and 14 from RFC 6410). The isolated model credentials were removed after the run.
+
+After combining the final synthesis coverage fix with report versioning, 101 related Python checks passed. The Agent and Electron source builds and desktop TypeScript check also passed.

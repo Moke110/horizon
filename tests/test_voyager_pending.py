@@ -112,6 +112,16 @@ def test_supplement_queues_same_plan_without_advancing_coverage_or_resuming(tmp_
     turn = schedules.bind_run(agent, run, token=TOKEN)
     task = next(item for item in agent.list_tasks(token=TOKEN) if item['task_id']==turn['task_id'])
     materials, request, _, material = pending_material(tmp_path, task)
+    from hostrun.editor_reports import ReportService, report_evidence
+    pending = material_command(materials, dict(action='materials_pending_resolve', schema_version=1,
+        operation_id='summary-first', expected_version=material['version'], decision='authorize_abstract',
+        material_id=material['material_id'], task_id=task['task_id'], confirmed=True,
+        request_id=request['request_id']), token=TOKEN)
+    evidence = report_evidence(materials, material['material_id'], task['task_id'], token=TOKEN)
+    reports = ReportService(tmp_path, token=TOKEN)
+    summary = reports.save('summary-report', task['task_id'], evidence, {},
+                           [{'kind': 'unknown', 'text': '全文未知'}], token=TOKEN)
+    material = pending
     command = dict(action='materials_pending_resolve', schema_version=1, operation_id='pdf-late',
                    decision='supplement', expected_version=material['version'], material_id=material['material_id'],
                    pdf_base64=readable_pdf())
@@ -133,7 +143,18 @@ def test_supplement_queues_same_plan_without_advancing_coverage_or_resuming(tmp_
         expected_version=ended['version'], action='resume'), token=TOKEN)
     (operation, followup), = voyager_late_fulltext.claim(agent, materials, token=TOKEN, occupied=0)
     assert followup['task_id'] == task['task_id'] and followup['turn_id'] != turn['turn_id']
-    assert result['material_id'] in followup['text']
+    import json
+    editor_input = json.loads(followup['late_editor_input'])
+    assert editor_input['report_id'] == summary['report_id'] and editor_input['base_version'] == 1
+    assert editor_input['material_id'] == result['material_id']
+    evidence = report_evidence(materials, result['material_id'], task['task_id'], token=TOKEN)
+    revised = reports.save('late-report', task['task_id'], evidence, {},
+                           [{'kind': 'source', 'text': '全文正文可用。',
+                             'citations': [{'locator':'page 1', 'excerpt':'Verified solar body'}]}],
+                           report_id=summary['report_id'], base_version=1, token=TOKEN)
+    assert revised['version'] == 2
+    assert revised['source']['material_id'] == result['material_id']
+    assert reports.get(summary['report_id'], task['task_id'], version=1, token=TOKEN) == summary
     assert agent.list_schedules(token=TOKEN)[0] == resumed
     assert not schedules.tick(agent, now=70, token=TOKEN)
     assert voyager_late_fulltext.claim(agent, materials, token=TOKEN, occupied=0) == [(operation, followup)]

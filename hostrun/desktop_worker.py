@@ -21,12 +21,21 @@ class DesktopWorker:
         turn = getattr(self, 'turn', None)
         committed = False
         try:
+            if turn and turn.get('late_editor_input'):
+                self._attempt(turn)
+                outcome = self.delegate({'requestId': 'late-fulltext-editor', 'role': 'editor',
+                                         'input': turn['late_editor_input']})
+                if outcome['status'] == 'succeeded' and not self.cancelled.is_set():
+                    self._commit_result(turn, outcome['result'])
+                    committed = True
+                else:
+                    failure = outcome.get('failure')
+                return
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
             turn = getattr(self, 'turn', None)
             if turn:
                 argv.extend(['--turn-id', turn['turn_id']])
-                self.current_snapshots = self.version_provider()
-                self.service.attempt_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'], 'snapshots': self.current_snapshots}, token=self.service_token)
+                self._attempt(turn)
             if session_id is not None and history:
                 argv.append('--history-stdin')
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
@@ -63,7 +72,7 @@ class DesktopWorker:
                 self.events.put(('agent', event))
             code = self.process.wait()
             if not code and completed_text is not None and turn:
-                self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')), 'turn_id':turn['turn_id'], 'expected_version':turn['version'], 'status':'completed','result':completed_text,'error':''},token=self.service_token)
+                self._commit_result(turn, completed_text)
                 committed = True
             if code:
                 self.events.put(('agent', {'type': 'error', 'message': f'Agent 退出 ({code})'}))
@@ -96,6 +105,20 @@ class DesktopWorker:
                     self.process = None
                     self.events.put(('done', {'durable': True} if turn else None))
 
+    def _attempt(self, turn):
+        self.current_snapshots = self.version_provider()
+        self.service.attempt_turn({
+            'schema_version': 1, 'operation_id': str(uuid.uuid4()), 'turn_id': turn['turn_id'],
+            'snapshots': self.current_snapshots,
+        }, token=self.service_token)
+
+    def _commit_result(self, turn, result):
+        self.service.commit_turn({
+            'schema_version': 1, 'operation_id': str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')),
+            'turn_id': turn['turn_id'], 'expected_version': turn['version'],
+            'status': 'completed', 'result': result, 'error': '',
+        }, token=self.service_token)
+
     def delegate(self, event):
         from hostrun.agent_capacity import child_slot
         with child_slot(self.service, self.service_token, self.cancelled):
@@ -121,23 +144,48 @@ class DesktopWorker:
                 event.get('input'), self.task_id, token=self.service_token)
         editor_context = None
         saved_report = None
-        synthesis = None
         if event.get('role') == 'editor':
             from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
                                                 read_report_response, report_evidence)
-            from hostrun.knowledge_workbench import KnowledgeWorkbenchService
             from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis, synthesis_input
-            synthesis = synthesis_input(event.get('input'))
-
+            from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 
             reports = ReportService(self.home, token=self.service_token)
-            saved_report = reports.get_by_operation(operation, self.task_id, synthesis['material_ids'] if synthesis else event.get('input'),
-                                                    token=self.service_token)
+            material_id = event.get('input')
+            synthesis = synthesis_input(material_id)
+            if synthesis and {'report_id', 'base_version'} & synthesis.keys():
+                raise ValueError('Invalid initial synthesis')
+            rewrite = None
+            if synthesis is None and isinstance(material_id, str) and material_id.lstrip().startswith('{'):
+                rewrite = json.loads(material_id)
+                if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
+                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id'}
+                        or not isinstance(rewrite['report_id'], str)
+                        or ('material_id' in rewrite and not isinstance(rewrite['material_id'], str))
+                        or not isinstance(rewrite['question'], str)
+                        or not 1 <= len(rewrite['question'].strip()) <= 2000
+                        or type(rewrite['base_version']) is not int):
+                    raise ValueError('Invalid Editor follow-up')
+                previous = reports.get(rewrite['report_id'], self.task_id,
+                                       version=rewrite['base_version'], token=self.service_token)
+                material_id = rewrite.get('material_id', previous['source']['material_id'])
+                if 'sources' in previous:
+                    if 'material_id' in rewrite:
+                        raise ValueError('A synthesis follow-up cannot replace its source selection')
+                    synthesis = {
+                        **previous.get('synthesis_options', {}),
+                        'material_ids': previous['selected_material_ids'],
+                        'question': previous['title'],
+                        'report_id': rewrite['report_id'],
+                        'base_version': rewrite['base_version'],
+                    }
+            selected = synthesis['material_ids'] if synthesis else material_id
+            saved_report = reports.get_by_operation(operation, self.task_id, selected, token=self.service_token)
             if saved_report is None and synthesis:
                 editor_context, evidence, versions, reposts = prepare_synthesis(
                     reports, self.home, self.task_id, synthesis, token=self.service_token)
             elif saved_report is None:
-                evidence = report_evidence(reports.materials, event.get('input'), self.task_id,
+                evidence = report_evidence(reports.materials, material_id, self.task_id,
                                            token=self.service_token)
                 workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
                 known = workbench.search(token=self.service_token, limit=8)['results']
@@ -145,6 +193,13 @@ class DesktopWorker:
                                           for item in known],
                             'preferences': [DEFAULT_PREFERENCE_VERSION]}
                 editor_context = build_editor_context(evidence, known)
+            if editor_context is not None and rewrite:
+                editor_context['follow_up'] = {
+                    'question': rewrite['question'],
+                    'previous_claims': [
+                        {'kind': claim['kind'], 'text': claim['text'][:240]} for claim in previous['claims'][:8]
+                    ],
+                }
         child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
@@ -215,12 +270,14 @@ class DesktopWorker:
                     if not saw_editor_context:
                         raise RuntimeError('Editor did not read the bound material')
                     if synthesis:
-                        receipt = commit_synthesis(reports, operation, self.task_id, synthesis,
-                            editor_context, evidence, versions, reposts, read_report_response(output, synthesis=True),
-                            token=self.service_token)
+                        receipt = commit_synthesis(
+                            reports, operation, self.task_id, synthesis, editor_context, evidence, versions,
+                            reposts, read_report_response(output, synthesis=True), token=self.service_token)
                     else:
                         report = reports.save(operation, self.task_id, evidence, versions,
-                                              read_report_response(output), token=self.service_token)
+                                              read_report_response(output), token=self.service_token,
+                                              report_id=rewrite['report_id'] if rewrite else None,
+                                              base_version=rewrite['base_version'] if rewrite else None)
                         receipt = {'report_id': report['report_id'], 'version': report['version']}
                     output = json.dumps(receipt, ensure_ascii=False)
             status = 'succeeded'
