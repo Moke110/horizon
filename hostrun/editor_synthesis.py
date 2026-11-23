@@ -4,7 +4,7 @@ import json
 
 from hostrun.agent_service import CommandError
 from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, SYNTHESIS_SOURCE_BUDGET,
-                                    build_editor_context, report_evidence)
+                                    build_editor_context, evidence_provenance, report_evidence)
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.voyager_service import VoyagerService
 
@@ -31,7 +31,7 @@ def synthesis_input(value):
 
 
 def prepare_synthesis(reports, home, task_id, command, *, token):
-    evidence, gaps = [], []
+    evidence, gaps, unavailable_origins = [], [], []
     for mid in command["material_ids"]:
         try:
             evidence.append(report_evidence(reports.materials, mid, task_id, token=token))
@@ -39,11 +39,21 @@ def prepare_synthesis(reports, home, task_id, command, *, token):
             if error.code not in ("report_source_unavailable", "not_found"):
                 raise
             gaps.append({"material_id": mid, "reason": "unavailable"})
+            if error.code == "report_source_unavailable":
+                try:
+                    package = reports.materials.get_package(mid, task_id=task_id, token=token)
+                except CommandError as missing:
+                    if missing.code != "not_found":
+                        raise
+                else:
+                    unavailable_origins.extend(evidence_provenance(package))
     if not evidence:
         raise CommandError("report_source_unavailable", "没有可用于综合的资料")
     reposted = set()
     retrieval_id = command.get("retrieval_id")
     retrievals = {row["request_id"] for item in evidence for row in item["provenance"]}
+    retrievals.update(row["request_id"] for row in unavailable_origins)
+    coverage = []
     if retrieval_id:
         retrievals.add(retrieval_id)
     if retrievals:
@@ -61,14 +71,19 @@ def prepare_synthesis(reports, home, task_id, command, *, token):
             continue
         reposted.update((row["source"], row["source_id"]) for row in request["candidates"]
                         if (row.get("selection_reason") or {}).get("reposted"))
-        if identity == retrieval_id:
-            if request["status"] in ("planned", "running", "cancelled"):
-                gaps.append({"reason": "retrieval_incomplete"})
-            else:
-                gaps.extend({"reason": "retrieval_gap", "source": gap.get("source"),
-                             "detail": gap.get("reason")} for gap in request["gaps"][:12])
-                if len(request["gaps"]) > 12:
-                    gaps.append({"reason": "more_gaps", "count": len(request["gaps"]) - 12})
+        if request["status"] in ("planned", "running", "cancelled"):
+            coverage.append({"reason": "retrieval_incomplete", "retrieval_id": identity,
+                             "detail": request["status"]})
+        else:
+            coverage.extend({"reason": "retrieval_gap", "retrieval_id": identity,
+                             "source": gap.get("source"), "detail": gap.get("reason")}
+                            for gap in request["gaps"])
+            if request["status"] != "complete" and not request["gaps"]:
+                coverage.append({"reason": "retrieval_incomplete", "retrieval_id": identity,
+                                 "detail": request.get("stop_reason") or request["status"]})
+    gaps.extend(coverage[:12])
+    if len(coverage) > 12:
+        gaps.append({"reason": "more_gaps", "count": len(coverage) - 12})
     reposts = [item["material_id"] for item in evidence
                if any((row["source"], row["source_id"]) in reposted for row in item["provenance"])]
     cards = KnowledgeCardService(home, token=token).query(token=token)

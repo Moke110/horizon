@@ -15,6 +15,11 @@ SYNTHESIS_SOURCE_BUDGET = 14_000
 DEFAULT_PREFERENCE_VERSION = {"id": "editor-default", "version": 1}
 
 
+def evidence_provenance(package):
+    return [{"source": item["source"], "source_id": item["source_id"], "request_id": item["request_id"]}
+            for item in (package.get("academic") or {}).get("provenance", [])]
+
+
 def report_evidence(materials, material_id, task_id, *, token):
     package = materials.get_package(material_id, task_id=task_id, token=token)
     academic = package.get("academic")
@@ -40,8 +45,7 @@ def report_evidence(materials, material_id, task_id, *, token):
         "locators": locators,
         "material_id": material_id,
         "evidence_family": (academic or {}).get("identity"),
-        "provenance": [{"source": item["source"], "source_id": item["source_id"], "request_id": item["request_id"]}
-                       for item in (academic or {}).get("provenance", [])],
+        "provenance": evidence_provenance(package),
         "material_version": package["version"],
         "title": package["title"],
         "source": package["source"],
