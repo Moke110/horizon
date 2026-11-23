@@ -101,6 +101,7 @@ def claim(service, materials, *, token, occupied):
                     f"将下列 input 原样交给 editor 子会话生成并保存报道。不得重跑检索、"
                     f"更改覆盖区间或自动投递报道。\ninput: {editor_input}")
             turn = service._begin_turn(db, {'task_id':task_id, 'expected_version':task['version'], 'text':text}, operation)
+            turn['late_editor_input'] = editor_input
             service._persist_turn(db, turn, operation, json.dumps({'late_fulltext':material_id}), action='begin')
             db.execute("UPDATE voyager_late_fulltext SET state='claimed' WHERE operation_id=?", (operation,))
             reserved.add(schedule_id)

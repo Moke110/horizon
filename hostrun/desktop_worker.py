@@ -21,12 +21,21 @@ class DesktopWorker:
         turn = getattr(self, 'turn', None)
         committed = False
         try:
+            if turn and turn.get('late_editor_input'):
+                self._attempt(turn)
+                outcome = self.delegate({'requestId': 'late-fulltext-editor', 'role': 'editor',
+                                         'input': turn['late_editor_input']})
+                if outcome['status'] == 'succeeded' and not self.cancelled.is_set():
+                    self._commit_result(turn, outcome['result'])
+                    committed = True
+                else:
+                    failure = outcome.get('failure')
+                return
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
             turn = getattr(self, 'turn', None)
             if turn:
                 argv.extend(['--turn-id', turn['turn_id']])
-                self.current_snapshots = self.version_provider()
-                self.service.attempt_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'], 'snapshots': self.current_snapshots}, token=self.service_token)
+                self._attempt(turn)
             if session_id is not None and history:
                 argv.append('--history-stdin')
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
@@ -63,7 +72,7 @@ class DesktopWorker:
                 self.events.put(('agent', event))
             code = self.process.wait()
             if not code and completed_text is not None and turn:
-                self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')), 'turn_id':turn['turn_id'], 'expected_version':turn['version'], 'status':'completed','result':completed_text,'error':''},token=self.service_token)
+                self._commit_result(turn, completed_text)
                 committed = True
             if code:
                 self.events.put(('agent', {'type': 'error', 'message': f'Agent 退出 ({code})'}))
@@ -95,6 +104,20 @@ class DesktopWorker:
                 finally:
                     self.process = None
                     self.events.put(('done', {'durable': True} if turn else None))
+
+    def _attempt(self, turn):
+        self.current_snapshots = self.version_provider()
+        self.service.attempt_turn({
+            'schema_version': 1, 'operation_id': str(uuid.uuid4()), 'turn_id': turn['turn_id'],
+            'snapshots': self.current_snapshots,
+        }, token=self.service_token)
+
+    def _commit_result(self, turn, result):
+        self.service.commit_turn({
+            'schema_version': 1, 'operation_id': str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')),
+            'turn_id': turn['turn_id'], 'expected_version': turn['version'],
+            'status': 'completed', 'result': result, 'error': '',
+        }, token=self.service_token)
 
     def delegate(self, event):
         from hostrun.agent_capacity import child_slot
