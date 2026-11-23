@@ -9,7 +9,7 @@ from hostrun.voyager_service import VoyagerService
 TOKEN = 'desktop'
 
 
-def pending_material(home, task=None):
+def pending_material(home, task=None, *, partial=False):
     class Catalog:
         def search(self, query):
             return dict(exhausted=True, next_cursor=None, receipt='receipt', candidates=[
@@ -18,9 +18,16 @@ def pending_material(home, task=None):
     agent = AgentService(home, token=TOKEN)
     if task is None:
         task = agent.create_task(dict(schema_version=1, operation_id='task', title='Research'), token=TOKEN)
-    voyager = VoyagerService(home, token=TOKEN, providers={'crossref':Catalog()})
+    class Limited:
+        def search(self, query):
+            return {'error_code': 'rate_limited'}
+
+    providers = {'crossref': Catalog()}
+    if partial:
+        providers['europepmc'] = Limited()
+    voyager = VoyagerService(home, token=TOKEN, providers=providers)
     plan = voyager.create(dict(schema_version=1, operation_id='plan', task_id=task['task_id'],
-        scope=dict(text='solar', sources=['crossref']),
+        scope=dict(text='solar', sources=list(providers)),
         window=dict(mode='incremental', basis='discovered', from_at=0, until_at=20, overlap_seconds=0)), token=TOKEN)
     candidate = dict(source='crossref', source_id='10.1234/solar', title='Solar observations',
                      abstract='Only a short abstract.', url='https://example.org/solar', doi='10.1234/solar')
@@ -163,3 +170,21 @@ def test_editor_abstract_requires_task_permission_and_stops_opening_after_deleti
     materials.delete_material(material_id, impact['confirmation'], token=TOKEN)
     assert reports.citation(report_id, owner, 0, 0, token=TOKEN) == {'status': 'removed', 'segment': None}
     assert reports.get(report_id, owner, token=TOKEN)['claims'][0]['citations'][0]['excerpt'] == '原摘要不可用'
+
+
+def test_synthesis_includes_verified_same_task_coverage_without_retrieval_hint(tmp_path):
+    from hostrun.editor_reports import ReportService
+    from hostrun.editor_synthesis import prepare_synthesis
+
+    materials, plan, task, pending = pending_material(tmp_path, partial=True)
+    readable = materials.register_text(dict(schema_version=1, operation_id='readable', title='Notes',
+        source_label='Notes', text='Additional observations.'), token=TOKEN)
+    command = {'question': 'What do the observations say?',
+               'material_ids': [readable['material_id'], pending['material_id']]}
+    reports = ReportService(tmp_path, token=TOKEN)
+    same_task, *_ = prepare_synthesis(reports, tmp_path, task['task_id'], command, token=TOKEN)
+    assert any(gap.get('detail') == 'rate_limited' and gap.get('source') == 'europepmc'
+               for gap in same_task['gaps'])
+
+    different_task, *_ = prepare_synthesis(reports, tmp_path, 'other-task', command, token=TOKEN)
+    assert different_task['gaps'] == [{'reason': 'unavailable', 'material_id': pending['material_id']}]

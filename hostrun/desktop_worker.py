@@ -121,15 +121,22 @@ class DesktopWorker:
                 event.get('input'), self.task_id, token=self.service_token)
         editor_context = None
         saved_report = None
+        synthesis = None
         if event.get('role') == 'editor':
             from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
                                                 read_report_response, report_evidence)
             from hostrun.knowledge_workbench import KnowledgeWorkbenchService
+            from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis, synthesis_input
+            synthesis = synthesis_input(event.get('input'))
+
 
             reports = ReportService(self.home, token=self.service_token)
-            saved_report = reports.get_by_operation(operation, self.task_id, event.get('input'),
+            saved_report = reports.get_by_operation(operation, self.task_id, synthesis['material_ids'] if synthesis else event.get('input'),
                                                     token=self.service_token)
-            if saved_report is None:
+            if saved_report is None and synthesis:
+                editor_context, evidence, versions, reposts = prepare_synthesis(
+                    reports, self.home, self.task_id, synthesis, token=self.service_token)
+            elif saved_report is None:
                 evidence = report_evidence(reports.materials, event.get('input'), self.task_id,
                                            token=self.service_token)
                 workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
@@ -207,9 +214,15 @@ class DesktopWorker:
                 if editor_context is not None:
                     if not saw_editor_context:
                         raise RuntimeError('Editor did not read the bound material')
-                    report = reports.save(operation, self.task_id, evidence, versions,
-                                          read_report_response(output), token=self.service_token)
-                    output = json.dumps({'report_id': report['report_id'], 'version': report['version']})
+                    if synthesis:
+                        receipt = commit_synthesis(reports, operation, self.task_id, synthesis,
+                            editor_context, evidence, versions, reposts, read_report_response(output, synthesis=True),
+                            token=self.service_token)
+                    else:
+                        report = reports.save(operation, self.task_id, evidence, versions,
+                                              read_report_response(output), token=self.service_token)
+                        receipt = {'report_id': report['report_id'], 'version': report['version']}
+                    output = json.dumps(receipt, ensure_ascii=False)
             status = 'succeeded'
         except Exception:
             error = 'Child execution failed or was cancelled; completed sibling results are retained.'
