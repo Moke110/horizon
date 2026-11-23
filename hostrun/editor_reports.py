@@ -38,6 +38,9 @@ def report_evidence(materials, material_id, task_id, *, token):
     return {
         "locators": locators,
         "material_id": material_id,
+        "evidence_family": (academic or {}).get("identity"),
+        "provenance": [{"source": item["source"], "source_id": item["source_id"], "request_id": item["request_id"]}
+                       for item in (academic or {}).get("provenance", [])],
         "material_version": package["version"],
         "title": package["title"],
         "source": package["source"],
@@ -49,11 +52,10 @@ def report_evidence(materials, material_id, task_id, *, token):
 
 
 
-def build_editor_context(evidence, known):
+def build_editor_context(evidence, known, *, budget=42_000):
     """Project an explicitly limited prefix of a large captured source."""
     source = {key: evidence[key] for key in ("title", "snapshot", "limitation")}
     locators = []
-    budget = 42_000
     for segment in evidence["locators"]:
         encoded = json.dumps(segment, ensure_ascii=False).encode("utf8")
         if len(encoded) <= budget:
@@ -74,13 +76,14 @@ def build_editor_context(evidence, known):
     return {"source": source, "knowledge": known, "preferences": [DEFAULT_PREFERENCE_VERSION]}
 
 
-def read_report_response(response):
+def read_report_response(response, *, synthesis=False):
     """Parse one JSON object, including provider responses wrapped in a JSON fence."""
     response = response.strip()
     fence = re.fullmatch(r"```(?:json)?[^\S\n]*\n(.*?)\n```", response, re.DOTALL | re.IGNORECASE)
     if fence:
         response = fence[1]
-    return json.loads(response)["claims"]
+    result = json.loads(response)
+    return result if synthesis else result["claims"]
 
 
 class ReportService:
@@ -100,10 +103,33 @@ class ReportService:
             raise PermissionError("Unauthorized Editor command")
 
     def save(self, operation_id, task_id, evidence, context_versions, claims, *, token):
+        return self._save(operation_id, task_id, evidence["title"], [evidence], context_versions, claims,
+                          token=token)
+
+    def save_synthesis(self, operation_id, task_id, question, evidence, context_versions, claims,
+                       *, token, gaps=(), reposts=(), selected_material_ids=None):
+        if not isinstance(question, str) or not question.strip() or len(question) > 500:
+            raise CommandError("invalid_report", "综合报道需要明确的问题")
+        if (not 1 <= len(evidence) <= 4 or (len(evidence) == 1 and not gaps)
+                or len({item["material_id"] for item in evidence}) != len(evidence)):
+            raise CommandError("invalid_report", "请选择两到四份资料")
+        return self._save(operation_id, task_id, question.strip(), evidence, context_versions, claims,
+                          token=token, synthesis=True, gaps=list(gaps), reposts=set(reposts),
+                          selected_material_ids=selected_material_ids)
+
+    def _save(self, operation_id, task_id, title, evidence, context_versions, claims, *, token,
+              synthesis=False, gaps=None, reposts=None, selected_material_ids=None):
         self._authorize(token)
         if not isinstance(claims, list) or not 1 <= len(claims) <= 40:
             raise CommandError("invalid_report", "报道需要至少一条有效判断")
-        request = [task_id, evidence, context_versions, claims]
+        if synthesis:
+            request = [task_id, title, evidence, context_versions, claims, gaps,
+                       sorted(reposts or ()), selected_material_ids]
+        else:
+            original_evidence = {key: value for key, value in evidence[0].items()
+                                 if key not in ("evidence_family", "provenance")}
+            request = [task_id, original_evidence, context_versions, claims]
+        sources = {item["material_id"]: item for item in evidence}
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         with database_connection(self.home) as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -116,40 +142,58 @@ class ReportService:
                     raise CommandError("operation_conflict", "操作标识与已保存报道冲突")
                 return json.loads(previous[1])
 
-            current = report_evidence(self.materials, evidence["material_id"], task_id, token=token)
-            if current != evidence:
-                raise CommandError("version_conflict", "资料或摘要授权已更新，请重新生成报道")
+            for item in evidence:
+                current = report_evidence(self.materials, item["material_id"], task_id, token=token)
+                if current != item:
+                    raise CommandError("version_conflict", "资料或摘要授权已更新，请重新生成报道")
 
             report_id = str(uuid.uuid4())
-            projection = build_editor_context(evidence, [])["source"]
+            budget = 42_000 // len(evidence)
+            projections = {mid: build_editor_context(item, [], budget=budget)["source"]
+                           for mid, item in sources.items()}
+            summaries = [{key: item[key] for key in
+                          ("material_id", "material_version", "snapshot", "source", "title")}
+                         for item in evidence]
             result = {
                 "report_id": report_id, "version": 1, "task_id": task_id,
-                "title": evidence["title"], "context_versions": context_versions,
-                "limitation": projection["limitation"],
-                "source": {key: evidence[key] for key in
-                           ("material_id", "material_version", "snapshot", "source")},
-                "claims": [self._claim(db, claim, evidence, projection, report_id, task_id, token) for claim in claims],
+                "title": title, "context_versions": context_versions,
+                "limitation": next(iter(projections.values()))["limitation"],
+                "source": {key: val for key, val in summaries[0].items() if key != "title"},
             }
+            if synthesis:
+                for summary in summaries:
+                    summary["limitation"] = projections[summary["material_id"]]["limitation"]
+                    summary["repost"] = summary["material_id"] in reposts
+                result.update(sources=summaries, gaps=gaps, limitation=None,
+                              selected_material_ids=selected_material_ids or list(sources))
+            result["claims"] = [self._claim(db, claim, sources, projections, report_id, task_id, token,
+                                            synthesis=synthesis, reposts=reposts, known=context_versions.get('knowledge', []))
+                                for claim in claims]
             db.execute("INSERT INTO editor_reports VALUES(?,?,?,?,?)",
                        (report_id, operation_id, task_id, digest, json.dumps(result, ensure_ascii=False)))
             return result
 
-    def _claim(self, db, claim, evidence, projection, report_id, task_id, token):
+    def _claim(self, db, claim, sources, projections, report_id, task_id, token, *, synthesis, reposts, known):
         if not isinstance(claim, dict):
             raise CommandError("invalid_report", "报道判断必须为结构化对象")
         kind = claim.get("kind")
-        citations = claim.get("citations", [] if kind == "unknown" else None)
-        if (kind not in ("source", "inference", "unknown")
+        citations = claim.get("citations", [] if kind in ("unknown", "known") else None)
+        if (kind not in (("source", "inference", "unknown", "disagreement", "known") if synthesis else ("source", "inference", "unknown"))
                 or not isinstance(claim.get("text"), str) or not claim["text"].strip()
                 or len(claim["text"]) > 4000 or not isinstance(citations, list)
-                or len(citations) > 10 or (kind != "unknown" and not citations)):
+                or len(citations) > 10 or (kind not in ("unknown", "known") and not citations)):
             raise CommandError("invalid_report", "报道判断缺少类型、正文或必要依据")
         references = []
+        independent = []
         for item in citations:
             if (not isinstance(item, dict) or not isinstance(item.get("excerpt"), str)
                     or not item["excerpt"].strip() or len(item["excerpt"]) > 2000
                     or not isinstance(item.get("locator"), str) or len(item["locator"]) > 50):
                 raise CommandError("invalid_report", "引用需要可核对的摘录与定位")
+            mid = item.get("material_id") if synthesis else next(iter(sources))
+            if not isinstance(mid, str) or mid not in sources:
+                raise CommandError("invalid_source", "引用指向未选择的资料")
+            evidence, projection = sources[mid], projections[mid]
             excerpt, locator = item["excerpt"], item["locator"]
             if projection["limitation"] != evidence["limitation"] and not any(
                     ref["locator"] == locator and excerpt in ref["text"] for ref in projection["locators"]):
@@ -164,7 +208,25 @@ class ReportService:
                 db, citation, report_id=report_id, task_id=task_id,
                 abstract_operation=authorization["operation_id"] if authorization else None,
                 token=token))
-        return {"kind": claim["kind"], "text": claim["text"], "citations": references}
+            if synthesis and mid not in reposts:
+                family = evidence["evidence_family"] or evidence["source"]["source_id"]
+                digest = (evidence["snapshot"] or {}).get("content_hash") or hashlib.sha256(
+                    evidence["text"].encode()).hexdigest()
+                if not any(family == old_family or digest == old_digest for old_family, old_digest in independent):
+                    independent.append((family, digest))
+        knowledge = None
+        if kind == "known":
+            knowledge = next((item for item in known if item["id"] == claim.get("knowledge_id")), None)
+            if knowledge is None:
+                raise CommandError("invalid_report", "已知背景必须指向已确认的知识版本")
+        if kind == "disagreement" and len(independent) < 2:
+            raise CommandError("invalid_source", "分歧判断需要至少两份独立来源")
+        result = {"kind": claim["kind"], "text": claim["text"], "citations": references}
+        if knowledge is not None:
+            result["knowledge"] = knowledge
+        if synthesis:
+            result["independent_source_count"] = len(independent)
+        return result
 
     def get_by_operation(self, operation_id, task_id, material_id, *, token):
         self._authorize(token)
@@ -174,7 +236,10 @@ class ReportService:
         if row is None:
             return None
         result = json.loads(row[0])
-        if result["source"]["material_id"] != material_id:
+        expected = material_id if isinstance(material_id, list) else [material_id]
+        actual = result.get("selected_material_ids") or [
+            item["material_id"] for item in result.get("sources", [result["source"]])]
+        if actual != expected:
             raise CommandError("operation_conflict", "操作标识与已保存资料冲突")
         return result
 
