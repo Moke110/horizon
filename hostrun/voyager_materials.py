@@ -599,8 +599,8 @@ def _excerpt_pattern(excerpt):
     return re.compile(r'\s+'.join(re.escape(word) for word in excerpt.split()))
 
 
-def _citation_anchor(material, body, excerpt, locator):
-    """Resolve an excerpt to a particular saved page or paragraph."""
+def citation_anchors(material, body):
+    """Return the saved page or paragraph boundaries used for citations."""
     anchors = (material.get('pdf') or {}).get('anchors') or (material.get('web') or {}).get('anchors')
     if not anchors:
         anchors = [
@@ -608,6 +608,11 @@ def _citation_anchor(material, body, excerpt, locator):
             for index, match in enumerate(re.finditer(r'[^\r\n]+', body), 1)
             if match.group().strip()
         ]
+    return anchors
+
+
+def _citation_anchor(material, body, excerpt, locator):
+    anchors = citation_anchors(material, body)
     locator = locator.strip().lower()
     page = re.fullmatch(r'(?:page\s*:?[ \t]*|第\s*)([0-9]{1,7})\s*(?:页)?', locator)
     if page:

@@ -440,7 +440,7 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
 
     class OwnerInput(io.StringIO):
         def close(self):
-            assert json.loads(self.getvalue())["source"]["text"] == body
+            assert json.loads(self.getvalue())["source"]["locators"] == [{"locator": "p1", "text": body}]
             super().close()
 
     class Process:
@@ -450,7 +450,7 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
             self.stdin = OwnerInput()
             self.stderr = io.StringIO()
             events = [{"type": "tool_result", "name": "editor_context"}] if read else []
-            events.append({"type": "final", "text": json.dumps(answer)})
+            events.append({"type": "final", "text": "```json\n" + json.dumps(answer) + "\n```"})
             self.stdout = io.StringIO("".join(json.dumps(event) + "\n" for event in events))
 
         def wait(self):

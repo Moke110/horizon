@@ -6,7 +6,7 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
-from hostrun.voyager_materials import MaterialsService
+from hostrun.voyager_materials import MaterialsService, citation_anchors
 from hostrun.voyager_material_lifecycle import _record
 
 
@@ -25,7 +25,14 @@ def report_evidence(materials, material_id, task_id, *, token):
         limitation = authorization["limitation"]
     if package.get("archived") or not text.strip():
         raise CommandError("report_source_unavailable", "资料没有可读取的正文")
+    if authorization is None:
+        locators = [{"locator": f"page {anchor['page']}" if 'page' in anchor else anchor['id'],
+                     "text": text[anchor['start']:anchor['end']]}
+                    for anchor in citation_anchors(package, text)]
+    else:
+        locators = [{"locator": "abstract", "text": text}]
     return {
+        "locators": locators,
         "material_id": material_id,
         "material_version": package["version"],
         "title": package["title"],
@@ -35,6 +42,16 @@ def report_evidence(materials, material_id, task_id, *, token):
         "text": text,
         "limitation": limitation,
     }
+
+
+
+def read_report_response(response):
+    """Parse one JSON object, including provider responses wrapped in a JSON fence."""
+    response = response.strip()
+    fence = re.fullmatch(r"```(?:json)?[^\S\n]*\n(.*?)\n```", response, re.DOTALL | re.IGNORECASE)
+    if fence:
+        response = fence[1]
+    return json.loads(response)["claims"]
 
 
 class ReportService:
@@ -83,13 +100,17 @@ class ReportService:
             return result
 
     def _claim(self, db, claim, evidence, material, report_id):
-        if (not isinstance(claim, dict) or claim.get("kind") not in ("source", "inference", "unknown")
+        if not isinstance(claim, dict):
+            raise CommandError("invalid_report", "报道判断必须为结构化对象")
+        kind = claim.get("kind")
+        citations = claim.get("citations", [] if kind == "unknown" else None)
+        if (kind not in ("source", "inference", "unknown")
                 or not isinstance(claim.get("text"), str) or not claim["text"].strip()
-                or len(claim["text"]) > 4000 or not isinstance(claim.get("citations"), list)
-                or len(claim["citations"]) > 10 or (claim["kind"] != "unknown" and not claim["citations"])):
+                or len(claim["text"]) > 4000 or not isinstance(citations, list)
+                or len(citations) > 10 or (kind != "unknown" and not citations)):
             raise CommandError("invalid_report", "报道判断缺少类型、正文或必要依据")
         references = []
-        for item in claim["citations"]:
+        for item in citations:
             if (not isinstance(item, dict) or not isinstance(item.get("excerpt"), str)
                     or not item["excerpt"].strip() or len(item["excerpt"]) > 2000
                     or not isinstance(item.get("locator"), str) or len(item["locator"]) > 50):
