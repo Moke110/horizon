@@ -9,7 +9,7 @@ from hostrun.voyager_service import VoyagerService
 TOKEN = 'desktop'
 
 
-def pending_material(home, task=None):
+def pending_material(home, task=None, *, partial=False):
     class Catalog:
         def search(self, query):
             return dict(exhausted=True, next_cursor=None, receipt='receipt', candidates=[
@@ -18,9 +18,16 @@ def pending_material(home, task=None):
     agent = AgentService(home, token=TOKEN)
     if task is None:
         task = agent.create_task(dict(schema_version=1, operation_id='task', title='Research'), token=TOKEN)
-    voyager = VoyagerService(home, token=TOKEN, providers={'crossref':Catalog()})
+    class Limited:
+        def search(self, query):
+            return {'error_code': 'rate_limited'}
+
+    providers = {'crossref': Catalog()}
+    if partial:
+        providers['europepmc'] = Limited()
+    voyager = VoyagerService(home, token=TOKEN, providers=providers)
     plan = voyager.create(dict(schema_version=1, operation_id='plan', task_id=task['task_id'],
-        scope=dict(text='solar', sources=['crossref']),
+        scope=dict(text='solar', sources=list(providers)),
         window=dict(mode='incremental', basis='discovered', from_at=0, until_at=20, overlap_seconds=0)), token=TOKEN)
     candidate = dict(source='crossref', source_id='10.1234/solar', title='Solar observations',
                      abstract='Only a short abstract.', url='https://example.org/solar', doi='10.1234/solar')
@@ -105,6 +112,16 @@ def test_supplement_queues_same_plan_without_advancing_coverage_or_resuming(tmp_
     turn = schedules.bind_run(agent, run, token=TOKEN)
     task = next(item for item in agent.list_tasks(token=TOKEN) if item['task_id']==turn['task_id'])
     materials, request, _, material = pending_material(tmp_path, task)
+    from hostrun.editor_reports import ReportService, report_evidence
+    pending = material_command(materials, dict(action='materials_pending_resolve', schema_version=1,
+        operation_id='summary-first', expected_version=material['version'], decision='authorize_abstract',
+        material_id=material['material_id'], task_id=task['task_id'], confirmed=True,
+        request_id=request['request_id']), token=TOKEN)
+    evidence = report_evidence(materials, material['material_id'], task['task_id'], token=TOKEN)
+    reports = ReportService(tmp_path, token=TOKEN)
+    summary = reports.save('summary-report', task['task_id'], evidence, {},
+                           [{'kind': 'unknown', 'text': '全文未知'}], token=TOKEN)
+    material = pending
     command = dict(action='materials_pending_resolve', schema_version=1, operation_id='pdf-late',
                    decision='supplement', expected_version=material['version'], material_id=material['material_id'],
                    pdf_base64=readable_pdf())
@@ -126,7 +143,69 @@ def test_supplement_queues_same_plan_without_advancing_coverage_or_resuming(tmp_
         expected_version=ended['version'], action='resume'), token=TOKEN)
     (operation, followup), = voyager_late_fulltext.claim(agent, materials, token=TOKEN, occupied=0)
     assert followup['task_id'] == task['task_id'] and followup['turn_id'] != turn['turn_id']
-    assert result['material_id'] in followup['text']
+    import json
+    editor_input = json.loads(followup['late_editor_input'])
+    assert editor_input['report_id'] == summary['report_id'] and editor_input['base_version'] == 1
+    assert editor_input['material_id'] == result['material_id']
+    evidence = report_evidence(materials, result['material_id'], task['task_id'], token=TOKEN)
+    revised = reports.save('late-report', task['task_id'], evidence, {},
+                           [{'kind': 'source', 'text': '全文正文可用。',
+                             'citations': [{'locator':'page 1', 'excerpt':'Verified solar body'}]}],
+                           report_id=summary['report_id'], base_version=1, token=TOKEN)
+    assert revised['version'] == 2
+    assert revised['source']['material_id'] == result['material_id']
+    assert reports.get(summary['report_id'], task['task_id'], version=1, token=TOKEN) == summary
     assert agent.list_schedules(token=TOKEN)[0] == resumed
     assert not schedules.tick(agent, now=70, token=TOKEN)
     assert voyager_late_fulltext.claim(agent, materials, token=TOKEN, occupied=0) == [(operation, followup)]
+
+
+def test_editor_abstract_requires_task_permission_and_stops_opening_after_deletion(tmp_path):
+    from hostrun.editor_reports import ReportService, report_evidence
+
+    materials, plan, task, material = pending_material(tmp_path)
+    owner = task['task_id']
+    material_id = material['material_id']
+    with pytest.raises(CommandError, match='摘要授权'):
+        report_evidence(materials, material_id, owner, token=TOKEN)
+    material_command(materials, dict(action='materials_pending_resolve', schema_version=1,
+        operation_id='consent', decision='authorize_abstract', expected_version=material['version'],
+        confirmed=True, material_id=material_id, task_id=owner, request_id=plan['request_id']), token=TOKEN)
+    with pytest.raises(CommandError, match='摘要授权'):
+        report_evidence(materials, material_id, 'different-task', token=TOKEN)
+
+    evidence = report_evidence(materials, material_id, owner, token=TOKEN)
+    reports = ReportService(tmp_path, token=TOKEN)
+    report = reports.save('save', owner, evidence, {}, [
+        dict(kind='source', text='已有一份简短摘要。', citations=[
+            dict(locator='abstract', excerpt='Only a short abstract.')])
+    ], token=TOKEN)
+    report_id = report['report_id']
+    assert reports.citation(report_id, owner, 0, 0, token=TOKEN)['segment'] == 'Only a short abstract.'
+    with pytest.raises(CommandError, match='找不到报道'):
+        reports.citation(report_id, 'different-task', 0, 0, token=TOKEN)
+
+    materials.archive_material(material_id, token=TOKEN)
+    impact = materials.deletion_impact(material_id, token=TOKEN)
+    assert any(item['owner_id'].startswith(f'report:{report_id}:') for item in impact['references'])
+    materials.delete_material(material_id, impact['confirmation'], token=TOKEN)
+    assert reports.citation(report_id, owner, 0, 0, token=TOKEN) == {'status': 'removed', 'segment': None}
+    assert reports.get(report_id, owner, token=TOKEN)['claims'][0]['citations'][0]['excerpt'] == '原摘要不可用'
+
+
+def test_synthesis_includes_verified_same_task_coverage_without_retrieval_hint(tmp_path):
+    from hostrun.editor_reports import ReportService
+    from hostrun.editor_synthesis import prepare_synthesis
+
+    materials, plan, task, pending = pending_material(tmp_path, partial=True)
+    readable = materials.register_text(dict(schema_version=1, operation_id='readable', title='Notes',
+        source_label='Notes', text='Additional observations.'), token=TOKEN)
+    command = {'question': 'What do the observations say?',
+               'material_ids': [readable['material_id'], pending['material_id']]}
+    reports = ReportService(tmp_path, token=TOKEN)
+    same_task, *_ = prepare_synthesis(reports, tmp_path, task['task_id'], command, token=TOKEN)
+    assert any(gap.get('detail') == 'rate_limited' and gap.get('source') == 'europepmc'
+               for gap in same_task['gaps'])
+
+    different_task, *_ = prepare_synthesis(reports, tmp_path, 'other-task', command, token=TOKEN)
+    assert different_task['gaps'] == [{'reason': 'unavailable', 'material_id': pending['material_id']}]

@@ -416,3 +416,82 @@ def test_selected_conversation_survives_background_schedule_insertion(tmp_path):
     chats,current=task_snapshot(service,old['task_id'],token='s')
     assert chats[current]['task_id']==old['task_id']
     assert chats[current]['messages'][-1]['text']=='old result'
+
+
+def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_path, monkeypatch):
+    import json
+    from hostrun.agent_service import AgentService
+    from hostrun.editor_reports import ReportService
+    from hostrun.voyager_materials import MaterialsService
+    from hostrun import desktop_worker as module
+
+    app = worker(tmp_path)
+    token = "launch"
+    app.service = AgentService(tmp_path, token=token)
+    app.service_token = token
+    task = app.service.create_task({"schema_version": 1, "operation_id": "parent",
+                                    "title": "Editor test"}, token=token)
+    app.task_id, app.input_version = task["task_id"], task["version"]
+    body = "The original source recorded twelve observations."
+    material = MaterialsService(tmp_path, token=token).register_text(
+        {"schema_version": 1, "operation_id": "source", "title": "Observations",
+         "source_label": "Field notes", "text": body}, token=token)
+    monkeypatch.setattr(module.embedded_agent, "argv", lambda *a, **kw: ["node", "child"])
+
+    class OwnerInput(io.StringIO):
+        def close(self):
+            assert json.loads(self.getvalue())["source"]["locators"] == [{"locator": "p1", "text": body}]
+            super().close()
+
+    class Process:
+        def __init__(self, read):
+            answer = {"claims": [{"kind": "source", "text": "记录包含十二条观察。",
+                                  "citations": [{"locator": "p1", "excerpt": body}]}]}
+            self.stdin = OwnerInput()
+            self.stderr = io.StringIO()
+            events = [{"type": "tool_result", "name": "editor_context"}] if read else []
+            events.append({"type": "final", "text": "```json\n" + json.dumps(answer) + "\n```"})
+            self.stdout = io.StringIO("".join(json.dumps(event) + "\n" for event in events))
+
+        def wait(self):
+            return 0
+
+        def poll(self):
+            return 0
+
+    children = iter([Process(False), Process(True)])
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: next(children))
+    request = {"role": "editor", "input": material["material_id"]}
+    assert app.delegate({**request, "requestId": "unread"})["status"] == "failed"
+    ask = {**request, "requestId": "read"}
+    saved = app.delegate(ask)
+    assert saved["status"] == "succeeded"
+    assert app.delegate(ask) == saved
+    report_id = json.loads(saved["result"])["report_id"]
+    assert ReportService(tmp_path, token=token).citation(report_id, task["task_id"], 0, 0, token=token)["segment"] == body
+
+def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypatch):
+    from hostrun import desktop_worker as module
+    from hostrun.agent_service import AgentService
+
+    app = worker(tmp_path)
+    app.service = AgentService(tmp_path, token='s')
+    app.service_token = 's'
+    task = app.service.create_task({'schema_version':1,'operation_id':'task','title':'Late PDF'}, token='s')
+    app.task_id = task['task_id']
+    turn = app.service.begin_turn({'schema_version':1,'operation_id':'late','task_id':app.task_id,
+        'expected_version':1,'text':'A queued follow-up'}, token='s')
+    app.turn = {**turn, 'late_editor_input': 'captured-material-id'}
+    app.input_version = turn['input_version']
+    app.version_provider = lambda: {}
+    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *args, **kwargs: pytest.fail('Started a parent model'))
+    calls = []
+    def delegate(event):
+        calls.append(event)
+        return {'status': 'succeeded', 'result': '{"report_id":"report","version":2}'}
+    monkeypatch.setattr(app, 'delegate', delegate)
+    app.run_agent(turn['text'], turn['session_id'])
+    assert calls == [{'requestId':'late-fulltext-editor','role':'editor','input':'captured-material-id'}]
+    committed, = app.service.list_turns(app.task_id, token='s')
+    assert committed['status'] == 'completed'
+    assert committed['result'] == '{"report_id":"report","version":2}'

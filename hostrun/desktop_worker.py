@@ -21,12 +21,21 @@ class DesktopWorker:
         turn = getattr(self, 'turn', None)
         committed = False
         try:
+            if turn and turn.get('late_editor_input'):
+                self._attempt(turn)
+                outcome = self.delegate({'requestId': 'late-fulltext-editor', 'role': 'editor',
+                                         'input': turn['late_editor_input']})
+                if outcome['status'] == 'succeeded' and not self.cancelled.is_set():
+                    self._commit_result(turn, outcome['result'])
+                    committed = True
+                else:
+                    failure = outcome.get('failure')
+                return
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
             turn = getattr(self, 'turn', None)
             if turn:
                 argv.extend(['--turn-id', turn['turn_id']])
-                self.current_snapshots = self.version_provider()
-                self.service.attempt_turn({'schema_version':1,'operation_id':str(uuid.uuid4()),'turn_id':turn['turn_id'], 'snapshots': self.current_snapshots}, token=self.service_token)
+                self._attempt(turn)
             if session_id is not None and history:
                 argv.append('--history-stdin')
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
@@ -63,7 +72,7 @@ class DesktopWorker:
                 self.events.put(('agent', event))
             code = self.process.wait()
             if not code and completed_text is not None and turn:
-                self.service.commit_turn({'schema_version':1,'operation_id':str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')), 'turn_id':turn['turn_id'], 'expected_version':turn['version'], 'status':'completed','result':completed_text,'error':''},token=self.service_token)
+                self._commit_result(turn, completed_text)
                 committed = True
             if code:
                 self.events.put(('agent', {'type': 'error', 'message': f'Agent 退出 ({code})'}))
@@ -96,6 +105,20 @@ class DesktopWorker:
                     self.process = None
                     self.events.put(('done', {'durable': True} if turn else None))
 
+    def _attempt(self, turn):
+        self.current_snapshots = self.version_provider()
+        self.service.attempt_turn({
+            'schema_version': 1, 'operation_id': str(uuid.uuid4()), 'turn_id': turn['turn_id'],
+            'snapshots': self.current_snapshots,
+        }, token=self.service_token)
+
+    def _commit_result(self, turn, result):
+        self.service.commit_turn({
+            'schema_version': 1, 'operation_id': str(uuid.uuid5(uuid.UUID(self.task_id), turn['turn_id'] + ':complete')),
+            'turn_id': turn['turn_id'], 'expected_version': turn['version'],
+            'status': 'completed', 'result': result, 'error': '',
+        }, token=self.service_token)
+
     def delegate(self, event):
         from hostrun.agent_capacity import child_slot
         with child_slot(self.service, self.service_token, self.cancelled):
@@ -119,6 +142,65 @@ class DesktopWorker:
             from hostrun.voyager_service import VoyagerService
             voyager_context = child_evidence(VoyagerService(self.home, token=self.service_token),
                 event.get('input'), self.task_id, token=self.service_token)
+        editor_context = None
+        saved_report = None
+        if event.get('role') == 'editor':
+            from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
+                                                read_report_response, report_evidence)
+            from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis, synthesis_input
+            from hostrun.knowledge_workbench import KnowledgeWorkbenchService
+
+            reports = ReportService(self.home, token=self.service_token)
+            material_id = event.get('input')
+            synthesis = synthesis_input(material_id)
+            if synthesis and {'report_id', 'base_version'} & synthesis.keys():
+                raise ValueError('Invalid initial synthesis')
+            rewrite = None
+            if synthesis is None and isinstance(material_id, str) and material_id.lstrip().startswith('{'):
+                rewrite = json.loads(material_id)
+                if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
+                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id'}
+                        or not isinstance(rewrite['report_id'], str)
+                        or ('material_id' in rewrite and not isinstance(rewrite['material_id'], str))
+                        or not isinstance(rewrite['question'], str)
+                        or not 1 <= len(rewrite['question'].strip()) <= 2000
+                        or type(rewrite['base_version']) is not int):
+                    raise ValueError('Invalid Editor follow-up')
+                previous = reports.get(rewrite['report_id'], self.task_id,
+                                       version=rewrite['base_version'], token=self.service_token)
+                material_id = rewrite.get('material_id', previous['source']['material_id'])
+                if 'sources' in previous:
+                    if 'material_id' in rewrite:
+                        raise ValueError('A synthesis follow-up cannot replace its source selection')
+                    synthesis = {
+                        **previous.get('synthesis_options', {}),
+                        'material_ids': previous['selected_material_ids'],
+                        'question': previous['title'],
+                        'report_id': rewrite['report_id'],
+                        'base_version': rewrite['base_version'],
+                    }
+            selected = synthesis['material_ids'] if synthesis else material_id
+            saved_report = reports.get_by_operation(operation, self.task_id, selected, token=self.service_token)
+            if saved_report is None and synthesis:
+                editor_context, evidence, versions, reposts = prepare_synthesis(
+                    reports, self.home, self.task_id, synthesis, token=self.service_token)
+            elif saved_report is None:
+                evidence = report_evidence(reports.materials, material_id, self.task_id,
+                                           token=self.service_token)
+                workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
+                known = workbench.search(token=self.service_token, limit=8)['results']
+                versions = {'knowledge': [{key: item[key] for key in ('kind', 'id', 'version')}
+                                          for item in known],
+                            'preferences': [DEFAULT_PREFERENCE_VERSION]}
+                editor_context = build_editor_context(evidence, known)
+            if editor_context is not None and rewrite:
+                editor_context['follow_up'] = {
+                    'question': rewrite['question'],
+                    'previous_claims': [
+                        {'kind': claim['kind'], 'text': claim['text'][:240]} for claim in previous['claims'][:8]
+                    ],
+                }
+        child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
         else:
@@ -135,47 +217,69 @@ class DesktopWorker:
         status, error = 'failed', ''
         child_failure = None
         saw_voyager_context = False
+        saw_editor_context = False
         try:
             if self.cancelled.is_set():
                 raise RuntimeError('Task cancelled')
-            task = ('Use voyager_context to return an evidence package for this retrieval.'
-                    if voyager_context is not None else child['input_text'])
-            argv = embedded_agent.argv(self.home, task, kind='agent',
-                code=Path(self.resolved['code']), session_id=child['session_id'])
-            argv.extend(['--child-role', child['role']])
-            context_pipe = subprocess.PIPE if voyager_context is not None else subprocess.DEVNULL
-            self.child_process = subprocess.Popen(argv, cwd=self.resolved['code'],
-                env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=context_pipe,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            self.record_diagnostic('child_started', child_id=child['child_id'], session_id=child['session_id'],
-                                   pid=getattr(self.child_process, 'pid', None), parent_pid=os.getpid())
-            threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
-            if voyager_context is not None:
-                self.child_process.stdin.write(json.dumps(voyager_context, ensure_ascii=False) + '\n')
-                self.child_process.stdin.close()
-            if self.cancelled.is_set():
-                self.child_process.terminate()
-            for line in self.child_process.stdout:
-                try: item = json.loads(line)
-                except ValueError: continue
-                if item.get('type') in ('retry', 'error'):
-                    self.record_diagnostic(item['type'], child_id=child['child_id'],
-                                           **{k:v for k,v in item.items() if k != 'type'})
-                if item.get('type') == 'error':
-                    child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
-                if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
-                if item.get('type') == 'tool_result':
-                    if item.get('name') == 'voyager_context' and not item.get('isError'):
-                        saw_voyager_context = True
-                    self.events.put(('agent', {'type': 'tool_result', 'name': child['role'] + ': ' + str(item.get('name')), 'isError': item.get('isError', False)}))
-            exit_code = self.child_process.wait()
-            if exit_code or self.cancelled.is_set() or not output.strip():
-                raise RuntimeError('Child failed or cancelled')
-            if voyager_context is not None:
-                if not saw_voyager_context:
-                    raise RuntimeError('Voyager did not read the bound retrieval')
-                output = json.dumps({'evidence': voyager_context, 'analysis': output[:12000]}, ensure_ascii=False)
+            if saved_report is not None:
+                output = json.dumps({'report_id': saved_report['report_id'],
+                                     'version': saved_report['version']})
+            else:
+                task = ('Use voyager_context to return an evidence package for this retrieval.'
+                        if voyager_context is not None else 'Read editor_context and return the report JSON.'
+                        if editor_context is not None else child['input_text'])
+                argv = embedded_agent.argv(self.home, task, kind='agent',
+                    code=Path(self.resolved['code']), session_id=child['session_id'])
+                argv.extend(['--child-role', child['role']])
+                context_pipe = subprocess.PIPE if child_context is not None else subprocess.DEVNULL
+                self.child_process = subprocess.Popen(argv, cwd=self.resolved['code'],
+                    env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=context_pipe,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                self.record_diagnostic('child_started', child_id=child['child_id'], session_id=child['session_id'],
+                                       pid=getattr(self.child_process, 'pid', None), parent_pid=os.getpid())
+                threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
+                if child_context is not None:
+                    self.child_process.stdin.write(json.dumps(child_context, ensure_ascii=False) + '\n')
+                    self.child_process.stdin.close()
+                if self.cancelled.is_set():
+                    self.child_process.terminate()
+                for line in self.child_process.stdout:
+                    try: item = json.loads(line)
+                    except ValueError: continue
+                    if item.get('type') in ('retry', 'error'):
+                        self.record_diagnostic(item['type'], child_id=child['child_id'],
+                                               **{k:v for k,v in item.items() if k != 'type'})
+                    if item.get('type') == 'error':
+                        child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
+                    if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
+                    if item.get('type') == 'tool_result':
+                        if item.get('name') == 'voyager_context' and not item.get('isError'):
+                            saw_voyager_context = True
+                        if item.get('name') == 'editor_context' and not item.get('isError'):
+                            saw_editor_context = True
+                        self.events.put(('agent', {'type': 'tool_result', 'name': child['role'] + ': ' + str(item.get('name')), 'isError': item.get('isError', False)}))
+                exit_code = self.child_process.wait()
+                if exit_code or self.cancelled.is_set() or not output.strip():
+                    raise RuntimeError('Child failed or cancelled')
+                if voyager_context is not None:
+                    if not saw_voyager_context:
+                        raise RuntimeError('Voyager did not read the bound retrieval')
+                    output = json.dumps({'evidence': voyager_context, 'analysis': output[:12000]}, ensure_ascii=False)
+                if editor_context is not None:
+                    if not saw_editor_context:
+                        raise RuntimeError('Editor did not read the bound material')
+                    if synthesis:
+                        receipt = commit_synthesis(
+                            reports, operation, self.task_id, synthesis, editor_context, evidence, versions,
+                            reposts, read_report_response(output, synthesis=True), token=self.service_token)
+                    else:
+                        report = reports.save(operation, self.task_id, evidence, versions,
+                                              read_report_response(output), token=self.service_token,
+                                              report_id=rewrite['report_id'] if rewrite else None,
+                                              base_version=rewrite['base_version'] if rewrite else None)
+                        receipt = {'report_id': report['report_id'], 'version': report['version']}
+                    output = json.dumps(receipt, ensure_ascii=False)
             status = 'succeeded'
         except Exception:
             error = 'Child execution failed or was cancelled; completed sibling results are retained.'
