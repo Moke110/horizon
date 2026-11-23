@@ -1,13 +1,6 @@
-/* The caption buttons occupy the right edge of the viewport, outside the
-   titlebar-area rectangle supplied by Chromium. Leave their native hit zone free. */
-.windows-caption .shell > main > header {
+/* Reserve the native caption buttons to the right of the drag region. */
+.windows-caption .window-bar {
   min-height: env(titlebar-area-height, 44px);
   padding-right: calc(12px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 144px)));
   app-region: drag;
-}
-.windows-caption .shell > aside > .brand {
-  app-region: drag;
-}
-.windows-caption .shell > main > header button {
-  app-region: no-drag;
 }
