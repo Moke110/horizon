@@ -2554,7 +2554,8 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     ('code_move', 'wrong_artifact'),
     *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32, 33, 256, 257)],
     ('batch_old_16', 'code_replacement'), ('batch_new_16', 'code_replacement'),
-    ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit')])
+    ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit'),
+    ('batch_new_257', 'recover_exit_256'), ('batch_new_257', 'recover_exit_257')])
 def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damage):
     import json
     import os
@@ -2657,16 +2658,21 @@ print({key: result.get(key) for key in ('status', 'reason', 'recovery')}, flush=
     repository = Path(__file__).resolve().parents[1]
     shutil.copytree(repository / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copyfile(repository / 'common.py', tool / 'common.py')
-    if damage == 'recover_exit':
+    if damage and damage.startswith('recover_exit'):
+        recovery_position = int(damage.rsplit('_', 1)[-1]) if damage != 'recover_exit' else 1
         recovery_script = '''
 import ctypes,os,sys
 from hostrun.managed_upgrade_operation import recover_upgrade
 native=ctypes.WinDLL
 kernel=native('kernel32',use_last_error=True)
+rename_count=0
 def set_info(*args):
+    global rename_count
     kernel.SetFileInformationByHandle.argtypes=set_info.argtypes
     result=kernel.SetFileInformationByHandle(*args)
-    if args[1]==3 and result: os._exit(78)
+    if args[1]==3 and result:
+        rename_count += 1
+        if rename_count == int(sys.argv[4]): os._exit(78)
     return result
 class Proxy:
     def __getattr__(self,name):
@@ -2674,7 +2680,7 @@ class Proxy:
 ctypes.WinDLL=lambda name,*a,**kw: Proxy() if name=='kernel32' else native(name,*a,**kw)
 recover_upgrade(sys.argv[1],sys.argv[2],sha256=sys.argv[3])
 '''
-        interrupted = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', recovery_script, str(code), str(home), digest],
+        interrupted = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', recovery_script, str(code), str(home), digest, str(recovery_position)],
                                      cwd=tool, env={**os.environ, 'PYTHONPATH': str(tool)}, capture_output=True, timeout=15)
         assert interrupted.returncode == 78, interrupted.stderr
         damage = None
