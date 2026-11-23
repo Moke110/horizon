@@ -161,13 +161,13 @@ Release builds require the compiled agent and both bundled runtimes.
 
 Double-click the `Horizon.lnk` shortcut for everyday startup. The extension starts with a lowercase L; Windows usually hides it. Run `scripts/install-desktop.ps1` to regenerate it; add `-ShortcutDirectory <folder>` to also create a “启动 Horizon” shortcut in that folder. Source startup requires Python and an installed, built `desktop/`; Tkinter is not required.
 
-`Horizon.cmd` remains the CLI entry. Without arguments it also starts the GUI, but may briefly show a console. Chat with the embedded Agent in the center, switch conversations on the left, and configure the model using Settings. The desktop Console tab is inactive; use the standalone CLI Console for legacy commands. Enter sends; Shift+Enter inserts a newline. Stop cancels the active Agent. Conversations stay in `%LOCALAPPDATA%/Horizon/data/horizon.sqlite3`. Set `HORIZON_DATA_HOME` to an absolute path to choose another data directory; changing installation directories preserves the same data home. Existing workspaces are not imported.
+`Horizon.cmd` remains the CLI entry. Without arguments it also starts the GUI, but may briefly show a console. Chat with the embedded Agent in the center, switch conversations on the left, and configure the model using Settings. Use the standalone CLI Console for legacy commands. Enter sends; Shift+Enter inserts a newline. Stop cancels the active Agent. Conversations stay in `%LOCALAPPDATA%/Horizon/data/horizon.sqlite3`. Set `HORIZON_DATA_HOME` to an absolute path to choose another data directory; changing installation directories preserves the same data home. Existing workspaces are not imported.
 
-On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horizon/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the window keeps the application running in the tray. Use Exit and pause to stop its workers.
+On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horizon/desktop-runtime/` to avoid Windows sandbox startup failures on workspace disks. Code, configuration and archives stay in their original locations; the renderer sandbox stays enabled. Closing the window keeps the application running in the tray. Use Exit Horizon to stop its workers.
 
 Open Automatic tasks to create, edit, pause or resume a plan. Supply an explicit task scope and interval; these development scopes are separate from Knowledge Base Frontiers. The default execution limits are two main tasks and four child agents, adjustable in the same panel. Work from one plan runs serially, and paused work blocks that plan until continued or abandoned. Missed triggers merge into one run; declared execution coverage is retained across restarts. It is not proof of source retrieval. Missing or invalid coverage declarations hold the run for review; abandon that run to pause the plan without advancing its covered range.
 
-The Trace view records generation and delivery separately. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
+The Trace tab is currently empty. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
 
 Open **Materials** to paste text, give it a title and source label, and register it offline without model credentials. Select a saved material to read its exact original text and source identity, receipt time, SHA-256 and extraction version. Generated summaries appear separately; registration does not generate one or contact a remote service. Originals remain available independently of conversations.
 
@@ -181,7 +181,7 @@ For a page that renders its public article with JavaScript, select **使用浏�
 
 ### Desktop development
 
-Choose Exit and pause before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
+Choose Exit Horizon before running a newer setup installer. The installer uses its own bundled runtime, backs up the existing data home, and keeps your conversations in the same location. It refuses to replace an active desktop installation.
 
 Run `npm ci`, `npm run typecheck` and `npm run build` in `desktop/`, then open the shortcut or run `python -m hostrun.desktop --code <code> --archive <archive>`. Python owns a token-authenticated loopback bridge and the Windows process job. Startup errors are recorded in `.horizon/desktop-error.log`; Electron logs are in `<data-home>/desktop-electron.log`.
 
@@ -189,13 +189,13 @@ Desktop conversations retain their model context when you continue a completed t
 
 Model setup: choose a provider and enter its API key. Horizon queries the provider for models visible to that credential; choose a model in the lower-right conversation menu. Refresh reloads the list without re-entering the key. An advertised model may still require account permissions or quota. Custom OpenAI-compatible services additionally require their API base URL.
 
-The built-in Agent can delegate bounded development-tool tasks to independent child sessions. The Trace tab shows their role, parent/child session identities, input version, stable result reference and success or failure. After running an explicit Voyager retrieval attached to the current task, select **在对话中整理 Voyager 资料包** and send the prepared message. The Voyager child summarizes candidate metadata, captured snapshot references and coverage gaps. Open the referenced materials to read the source text and verify claims.
+The built-in Agent can delegate bounded development-tool tasks to independent child sessions. After running an explicit Voyager retrieval attached to the current task, select **在对话中整理 Voyager 资料包** and send the prepared message. The Voyager child summarizes candidate metadata, captured snapshot references and coverage gaps. Open the referenced materials to read the source text and verify claims.
 
-Desktop conversations recover unfinished turns after an unexpected process exit. Committed child results are reused. This development stage exposes read-only and restricted child tools for recoverable turns; legacy mutating workflows are not automatically replayed. The Trace tab separates execution from material waiting, knowledge proposals and delivery.
+Desktop conversations recover unfinished turns after an unexpected process exit. Committed child results are reused. This development stage exposes read-only and restricted child tools for recoverable turns; legacy mutating workflows are not automatically replayed.
 
-Closing the window keeps Horizon running in the tray. Choose Exit and pause to stop; paused tasks require Continue in Trace after reopening. Abandon cancels unfinished work while preserving completed results.
+Closing the window keeps Horizon running in the tray. Choose Exit Horizon to stop.
 
-Temporary model failures use bounded retries. Trace shows authentication, configuration, quota or other error categories and retains completed results. After correcting the problem, Continue retries unfinished work in the same task.
+Temporary model failures use bounded retries.
 
 Use **Export diagnostics** in the desktop header to create a local report folder. It contains bounded lifecycle/task/error metadata, versions and task-state summaries. It excludes API keys, configuration files, conversation and document text, databases and Pi transcripts; nothing is uploaded automatically. Reports are stored under the data home’s `diagnostics/reports/` directory. If the GUI cannot start, the installed runtime can export with `runtime/python.exe -m hostrun.diagnostics --code <installation> --output <report-directory>`.
 

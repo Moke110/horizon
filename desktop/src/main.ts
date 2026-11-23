@@ -16,6 +16,18 @@ const requestExit=()=>bridge.write(JSON.stringify({action:'exit'})+'\n');
 let win: BrowserWindow; let ready=false; const pending:unknown[]=[];
 const send=(event:unknown)=>{if(ready)win.webContents.send('event',event);else pending.push(event);};
 createInterface({input:bridge}).on('line',line=>{try {const e=JSON.parse(line); if(e.kind==='private_pdf'){selectOriginal(e.data);return;} if(e.kind==='exit_ready'){quitNow();}else if(e.kind==='activate'){win?.restore();win?.show();win?.focus();}else send(e);}catch{}}).on('close',quitNow);
+function showWindow() {
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+function optionsItems(): Electron.MenuItemConstructorOptions[] {
+  return [
+    {label:'模型设置',click:()=>{showWindow();send({kind:'open_settings'});}},
+    {label:'导出诊断',click:()=>{showWindow();bridge.write(JSON.stringify({action:'export_diagnostics'})+'\n');}},
+    {label:'退出Horizon',click:requestExit},
+  ];
+}
 ipcMain.on('command',async(event,value)=>{
  if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
  if(value?.action==='choose_pdf'||value?.action==='choose_pending_pdf'){
@@ -41,10 +53,10 @@ ipcMain.on('command',async(event,value)=>{
 app.whenReady().then(()=>{serveReader();win=new BrowserWindow({
   ...(process.platform === 'win32' ? {
     titleBarStyle: 'hidden' as const,
-    titleBarOverlay: {color: '#141416', symbolColor: '#e8e8eb', height: 44},
+    titleBarOverlay: {color: '#1d1d20', symbolColor: '#e8e8eb', height: 44},
   } : {}),
   width:1440,height:940,minWidth:900,minHeight:620,backgroundColor:'#141416',title:'Horizon',autoHideMenuBar:true,webPreferences:{preload:join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
-tray=new Tray(nativeImage.createFromBitmap(Buffer.from(Array.from({length:16*16},()=>[200,135,105,255]).flat()),{width:16,height:16}));tray.setToolTip('Horizon');tray.setContextMenu(Menu.buildFromTemplate([{label:'打开 Horizon',click:()=>{win.show();win.focus();}},{label:'退出 Horizon（暂停任务）',click:requestExit}]));tray.on('double-click',()=>{win.show();win.focus();});
+tray=new Tray(nativeImage.createFromBitmap(Buffer.from(Array.from({length:16*16},()=>[200,135,105,255]).flat()),{width:16,height:16}));tray.setToolTip('Horizon');tray.setContextMenu(Menu.buildFromTemplate([{label:'打开 Horizon',click:showWindow},{type:'separator'},...optionsItems()]));tray.on('double-click',()=>{win.show();win.focus();});
 win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});
 win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());
 win.webContents.once('did-finish-load',()=>{ready=true;pending.splice(0).forEach(send);});
