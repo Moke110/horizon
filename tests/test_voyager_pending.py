@@ -130,3 +130,36 @@ def test_supplement_queues_same_plan_without_advancing_coverage_or_resuming(tmp_
     assert agent.list_schedules(token=TOKEN)[0] == resumed
     assert not schedules.tick(agent, now=70, token=TOKEN)
     assert voyager_late_fulltext.claim(agent, materials, token=TOKEN, occupied=0) == [(operation, followup)]
+
+
+def test_editor_abstract_requires_task_permission_and_stops_opening_after_deletion(tmp_path):
+    from hostrun.editor_reports import ReportService, report_evidence
+
+    materials, plan, task, material = pending_material(tmp_path)
+    owner = task['task_id']
+    material_id = material['material_id']
+    with pytest.raises(CommandError, match='摘要授权'):
+        report_evidence(materials, material_id, owner, token=TOKEN)
+    material_command(materials, dict(action='materials_pending_resolve', schema_version=1,
+        operation_id='consent', decision='authorize_abstract', expected_version=material['version'],
+        confirmed=True, material_id=material_id, task_id=owner, request_id=plan['request_id']), token=TOKEN)
+    with pytest.raises(CommandError, match='摘要授权'):
+        report_evidence(materials, material_id, 'different-task', token=TOKEN)
+
+    evidence = report_evidence(materials, material_id, owner, token=TOKEN)
+    reports = ReportService(tmp_path, token=TOKEN)
+    report = reports.save('save', owner, evidence, {}, [
+        dict(kind='source', text='已有一份简短摘要。', citations=[
+            dict(locator='abstract', excerpt='Only a short abstract.')])
+    ], token=TOKEN)
+    report_id = report['report_id']
+    assert reports.citation(report_id, owner, 0, 0, token=TOKEN)['segment'] == 'Only a short abstract.'
+    with pytest.raises(CommandError, match='找不到报道'):
+        reports.citation(report_id, 'different-task', 0, 0, token=TOKEN)
+
+    materials.archive_material(material_id, token=TOKEN)
+    impact = materials.deletion_impact(material_id, token=TOKEN)
+    assert any(item['owner_id'].startswith(f'report:{report_id}:') for item in impact['references'])
+    materials.delete_material(material_id, impact['confirmation'], token=TOKEN)
+    assert reports.citation(report_id, owner, 0, 0, token=TOKEN) == {'status': 'removed', 'segment': None}
+    assert reports.get(report_id, owner, token=TOKEN)['claims'][0]['citations'][0]['excerpt'] == '原摘要不可用'
