@@ -825,6 +825,14 @@ def serve(resolved):
                                                     token=token, snapshot_offset=cmd.get('snapshot_offset'),
                                                     version=cmd.get('version'))
                         emit('report_citation', {'report_id': cmd.get('report_id'), 'version': cmd.get('version'), 'citation': citation})
+                    elif action == 'editor_feedback_handoff':
+                        if not chats:
+                            raise CommandError('not_found', '找不到报道')
+                        draft = reports.prepare_feedback_handoff(
+                            cmd.get('report_id'), chats[current]['task_id'], cmd.get('version'),
+                            owner=cmd.get('owner'), note=cmd.get('note'), claim_index=cmd.get('claim_index'),
+                            frontier_id=cmd.get('frontier_id'), token=token)
+                        emit('editor_feedback_handoff', draft)
                     elif action == 'report_feedback':
                         if not chats:
                             raise CommandError('not_found', '找不到报道')

@@ -1,7 +1,7 @@
 import React, {useEffect, useState} from 'react';
 
 export type FrontierChoice = {frontier_id:string; question:string; status:string};
-export type WritingRequest = {frontier_id?:string; once?:Partial<Record<StyleKey,string>>};
+export type WritingRequest = {frontier_id?:string|null; once?:Partial<Record<StyleKey,string>>};
 type StyleKey = 'length'|'structure';
 type Provenance = {kind:string; report_id?:string; report_version?:number; feedback_revision?:number; score?:number};
 export type WritingPreference = {id:string; version:number; key:StyleKey; value:string;
@@ -24,13 +24,16 @@ function StyleChoices({kind, value, onChange, inherit}:{
   </select></label>;
 }
 
-export function CurrentWritingOptions({frontiers, value, onChange}:{
-  frontiers:FrontierChoice[]; value:WritingRequest; onChange:(value:WritingRequest)=>void;
+export function CurrentWritingOptions({frontiers, value, inherited, onChange}:{
+  frontiers:FrontierChoice[]; value:WritingRequest; inherited?:string; onChange:(value:WritingRequest)=>void;
 }) {
   return <details><summary>本次写作样式</summary>
-    <label>报道所属 Frontier <select value={value.frontier_id || ''} onChange={event=>
-      onChange({...value, frontier_id:event.target.value || undefined})}>
-      <option value="">全局</option>
+    <label>报道所属 Frontier <select value={value.frontier_id===null?'__global':value.frontier_id || ''} onChange={event=>{
+      const selected=event.target.value;
+      onChange({...value, frontier_id:selected==='__global'?null:selected || undefined});
+    }}>
+      <option value="">沿用（改写时 {frontiers.find(row=>row.frontier_id===inherited)?.question || '全局'}，新报道用全局）</option>
+      <option value="__global">全局</option>
       {frontiers.filter(row=>row.status==='following').map(row=>
         <option key={row.frontier_id} value={row.frontier_id}>{row.question}</option>)}
     </select></label>
@@ -44,11 +47,11 @@ export function CurrentWritingOptions({frontiers, value, onChange}:{
   </details>;
 }
 
-export function UsedWritingPreferences({rows}: {rows:WritingPreference[]}) {
+export function UsedWritingPreferences({rows, frontiers}: {rows:WritingPreference[]; frontiers:FrontierChoice[]}) {
   const preferences = rows.filter(row=>row.key);
   if (!preferences.length) return null;
   return <details><summary>本版使用的写作偏好</summary><ul>{preferences.map(row=>
-    <li key={row.key}>{names[row.key]} · {labels[row.key][row.value]} · {scopeLabels[row.scope || 'default']} · v{row.version}</li>)}</ul></details>;
+    <li key={row.key}>{names[row.key]} · {labels[row.key][row.value]} · {scopeLabels[row.scope || 'default']}{row.frontier_id && ` · ${frontiers.find(item=>item.frontier_id===row.frontier_id)?.question || row.frontier_id}`} · v{row.version}</li>)}</ul></details>;
 }
 
 export function EditorPreferences({taskId, frontiers, send}:{
@@ -89,8 +92,11 @@ export function EditorPreferences({taskId, frontiers, send}:{
       </select></label>
       <StyleChoices kind={kind} value={value} onChange={setValue}/>
       <button type="submit">保存为长期偏好</button>
-      <button type="button" onClick={()=>change('reset',{frontier_id:scope || null})}>恢复此范围默认</button>
+      <button type="button" onClick={()=>change('reset',{frontier_id:scope || null,
+        expected_revisions:Object.fromEntries(data.preferences.filter(row=>(row.frontier_id || '')===scope)
+          .map(row=>[row.key,row.version]))})}>恢复此范围默认</button>
     </form>
+    <button type="button" onClick={()=>send({action:'editor_preferences'})}>刷新写作偏好</button>
     {data.preferences.length>0 && <ul aria-label="已保存写作偏好">{data.preferences.map(row=>
       <li key={row.id}>
         {scopeName(row.frontier_id)} · {names[row.key]} · {labels[row.key][row.value]} ·

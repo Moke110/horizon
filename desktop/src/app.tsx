@@ -11,7 +11,7 @@ import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
 import {KnowledgeWorkbench} from './KnowledgeWorkbench';
-import {EditorReports} from './EditorReports';
+import {EditorReports,type FeedbackHandoff} from './EditorReports';
 type Child={child_id:string;session_id:string;parent_session_id:string;role:string;input_version:number;status:string;artifact_ref:string;result?:string;error?:string};
 type Chat={task_id:string;version:number;title:string;messages:{role:string;text:string}[]};
 declare global {interface Window {horizon:{send:(c:unknown)=>void;subscribe:(f:(e:any)=>void)=>()=>void}}}
@@ -62,9 +62,14 @@ return <div className="shell"><div className="window-bar" aria-hidden="true" /><
 </div></aside><main>{conversationOpen && <><header><strong>{chat?.title||'新会话'}</strong><span>研究助手</span></header><div className="tabs"><button className={tab==='chat'?'active':''} onClick={()=>setTab('chat')}>对话</button><button className={tab==='trace'?'active':''} onClick={()=>setTab('trace')}>轨迹</button></div></>}{notice&&<div className="notice" role="alert">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
 {tab==='voyager'?<><SubscriptionPanel rows={state.subscriptions||[]} busy={state.subscription_busy||[]} send={send}/><VoyagerPanel requests={state.voyager_requests||[]} busy={state.voyager_busy||[]} selected={voyagerView} history={voyagerHistory} taskId={chat?.task_id} onPrepare={id=>{setText(current=>current||`请调用 delegate 工具，将检索 ${id} 交给 voyager 子会话，返回来源依据和限制。`);setTab('chat');}} onCommand={command=>{if(command.action==='materials_open')setTab('materials');send(['voyager_create','materials_open'].includes(command.action)?{...command,task_id:chat?.task_id}:command);}}/></>:tab==='knowledge'||tab==='themes'?<KnowledgeWorkbench initialType={tab==='themes'?'theme':'all'} frontiers={state.frontiers||[]} cards={state.cards||[]} themes={state.themes||[]} materials={state.materials||[]} cardSelected={cardView} cardViewEvent={cardViewEvent} cardError={cardError} frontierSelected={frontierView} frontierViewEvent={frontierViewEvent} frontierError={frontierError} themeSelected={themeView} themeViewEvent={themeViewEvent} themeError={themeError} onPendingCount={count=>setKeeperCount(count)} openPendingNonce={openPendingNonce} onCommand={command=>{const value=command as {action?:string;operation_id?:string};if(value.action==='voyager_create'){createPending.current=value.operation_id||null;send(chat?.task_id?{...value,task_id:chat.task_id}:command);}else send(command);}}/>:tab==='materials'?<section aria-label="资料" />:tab==='schedules'?<SchedulePanel schedules={state.schedules||[]} limits={state.schedule_limits||{main:2,children:4}} onCommand={send}/>:tab==='trace'?<section aria-label="轨迹" />:<><div className="messages">{chat && <EditorReports key={chat.task_id} taskId={chat.task_id}
   materials={state.materials || []} children={state.children} disabled={state.busy || !state.configured}
-  frontiers={state.frontiers || []} route={(target,frontierId)=>{
-    setTab(target==='voyager'?'voyager':'knowledge');
-    if(target==='frontier' && frontierId) send({action:'frontier_open', frontier_id:frontierId});
+  frontiers={state.frontiers || []} handoff={(draft:FeedbackHandoff)=>{
+    const instruction={
+      voyager:'请按来源与检索反馈交给 Voyager 流程核对，未有检索依据时请提出补检索范围。',
+      knowledge:'请按知识库反馈交给知识库流程核对相关记录，整理待确认建议。',
+      frontier:'请按 Frontier 范围反馈整理原范围和建议调整，等待用户在 Frontier 界面核对并确认保存。',
+    }[draft.owner];
+    setText(`${instruction} 保留原报道与段落依据，未经用户确认不得修改任何受管内容。
+${JSON.stringify(draft)}`);
   }}
   send={send} prepare={(material_id,options)=>setText(`请调用 delegate，将此 JSON 原样交给 editor 子会话生成报道。 ${JSON.stringify({material_id,...options})}`)}
   prepareRewrite={(report_id,base_version,question,options)=>setText(`请调用 delegate，将此 JSON 原样交给 editor 子会话核对来源并生成新版本。 ${JSON.stringify({report_id,base_version,question,...options})}`)}

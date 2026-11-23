@@ -145,12 +145,16 @@ class PreferenceService:
 
     def _change(self, db, command, action, scope, task_id):
         if action == "reset":
-            targets = db.execute("SELECT scope,name,result FROM editor_writing_preferences WHERE scope=?",
-                                 (scope or "",)).fetchall()
-            for name_scope, key, encoded in targets:
-                row = json.loads(encoded)
-                if row["status"] != "deleted":
-                    self._persist(db, name_scope, key, {**row, "status": "deleted", "version": row["version"] + 1})
+            targets = {key: json.loads(encoded) for key, encoded in db.execute(
+                "SELECT name,result FROM editor_writing_preferences WHERE scope=?", (scope or "",))}
+            targets = {key: row for key, row in targets.items() if row["status"] != "deleted"}
+            expected = command.get("expected_revisions")
+            actual = {key: row["version"] for key, row in targets.items()}
+            if (not isinstance(expected, dict) or any(type(value) is not int for value in expected.values())
+                    or expected != actual):
+                raise CommandError("version_conflict", "写作偏好已更新，请刷新后再恢复默认")
+            for key, row in targets.items():
+                self._persist(db, scope or "", key, {**row, "status": "deleted", "version": row["version"] + 1})
             return {"scope": "frontier" if scope else "global", "frontier_id": scope}
         candidate = None
         if action in ("adopt", "dismiss"):
