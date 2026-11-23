@@ -594,14 +594,17 @@ def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
 
 
 def serve(resolved):
-    from hostrun.cleanup import _lexical_home, control_directory
-    code = Path(resolved['code'])
+    from hostrun.cleanup import InstanceInvalid, _lexical_home, control_directory
+    code = _lexical_home(resolved['code'])
     home = _lexical_home(resolved['runtime'])
     managed = os.name == 'nt' and home.parent.parent == control_directory()
-    if managed and code == home.parent / 'app/current':
+    if managed:
+        if home.name != 'data' or code != home.parent / 'app/current':
+            raise InstanceInvalid('Unexpected managed desktop application')
+        bound = {**resolved, 'code': str(code), 'runtime': str(home)}
         with desktop_runtime.managed_executable(code, home) as executable:
-            return _serve(resolved, executable, managed)
-    return _serve(resolved, desktop_runtime.executable(code), managed)
+            return _serve(bound, executable, managed)
+    return _serve(resolved, desktop_runtime.executable(resolved['code']), managed)
 
 
 def _serve(resolved, executable, managed):

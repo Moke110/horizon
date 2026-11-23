@@ -117,7 +117,9 @@ def test_managed_runtime_uses_its_owned_bundle_and_leaves_legacy_cache(managed_p
 
     monkeypatch.setattr(desktop_bridge, '_serve', expect_managed_launch)
     monkeypatch.setattr(desktop_runtime, 'executable', refuse_shared_runtime)
-    assert desktop_bridge.serve({'code': str(first_code), 'runtime': str(first['home'])}) == 'launched'
+    from hostrun.windows_cleanup import io_path
+    assert desktop_bridge.serve({'code': str(io_path(first_code)),
+                                 'runtime': str(io_path(first['home']))}) == 'launched'
     assert cleanup.cleanup_instance(control, first['instance_id'], tmp_path / 'report',
                                     confirmation=first['instance_id'])['status'] == 'cleaned'
     assert legacy.read_bytes() == b'legacy runtime'
@@ -150,4 +152,25 @@ def test_managed_runtime_does_not_fall_back_to_shared_cache(managed_package, dam
     with pytest.raises((cleanup.InstanceInvalid, OSError)):
         with desktop_runtime.managed_executable(code, instance['home']):
             pytest.fail('An unverified bundle was selected')
+    assert not (control.parent / 'desktop-runtime').exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='requires native Windows instance receipts')
+@pytest.mark.parametrize('mismatch', ['other_instance', 'developer_source'])
+def test_bridge_rejects_other_code_with_implicit_managed_home(managed_package, monkeypatch, mismatch):
+    from hostrun import cleanup, desktop_bridge, desktop_runtime
+
+    control, install = managed_package
+    first, _ = install()
+    _, other_code = install()
+    if mismatch == 'developer_source':
+        other_code = control.parent / 'source'
+
+    def refuse_launch(*args, **kwargs):
+        pytest.fail('An invalid managed launch reached runtime selection')
+
+    monkeypatch.setattr(desktop_runtime, 'executable', refuse_launch)
+    monkeypatch.setattr(desktop_runtime, 'managed_executable', refuse_launch)
+    with pytest.raises(cleanup.InstanceInvalid):
+        desktop_bridge.serve({'code': str(other_code), 'runtime': str(first['home'])})
     assert not (control.parent / 'desktop-runtime').exists()
