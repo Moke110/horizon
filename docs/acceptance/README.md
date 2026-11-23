@@ -612,6 +612,12 @@ After separating the caption, the maintainer confirmed dragging the global bar. 
 - The user confirmed the visible Electron reading flow in the isolated fixture. They opened the **Editor 引用验收** conversation and report **4c8123bc** v1, followed a citation, and opened the original snapshot. The live model generation evidence came from the desktop worker probe.
 - The 81 focused Python checks passed, along with the Agent and Electron source builds and TypeScript checks. Long sources supply a located prefix with a 42 KB budget and a displayed coverage limitation. The full pinned snapshot remains available through paged reading.
 
+## Editor question-led synthesis (#215) — 2026-11-24
+
+- A live Windows Editor child used DeepSeek and two RFC Editor public captures. The RFC 2026 extract SHA-256 was `6078fa55c57045bed488fd8165e0c801434945d96004a8551430c9456115ac29`. The RFC 6410 extract SHA-256 was `e754729bc0882c1352687b2c27360c19957e5432a308414cc11365cf6d129ab9`.
+- Compared three saved reports on the same question. The baseline `7c7de827` had no confirmed background. After accepting a sourced Knowledge Card, `40ad3b39` recorded the exact card version and omitted expanded background. Explicit expansion `326a043e` displayed the versioned card as known background. Across the three reports, all 44 citations reopened and matched the excerpts. The documents differ on the number of maturity levels because RFC 6410 updates RFC 2026. Each report disclosed the limits of its source prefixes.
+- Passed 98 focused checks, the Agent and Electron source builds, and the desktop TypeScript check. Earlier provider truncation and wrong-locator responses produced no saved report. The passing rerun covered short output and uniquely matched excerpts within the original selected source. The synthesis source context has a 14 KB total budget across readable inputs. Visible Electron synthesis reading remains pending.
+
 ## Editor report feedback and revisions (#216)
 
 Windows development-machine model check: configured DeepSeek Flash used the captured IANA Example Domains page. The follow-up rejected the transfer premise against the source and marked the alleged fee and future date as unsupported, proposing official sources for further retrieval. The same report ID retained its original v1 claims and rating, v2 had no inherited rating, and all 14 v2 citations reopened their exact excerpts. The model key was removed from the isolated test home.

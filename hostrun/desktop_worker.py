@@ -147,12 +147,16 @@ class DesktopWorker:
         if event.get('role') == 'editor':
             from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
                                                 read_report_response, report_evidence)
+            from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis, synthesis_input
             from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 
             reports = ReportService(self.home, token=self.service_token)
             material_id = event.get('input')
+            synthesis = synthesis_input(material_id)
+            if synthesis and {'report_id', 'base_version'} & synthesis.keys():
+                raise ValueError('Invalid initial synthesis')
             rewrite = None
-            if isinstance(material_id, str) and material_id.startswith('{'):
+            if synthesis is None and isinstance(material_id, str) and material_id.lstrip().startswith('{'):
                 rewrite = json.loads(material_id)
                 if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
                         or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id'}
@@ -165,9 +169,22 @@ class DesktopWorker:
                 previous = reports.get(rewrite['report_id'], self.task_id,
                                        version=rewrite['base_version'], token=self.service_token)
                 material_id = rewrite.get('material_id', previous['source']['material_id'])
-            saved_report = reports.get_by_operation(operation, self.task_id, material_id,
-                                                    token=self.service_token)
-            if saved_report is None:
+                if 'sources' in previous:
+                    if 'material_id' in rewrite:
+                        raise ValueError('A synthesis follow-up cannot replace its source selection')
+                    synthesis = {
+                        **previous.get('synthesis_options', {}),
+                        'material_ids': previous['selected_material_ids'],
+                        'question': previous['title'],
+                        'report_id': rewrite['report_id'],
+                        'base_version': rewrite['base_version'],
+                    }
+            selected = synthesis['material_ids'] if synthesis else material_id
+            saved_report = reports.get_by_operation(operation, self.task_id, selected, token=self.service_token)
+            if saved_report is None and synthesis:
+                editor_context, evidence, versions, reposts = prepare_synthesis(
+                    reports, self.home, self.task_id, synthesis, token=self.service_token)
+            elif saved_report is None:
                 evidence = report_evidence(reports.materials, material_id, self.task_id,
                                            token=self.service_token)
                 workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
@@ -176,14 +193,13 @@ class DesktopWorker:
                                           for item in known],
                             'preferences': [DEFAULT_PREFERENCE_VERSION]}
                 editor_context = build_editor_context(evidence, known)
-                if rewrite:
-                    editor_context['follow_up'] = {
-                        'question': rewrite['question'],
-                        'previous_claims': [
-                            {'kind': claim['kind'], 'text': claim['text'][:240]}
-                            for claim in previous['claims'][:8]
-                        ],
-                    }
+            if editor_context is not None and rewrite:
+                editor_context['follow_up'] = {
+                    'question': rewrite['question'],
+                    'previous_claims': [
+                        {'kind': claim['kind'], 'text': claim['text'][:240]} for claim in previous['claims'][:8]
+                    ],
+                }
         child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
@@ -253,11 +269,17 @@ class DesktopWorker:
                 if editor_context is not None:
                     if not saw_editor_context:
                         raise RuntimeError('Editor did not read the bound material')
-                    report = reports.save(operation, self.task_id, evidence, versions,
-                                          read_report_response(output), token=self.service_token,
-                                          report_id=rewrite['report_id'] if rewrite else None,
-                                          base_version=rewrite['base_version'] if rewrite else None)
-                    output = json.dumps({'report_id': report['report_id'], 'version': report['version']})
+                    if synthesis:
+                        receipt = commit_synthesis(
+                            reports, operation, self.task_id, synthesis, editor_context, evidence, versions,
+                            reposts, read_report_response(output, synthesis=True), token=self.service_token)
+                    else:
+                        report = reports.save(operation, self.task_id, evidence, versions,
+                                              read_report_response(output), token=self.service_token,
+                                              report_id=rewrite['report_id'] if rewrite else None,
+                                              base_version=rewrite['base_version'] if rewrite else None)
+                        receipt = {'report_id': report['report_id'], 'version': report['version']}
+                    output = json.dumps(receipt, ensure_ascii=False)
             status = 'succeeded'
         except Exception:
             error = 'Child execution failed or was cancelled; completed sibling results are retained.'
