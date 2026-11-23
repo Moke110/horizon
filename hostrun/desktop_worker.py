@@ -149,6 +149,7 @@ class DesktopWorker:
                                                 read_report_response, report_evidence)
             from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis, synthesis_input
             from hostrun.knowledge_workbench import KnowledgeWorkbenchService
+            from hostrun.editor_preferences import PreferenceService
 
             reports = ReportService(self.home, token=self.service_token)
             material_id = event.get('input')
@@ -156,10 +157,19 @@ class DesktopWorker:
             if synthesis and {'report_id', 'base_version'} & synthesis.keys():
                 raise ValueError('Invalid initial synthesis')
             rewrite = None
+            writing = synthesis or {}
             if synthesis is None and isinstance(material_id, str) and material_id.lstrip().startswith('{'):
-                rewrite = json.loads(material_id)
+                command = json.loads(material_id)
+                if (isinstance(command, dict) and 'report_id' not in command
+                        and isinstance(command.get('material_id'), str)
+                        and command.keys() <= {'material_id', 'once', 'frontier_id'}):
+                    material_id = command['material_id']
+                    writing = command
+                else:
+                    rewrite = command
+            if rewrite is not None:
                 if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
-                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id'}
+                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id', 'once', 'frontier_id'}
                         or not isinstance(rewrite['report_id'], str)
                         or ('material_id' in rewrite and not isinstance(rewrite['material_id'], str))
                         or not isinstance(rewrite['question'], str)
@@ -169,6 +179,7 @@ class DesktopWorker:
                 previous = reports.get(rewrite['report_id'], self.task_id,
                                        version=rewrite['base_version'], token=self.service_token)
                 material_id = rewrite.get('material_id', previous['source']['material_id'])
+                writing = {'frontier_id': previous['context_versions'].get('writing_frontier_id'), **rewrite}
                 if 'sources' in previous:
                     if 'material_id' in rewrite:
                         raise ValueError('A synthesis follow-up cannot replace its source selection')
@@ -193,6 +204,14 @@ class DesktopWorker:
                                           for item in known],
                             'preferences': [DEFAULT_PREFERENCE_VERSION]}
                 editor_context = build_editor_context(evidence, known)
+            if editor_context is not None:
+                frontier_id = writing.get('frontier_id')
+                effective = PreferenceService(self.home, token=self.service_token).effective(
+                    token=self.service_token, frontier_id=frontier_id, once=writing.get('once'))
+                editor_context['writing_style'] = {key: row['value'] for key, row in effective.items()}
+                versions['preferences'] = [{**row, 'key': key} for key, row in effective.items()]
+                if frontier_id:
+                    versions['writing_frontier_id'] = frontier_id
             if editor_context is not None and rewrite:
                 editor_context['follow_up'] = {
                     'question': rewrite['question'],

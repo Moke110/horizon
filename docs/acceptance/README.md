@@ -631,3 +631,9 @@ Scheduled supplement check: DeepSeek Flash revised a stored summary from a suppl
 Integrated synthesis rewrite: DeepSeek Flash compared the two RFC Editor snapshots recorded above and corrected the three-to-two maturity-level change in report `90107b06` v2. The original question, selected material IDs, and v1 remained unchanged. All 19 v2 citations reopened the correct snapshot (5 from RFC 2026 and 14 from RFC 6410). The isolated model credentials were removed after the run.
 
 After combining the final synthesis coverage fix with report versioning, 101 related Python checks passed. The Agent and Electron source builds and desktop TypeScript check also passed.
+
+## Editor writing preferences (#217) — 2026-11-24
+
+- A real DeepSeek Editor used the same IANA Example Domains snapshot for four saved reports. The default report `742b1463` contained 6 claims and 439 prose characters. After explicit adoption of the feedback suggestion, global concise `be68ed2d` contained 4 claims and 286 characters. Frontier detailed `ae35d1d5` contained 7 claims and 666 characters. Single-request concise and conclusion-first `96461778` contained 4 claims and 404 characters. All 41 cited passages reopened and matched their excerpts. The single-request choice left the Frontier preference intact, and the original report retained its default preference provenance.
+- An earlier single-request model response with an invalid locator failed validation. The successful rerun instructed Editor to preserve coherent quotations even when shortening the report prose. The probe reused the configured credentials in memory, and the GUI fixture contains only the database and source snapshots.
+- The 106 focused Python checks passed, along with the Agent and Electron builds and desktop TypeScript checks. Readable desktop fixture prepared for candidate adoption and preference scope display. User interaction is pending.

@@ -23,6 +23,7 @@ from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from hostrun.editor_reports import ReportService
+from hostrun.editor_preferences import PreferenceService
 from hostrun.keeper_runtime import KeeperRuntime, review_event, test_principal
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
@@ -646,6 +647,7 @@ def serve(resolved):
     deliveries = DeliveryService(service)
     materials = MaterialsService(service.home,token=token)
     reports = ReportService(service.home, token=token)
+    preferences = PreferenceService(service.home, token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
@@ -803,6 +805,13 @@ def serve(resolved):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action in ('editor_preferences', 'editor_preference_change'):
+                        task_id = chats[current]['task_id'] if chats else None
+                        if action == 'editor_preference_change':
+                            command = {key: value for key, value in cmd.items() if key != 'action'}
+                            command['action'] = command.pop('change')
+                            preferences.change(command, token=token, task_id=task_id)
+                        emit('editor_preferences', {'task_id': task_id, **preferences.list(token=token, task_id=task_id)})
                     elif action == 'report_open':
                         if not chats:
                             raise CommandError('not_found', '找不到报道')
@@ -824,6 +833,7 @@ def serve(resolved):
                                              cmd.get('operation_id'), cmd.get('expected_revision'),
                                              score=cmd.get('score'), reason=cmd.get('reason'),
                                              claim_index=cmd.get('claim_index'), token=token)
+                        emit('editor_preferences', {'task_id': task_id, **preferences.list(token=token, task_id=task_id)})
                         emit('report_view', reports.get(cmd.get('report_id'), task_id,
                                                         version=cmd.get('version'), token=token))
                     elif action=='materials_web':

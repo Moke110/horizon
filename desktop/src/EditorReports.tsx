@@ -1,17 +1,26 @@
 import React, {useEffect, useState} from 'react';
 import type {MaterialSummary} from './MaterialsPanel';
+import {CurrentWritingOptions, EditorPreferences, UsedWritingPreferences,
+  type FrontierChoice, type WritingPreference, type WritingRequest} from './EditorPreferences';
 
 type Child = {child_id:string; role:string; status:string; result?:string};
 type Claim = {kind:'source'|'inference'|'unknown'|'disagreement'|'known'; text:string; independent_source_count?:number; citations:{locator:string; excerpt:string; status?:string; title?:string}[]};
 type Report = {report_id:string; version:number; task_id:string; title:string; claims:Claim[]; limitation?:string; sources?:{material_id:string; title:string; limitation?:string; repost?:boolean}[];
+  context_versions?:{preferences?:WritingPreference[]};
   feedback?:{revision:number; score:number|null; reason?:string; claim_index?:number}; gaps?:{material_id?:string; reason:string; source?:string; detail?:string}[]};
 type Citation = {segment?:string; status:string; segment_truncated?:boolean; next_offset?:number|null};
 
-export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, send}:{
+export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, frontiers, route, send}:{
   taskId:string; materials:MaterialSummary[]; children:Child[]; disabled:boolean;
-  prepareRewrite:(id:string,version:number,question:string)=>void;
-  prepare:(id:string)=>void; prepareSynthesis:(command:{question:string; material_ids:string[]; expand_known:boolean})=>void; send:(command:unknown)=>void;
+  prepareRewrite:(id:string,version:number,question:string,options:WritingRequest)=>void;
+  frontiers:FrontierChoice[]; route:(target:'voyager'|'knowledge'|'frontier', frontier?:string)=>void;
+  prepare:(id:string,options:WritingRequest)=>void; prepareSynthesis:(command:{question:string; material_ids:string[]; expand_known:boolean}&WritingRequest)=>void; send:(command:unknown)=>void;
 }) {
+  const [writing, setWriting] = useState<WritingRequest>({});
+  const takeWriting = () => {
+    setWriting({frontier_id:writing.frontier_id});
+    return writing;
+  };
   const [material, setMaterial] = useState('');
   const [question, setQuestion] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
@@ -33,11 +42,13 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
 
   return <details>
     <summary>Editor 报道</summary>
+    <CurrentWritingOptions frontiers={frontiers} value={writing} onChange={setWriting}/>
+    <EditorPreferences frontiers={frontiers} taskId={taskId} send={send}/>
     <label>选择资料 <select value={material} onChange={event=>setMaterial(event.target.value)}>
       <option value="">请选择</option>
       {materials.map(row=><option key={row.material_id} value={row.material_id}>{row.title}</option>)}
     </select></label>
-    <button disabled={disabled || !materials.some(row=>row.material_id===material)} onClick={()=>prepare(material)}>准备生成报道</button>
+    <button disabled={disabled || !materials.some(row=>row.material_id===material)} onClick={()=>prepare(material,takeWriting())}>准备生成报道</button>
     <details>
       <summary>综合多份资料</summary>
       <label>综合问题 <input value={question} onChange={event=>setQuestion(event.target.value)} maxLength={500}/></label>
@@ -47,7 +58,7 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
       </select></label>
       <label><input type="checkbox" checked={expandKnown} onChange={event=>setExpandKnown(event.target.checked)}/> 展开已知背景</label>
       <button disabled={disabled || !question.trim() || materialIds.length<2 || materialIds.length>4}
-        onClick={()=>prepareSynthesis({question:question.trim(), material_ids:materialIds, expand_known:expandKnown})}>
+        onClick={()=>prepareSynthesis({question:question.trim(), material_ids:materialIds, expand_known:expandKnown,...takeWriting()})}>
         准备综合报道
       </button>
     </details>
@@ -64,6 +75,7 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
     })}
     {report && <article aria-label="报道正文">
       <h2>{report.title} · v{report.version}</h2>
+      <UsedWritingPreferences rows={report.context_versions?.preferences || []}/>
       <form key={JSON.stringify([report.report_id, report.version, report.feedback?.revision])} onSubmit={event=>{
         event.preventDefault();
         const data = new FormData(event.currentTarget);
@@ -91,11 +103,16 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
       <form key={JSON.stringify([report.report_id, report.version])} onSubmit={event=>{
         event.preventDefault();
         const question = String(new FormData(event.currentTarget).get('question') || '').trim();
-        if(question) prepareRewrite(report.report_id, report.version, question);
+        if(question) prepareRewrite(report.report_id, report.version, question, takeWriting());
       }}>
         <label>追问或纠错 <input name="question" required maxLength={2000}/></label>
         <button type="submit" disabled={disabled}>准备改写</button>
       </form>
+      <details><summary>其他反馈</summary>
+        <button onClick={()=>route('voyager')}>来源与检索</button>
+        <button onClick={()=>route('knowledge')}>知识库</button>
+        <button onClick={()=>route('frontier',writing.frontier_id)}>Frontier 范围</button>
+      </details>
       {report.limitation && <p>{report.limitation}</p>}
       {report.sources && <ul aria-label="资料范围">{report.sources.map(source=>
         <li key={source.material_id}>{source.title}{source.repost && '（转载，不计独立证据）'} {source.limitation}</li>)}</ul>}

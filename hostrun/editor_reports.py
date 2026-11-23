@@ -7,6 +7,7 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.editor_preferences import record_feedback_candidate
 from hostrun.voyager_materials import MaterialsService, citation_anchors
 from hostrun.managed_database import database_connection
 
@@ -140,6 +141,7 @@ class ReportService:
                 raise CommandError("version_conflict", "反馈已更新，请重新读取该报道版本")
             db.execute("INSERT INTO editor_report_feedback VALUES(?,?,?,?,?)",
                        (report_id, version, feedback["revision"], operation_id, json.dumps(feedback)))
+            record_feedback_candidate(db, report_id, version, task_id, feedback)
         return feedback
 
     def _feedback(self, db, report_id, version):
