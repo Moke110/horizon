@@ -12,7 +12,20 @@ from hostrun import cleanup, dist
 from hostrun.windows_cleanup import PinnedEntry, pin_ancestors, io_path
 
 _BATCH_SIZE = 32
+_MOVE_BATCH_SIZE = 256
 
+
+
+def _move_registered_batch(root, inventory, moves, save):
+    for source, destination, _ in moves:
+        inventory[destination.relative_to(root).as_posix()] = inventory[source.relative_to(root).as_posix()]
+    save()  # Every possible alias is durable before the first rename.
+    for _, destination, pin in moves:
+        pin.rename(destination)
+    # The next receipt or final commit retires completed source aliases.
+    # Until then the durable receipt still identifies both possible names.
+    for source, _, _ in moves:
+        inventory.pop(source.relative_to(root).as_posix())
 
 def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=None):
     """Internal code-publication primitive; the coordinator owns data/schema/version."""
@@ -67,9 +80,10 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
             directories = record['application_directories']
             previous = json.loads(io_path(code / 'manifest.json').read_text(encoding='utf-8'))
             old_names = [row['path'] for row in previous['files']] + ['manifest.json', '.horizon/current', '.horizon/dist.lock.json']
+            old_name_set = set(old_names)
             old_digests = {}
             # Validate every target before creating any upgrade contents.
-            for name in set(old_names) | set(payloads):
+            for name in old_name_set | set(payloads):
                 path = code / name
                 relative = path.relative_to(root).as_posix()
                 if not dist._safe_relpath(name):
@@ -81,11 +95,11 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                             stat = io_path(path).stat()
                             if inventory.get(relative) != [stat.st_dev, stat.st_ino]:
                                 raise cleanup.InstanceInvalid('Unowned upgrade target')
-                            if name in old_names:
+                            if name in old_name_set:
                                 old_digests[name] = hashlib.sha256(io_path(path).read_bytes()).hexdigest()
                         finally:
                             pin.close()
-                elif name in old_names:
+                elif name in old_name_set:
                     raise cleanup.InstanceInvalid('Missing installed file')
             operation = transaction_id or uuid.uuid4().hex
             if operation in record.get('code_transactions', {}):
@@ -96,11 +110,16 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
             record['upgrade'] = operation
             cleanup._write_registration(registration, record)
 
+            unrecorded_directories = 0
+
             def save():
+                nonlocal unrecorded_directories
                 cleanup._write_registration(registration, record)
+                unrecorded_directories = 0
 
             directory_pins = {}
             def directory(path):
+                nonlocal unrecorded_directories
                 if path in directory_pins:
                     return directory_pins[path]
                 parent = directory(path.parent) if path != code else None
@@ -117,7 +136,11 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 held.callback(pin.close)
                 stat = io_path(path).stat()
                 directories[relative] = [stat.st_dev, stat.st_ino]
-                save()  # A receipt failure leaves an unclaimed empty directory, never adopted.
+                # Unrecorded directory trees contain no file payloads. File content writes and
+                # moves always publish their receipts, including any remaining directories.
+                unrecorded_directories += 1
+                if unrecorded_directories == _BATCH_SIZE:
+                    save()
                 directory_pins[path] = pin
                 return pin
 
@@ -147,21 +170,10 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 for name in batch:
                     created[name][1].write_bytes(payloads[name])
 
-            def move_batch(moves):
-                for source, destination, pin in moves:
-                    inventory[destination.relative_to(root).as_posix()] = inventory[source.relative_to(root).as_posix()]
-                save()  # Every possible alias is durable before the first rename.
-                for source, destination, pin in moves:
-                    pin.rename(destination)
-                for source, destination, pin in moves:
-                    inventory.pop(source.relative_to(root).as_posix())
-                save()
-
-            for offset in range(0, len(old_names), _BATCH_SIZE):
+            for offset in range(0, len(old_names), _MOVE_BATCH_SIZE):
                 moves = []
-                for name in old_names[offset:offset + _BATCH_SIZE]:
+                for name in old_names[offset:offset + _MOVE_BATCH_SIZE]:
                     source, destination = code / name, base / 'old' / name
-                    directory(destination.parent)
                     held.enter_context(pin_ancestors(source.parent))
                     pin = PinnedEntry(source, delete=True)
                     held.callback(pin.close)
@@ -169,16 +181,18 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                     if inventory[source.relative_to(root).as_posix()] != [stat.st_dev, stat.st_ino]:
                         raise cleanup.InstanceInvalid('Installed file changed')
                     moves.append((source, destination, pin))
-                move_batch(moves)
+                for _, destination, _ in moves:
+                    directory(destination.parent)
+                _move_registered_batch(root, inventory, moves, save)
             # Never mix old and new current aliases in a publication batch.
-            for offset in range(0, len(names), _BATCH_SIZE):
+            for offset in range(0, len(names), _MOVE_BATCH_SIZE):
                 moves = []
-                for name in names[offset:offset + _BATCH_SIZE]:
+                for name in names[offset:offset + _MOVE_BATCH_SIZE]:
                     source, pin = created[name]
                     destination = code / name
                     directory(destination.parent)
                     moves.append((source, destination, pin))
-                move_batch(moves)
+                _move_registered_batch(root, inventory, moves, save)
             record.pop('upgrade')
             save()
     return {'status': 'ok', 'version': manifest['version'], 'data_migration': 'not_performed', 'transaction_id': operation}
@@ -263,23 +277,20 @@ def rollback_code_transaction(code, home, transaction_id=None):
                     else: old[name] = reopened
             record['upgrade'] = identity
             save()
-            def move(source, target, pin):
-                source_name, target_name = source.relative_to(root).as_posix(), target.relative_to(root).as_posix()
-                inventory[target_name] = inventory[source_name]
-                save()
-                pin.rename(target)
-                inventory.pop(source_name)
-                save()
-            for name in sorted(current):
-                value = current[name]
+            failed_moves, restore_moves = [], []
+            for name, value in current.items():
                 if value and value[1] != transaction['before'].get(name):
-                    destination = base / 'failed' / name
-                    directory(destination.parent)
-                    move(code / name, destination, value[0])
+                    failed_moves.append((code / name, base / 'failed' / name, value[0]))
                     value = None
                 if name in transaction['before'] and not value:
-                    directory((code / name).parent)
-                    move(base / 'old' / name, code / name, old[name][0])
+                    restore_moves.append((base / 'old' / name, code / name, old[name][0]))
+            # Vacate published new paths before any original is moved back.
+            for moves in (failed_moves, restore_moves):
+                for offset in range(0, len(moves), _MOVE_BATCH_SIZE):
+                    batch = moves[offset:offset + _MOVE_BATCH_SIZE]
+                    for _, destination, _ in batch:
+                        directory(destination.parent)
+                    _move_registered_batch(root, inventory, batch, save)
             record.pop('upgrade')
             save()
     return {'status': 'restored', 'transaction_id': identity}

@@ -758,13 +758,19 @@ def _cleanup_confirmed(control, identity, report, mode):
             result['reason'] = type(exc).__name__
             return result
     from hostrun.windows_cleanup import pin_ancestors, PinnedEntry
-    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root):
+    with lifecycle_lock(control / (identity + '.lock'), exclusive=True) as acquired, pin_ancestors(root), ExitStack() as held:
         if not acquired:
             result['reason'] = 'instance_busy'
         else:
+            registration = control / (identity + '.json')
+            try:
+                held.enter_context(closing(PinnedEntry(registration, read_only_share=True)))
+            except (OSError, ValueError):
+                result['reason'] = 'registration_busy_or_invalid'
+                return result
             plan = preview(control, identity, mode=mode)
             targets = []
-            record = _read_registration(control / (identity + '.json'))
+            record = _read_registration(registration)
             identities = dict(record.get('application_inventory', {}))
             directory_inventory = dict(record.get('application_directories', {}))
             if mode == 'full':
@@ -793,14 +799,31 @@ def _cleanup_confirmed(control, identity, report, mode):
                     stat = io_path(path).stat()
                     if expected == [stat.st_dev, stat.st_ino]:
                         targets.append(name)
+            registered_directories = {
+                root / name: expected
+                for key in ('children', 'application_directories', 'data_directories', 'archive_directories')
+                for name, expected in record.get(key, {}).items()
+            }
+            registered_directories[root] = [record['volume'], record['file_id']]
+
+            def validate_pinned_path(target):
+                # Callers pin the entire chain before validation and keep the pins
+                # through deletion. The protected registration remains read-only
+                # and cannot be replaced while these expected identities are used.
+                for path in (target, *target.parents):
+                    expected = registered_directories.get(path)
+                    if expected is not None:
+                        stat = io_path(path).stat()
+                        if expected != [stat.st_dev, stat.st_ino]:
+                            raise InstanceInvalid('Pinned directory identity changed')
+
             from hostrun.windows_cleanup import remove_owned_files, remove_empty_children, remove_empty_inventory
             try:
-                remove_owned_files(root, targets, lambda: preview(control, identity),
+                remove_owned_files(root, targets, validate_pinned_path,
                                    removed=result['removed'], identities=identities)
-                remove_empty_inventory(root, directory_inventory,
-                                       lambda: preview(control, identity), result['removed'])
+                remove_empty_inventory(root, directory_inventory, validate_pinned_path, result['removed'])
                 directories = [name for name in plan['owned_children'] if mode == 'full' or name == 'app']
-                remove_empty_children(root, directories, lambda: preview(control, identity), result['removed'])
+                remove_empty_children(root, directories, validate_pinned_path, result['removed'])
                 remaining_names = [child.name for child in io_path(root).iterdir()]
                 expected_preserved = {'data', 'archive'} if mode == 'keep-data' else set()
                 unexpected = set(remaining_names) - expected_preserved

@@ -23,7 +23,7 @@
 | [desktop.py](desktop.py) | Single Electron desktop entry point; Python owns the process job. |
 | [desktop_bridge.py](desktop_bridge.py) | Authenticated loopback bridge; Python owns the Windows job and GUI lifetime. |
 | [desktop_processes.py](desktop_processes.py) | Windows desktop process boundary. Install before starting any worker. |
-| [desktop_runtime.py](desktop_runtime.py) | Deploy Electron binaries outside workspace filesystem restrictions on Windows. |
+| [desktop_runtime.py](desktop_runtime.py) | Verify installed Electron files for managed launch and cache ordinary launch runtimes. |
 | [desktop_upgrade.py](desktop_upgrade.py) | Controlled package upgrade after the desktop releases its data-home lock. |
 | [desktop_worker.py](desktop_worker.py) | Headless console and agent worker for the TypeScript desktop. |
 | [diagnostics.py](diagnostics.py) | Local, allowlisted diagnostics. Never copies configuration or conversation files. |
