@@ -30,6 +30,7 @@
 | [dist.py](dist.py) | Install a distribution package and keep the installation's lock and evidence. |
 | [distribution.py](distribution.py) | Build the installable distribution package, its manifest and its digest. |
 | [editor_reports.py](editor_reports.py) | Editor source context, report persistence and citation reading. |
+| [editor_synthesis.py](editor_synthesis.py) | Question-led Editor context, coverage gaps and confirmed background. |
 | [embedded_agent.py](embedded_agent.py) | Horizon-owned Pi runtime and model configuration (no external agent). |
 | [executor.py](executor.py) | Single-executor lease: one host drives one knowledge base at a time. |
 | [facilities.py](facilities.py) | Create or attach the Feishu facilities horizon needs, by confirmed names. |

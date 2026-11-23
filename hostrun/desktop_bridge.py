@@ -806,15 +806,26 @@ def serve(resolved):
                     elif action == 'report_open':
                         if not chats:
                             raise CommandError('not_found', '找不到报道')
-                        report = reports.get(cmd.get('report_id'), chats[current]['task_id'], token=token)
+                        report = reports.get(cmd.get('report_id'), chats[current]['task_id'], token=token, version=cmd.get('version'))
                         emit('report_view', report)
                     elif action == 'report_citation':
                         if not chats:
                             raise CommandError('not_found', '找不到报道')
                         citation = reports.citation(cmd.get('report_id'), chats[current]['task_id'],
                                                     cmd.get('claim_index'), cmd.get('citation_index'),
-                                                    token=token, snapshot_offset=cmd.get('snapshot_offset'))
-                        emit('report_citation', {'report_id': cmd.get('report_id'), 'citation': citation})
+                                                    token=token, snapshot_offset=cmd.get('snapshot_offset'),
+                                                    version=cmd.get('version'))
+                        emit('report_citation', {'report_id': cmd.get('report_id'), 'version': cmd.get('version'), 'citation': citation})
+                    elif action == 'report_feedback':
+                        if not chats:
+                            raise CommandError('not_found', '找不到报道')
+                        task_id = chats[current]['task_id']
+                        reports.set_feedback(cmd.get('report_id'), task_id, cmd.get('version'),
+                                             cmd.get('operation_id'), cmd.get('expected_revision'),
+                                             score=cmd.get('score'), reason=cmd.get('reason'),
+                                             claim_index=cmd.get('claim_index'), token=token)
+                        emit('report_view', reports.get(cmd.get('report_id'), task_id,
+                                                        version=cmd.get('version'), token=token))
                     elif action=='materials_web':
                         if exiting.is_set() or web_jobs:
                             raise CommandError('web_busy','已有网页正在获取')

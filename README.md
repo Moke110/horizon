@@ -169,6 +169,10 @@ Open Automatic tasks to create, edit, pause or resume a plan. Supply an explicit
 
 In a conversation, expand **Editor 报道**, select an existing material, choose **准备生成报道**, then send the prepared request. Open the saved report and select a citation to read its pinned passage. Full-text reports require a readable snapshot. With explicit authorization for that conversation, Editor can use a source abstract and mark the coverage limit.
 
+In **Editor 报道 → 综合多份资料**, enter a question and choose two to four materials. The saved synthesis identifies each cited source and marks evidence gaps, disagreement and confirmed background. Use **展开已知背景** to request the supporting background. Editor reports when it found no new information and does not save a new report in that case.
+
+Open a specific version to rate it and optionally add a reason or select a paragraph. You can edit or withdraw the rating. Prepare a follow-up or correction from the report reader and send it from the original conversation. Editor checks the source and saves a new version. Earlier versions remain readable, and sending the rewrite is a separate action.
+
 The Trace tab is currently empty. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
 
 Open **Materials** to paste text, give it a title and source label, and register it offline without model credentials. Select a saved material to read its exact original text and source identity, receipt time, SHA-256 and extraction version. Generated summaries appear separately; registration does not generate one or contact a remote service. Originals remain available independently of conversations.
