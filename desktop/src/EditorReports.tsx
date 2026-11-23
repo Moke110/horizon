@@ -1,4 +1,5 @@
 import React, {useEffect, useState} from 'react';
+import type {FeedbackHandoff} from './EditorFeedbackPreview';
 import type {MaterialSummary} from './MaterialsPanel';
 import {CurrentWritingOptions, EditorPreferences, UsedWritingPreferences,
   type FrontierChoice, type WritingPreference, type WritingRequest} from './EditorPreferences';
@@ -8,9 +9,6 @@ type Claim = {kind:'source'|'inference'|'unknown'|'disagreement'|'known'; text:s
 type Report = {report_id:string; version:number; task_id:string; title:string; claims:Claim[]; limitation?:string; sources?:{material_id:string; title:string; limitation?:string; repost?:boolean}[];
   context_versions?:{preferences?:WritingPreference[]; writing_frontier_id?:string};
   feedback?:{revision:number; score:number|null; reason?:string; claim_index?:number}; gaps?:{material_id?:string; reason:string; source?:string; detail?:string}[]};
-export type FeedbackHandoff = {owner:'voyager'|'knowledge'|'frontier'; task_id:string;
-  report_id:string; report_version:number; claim_index:number|null; claim_text:string|null;
-  note:string; report_frontier_id:string|null; frontier_scope?:{frontier_id:string; version:number; question:string}};
 type Citation = {segment?:string; status:string; segment_truncated?:boolean; next_offset?:number|null};
 
 export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, frontiers, handoff, send}:{
@@ -135,7 +133,7 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
             <option value="">请选择</option>
             {frontiers.filter(row=>row.status==='following').map(row=><option key={row.frontier_id} value={row.frontier_id}>{row.question}</option>)}
           </select></label>}
-          <button type="submit">准备交给 Agent</button>
+          <button type="submit">交给对应流程</button>
         </form>
       </details>
       {report.limitation && <p>{report.limitation}</p>}

@@ -639,3 +639,5 @@ After combining the final synthesis coverage fix with report versioning, 101 rel
 - The 106 focused Python checks passed, along with the Agent and Electron builds and desktop TypeScript checks. Readable desktop fixture prepared for candidate adoption and preference scope display. User interaction is pending.
 
 - Follow-up checks passed for an inherited Frontier rewrite followed by an explicit global rewrite, a stale scope reset preserving a concurrent preference, and task-scoped Agent handoff drafts carrying feedback text, citation paragraph and Frontier version. The 76 focused checks and desktop type check passed.
+
+- Owner routing now presents authenticated drafts in the existing Voyager scope form and Knowledge Workbench, and opens the versioned Frontier record for Explorer review. The draft initiates no provider execution or knowledge mutation. Production Keeper proposal intake is outside this preference handoff.
