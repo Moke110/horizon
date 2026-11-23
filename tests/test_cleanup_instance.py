@@ -2552,7 +2552,7 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     ('version_before', None), ('version_after', None),
     ('backup', 'replacement'), ('version_after', 'replacement'),
     ('code_move', 'wrong_artifact'),
-    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32)],
+    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32, 33)],
     ('batch_old_16', 'code_replacement'), ('batch_new_16', 'code_replacement'),
     ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit')])
 def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damage):
@@ -2891,7 +2891,7 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
     assert result['status'] == 'ok', result
     assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.2.0' for i in range(65))
     AgentService(home, token='test')
-    assert len(writes) < 100
+    assert len(writes) <= 31
 
 
 @pytest.mark.parametrize('replacement', [False, True])

@@ -163,9 +163,10 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 save()  # Every possible alias is durable before the first rename.
                 for source, destination, pin in moves:
                     pin.rename(destination)
+                # The next receipt or final commit retires these source aliases.
+                # Until then the durable receipt still identifies both possible names.
                 for source, destination, pin in moves:
                     inventory.pop(source.relative_to(root).as_posix())
-                save()
 
             for offset in range(0, len(old_names), _BATCH_SIZE):
                 moves = []
