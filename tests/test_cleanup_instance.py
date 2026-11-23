@@ -48,6 +48,81 @@ def test_cleanup_reports_repeat_outcomes_and_postverification_without_process_cl
     assert 'SECRET-POSTCHECK-MARKER' not in json.dumps(first)
 
 
+def test_cleanup_bounds_registration_reads_and_blocks_receipt_overwrite(tmp_path, monkeypatch):
+    from hostrun import cleanup
+    from hostrun.windows_cleanup import PinnedEntry
+    from test_dist_install import _build
+
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    cleanup.initialize_layout(tmp_path, identity)
+    package = _build(tmp_path.parent / 'package')
+    assert cleanup.install_test_package(
+        tmp_path, identity, package['artifact']['path'], package['artifact']['sha256']
+    )['status'] == 'ok'
+    original_read = cleanup._read_registration
+    original_delete = PinnedEntry.delete
+    reads = []
+    overwrite_attempts = []
+
+    def read(path):
+        reads.append(path)
+        return original_read(path)
+
+    def delete(pin):
+        if not overwrite_attempts:
+            overwrite_attempts.append(True)
+            with pytest.raises(OSError):
+                instance['registration'].write_bytes(b'changed')
+            with pytest.raises(OSError):
+                cleanup._write_registration(instance['registration'], original_read(instance['registration']))
+        original_delete(pin)
+
+    monkeypatch.setattr(cleanup, '_read_registration', read)
+    monkeypatch.setattr(PinnedEntry, 'delete', delete)
+    result = cleanup.cleanup_instance(tmp_path, identity, tmp_path.parent / 'report',
+                                      confirmation=identity)
+    assert result['status'] == 'cleaned'
+    assert overwrite_attempts
+    assert len(reads) <= 12
+    assert result['postverification']['status'] == 'verified'
+
+
+def test_cleanup_refuses_registered_file_beneath_replaced_parent(tmp_path, monkeypatch):
+    from hostrun import cleanup
+    from hostrun.embedded_agent import configure
+    from hostrun.windows_cleanup import PinnedEntry
+
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    cleanup.initialize_layout(tmp_path, identity)
+    configure(instance['home'], provider='test', model='test', api_key='PRIVATE-REPLACEMENT-TEST')
+    parent = instance['home'] / 'agent'
+    file = parent / 'model.json'
+    original_id = file.stat().st_ino
+    old_parent = tmp_path.parent / 'original-agent'
+    original_pin = PinnedEntry.__init__
+    deletion_started = swapped = False
+
+    def pin(entry, path, **options):
+        nonlocal deletion_started, swapped
+        if path == instance['registration'] and options.get('read_only_share'):
+            deletion_started = True
+        if deletion_started and path == parent and not swapped:
+            parent.rename(old_parent)
+            parent.mkdir()
+            (old_parent / file.name).rename(file)
+            swapped = True
+        original_pin(entry, path, **options)
+
+    monkeypatch.setattr(PinnedEntry, '__init__', pin)
+    result = cleanup.cleanup_instance(tmp_path, identity, tmp_path.parent / 'report',
+                                      confirmation=identity)
+    assert swapped
+    assert result['status'] == 'partial'
+    assert file.stat().st_ino == original_id
+
+
 def test_cleanup_outcomes_preserve_replacement_and_redact_unknown_names(tmp_path):
     import json
     from hostrun.cleanup import initialize_layout, cleanup_instance
