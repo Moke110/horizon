@@ -2552,7 +2552,7 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     ('version_before', None), ('version_after', None),
     ('backup', 'replacement'), ('version_after', 'replacement'),
     ('code_move', 'wrong_artifact'),
-    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32, 33)],
+    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32, 33, 256, 257)],
     ('batch_old_16', 'code_replacement'), ('batch_new_16', 'code_replacement'),
     ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit')])
 def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damage):
@@ -2567,7 +2567,10 @@ def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damag
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     first = _build(tmp_path.parent / 'first')
-    extra = {f'hostrun/payload/file-{i:03}.txt': 'original' for i in range(40)} if phase.startswith('batch_') else {}
+    extra = {}
+    if phase.startswith('batch_'):
+        position = int(phase.rsplit('_', 1)[1])
+        extra = {f'hostrun/payload/file-{i:03}.txt': 'original' for i in range(max(40, position))}
     if extra:
         initial_source = _write_tree(tmp_path.parent / 'initial-source', {**PACKAGE_FILES, **extra})
         first = build(source=initial_source, out=tmp_path.parent / 'initial', version='0.1.0', channel='stable', commit='test', compat=_host_compat())
@@ -2838,8 +2841,8 @@ def test_public_upgrade_handles_deep_installed_code_and_rollback(tmp_path, schem
 
 
 
-@pytest.mark.parametrize('receipt_failure', [False, True])
-def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypatch, receipt_failure):
+@pytest.mark.parametrize('receipt_failure,directory_count,write_limit', [(False, 65, 31), (True, 65, 31), (False, 320, 56)])
+def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypatch, receipt_failure, directory_count, write_limit):
     import time
     from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
@@ -2849,7 +2852,7 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
     module = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
     def package(version):
         files = {**PACKAGE_FILES, 'hostrun/agent_service.py': module,
-                 **{f'hostrun/payload/dir-{i:03}/file.txt': version for i in range(65)}}
+                 **{f'hostrun/payload/dir-{i:03}/file.txt': version for i in range(directory_count)}}
         source = _write_tree(tmp_path.parent / ('source-' + version), files)
         return build(source=source, out=tmp_path.parent / version, version=version,
                      channel='stable', commit='test', compat=_host_compat())
@@ -2885,13 +2888,13 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
         import zipfile
         with zipfile.ZipFile(second['artifact']['path']) as archive:
             assert all((operation / 'new' / name).read_bytes() == archive.read(name) for name in prior_names)
-        assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.1.0' for i in range(65))
+        assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.1.0' for i in range(directory_count))
         AgentService(home, token='test')
         return
     assert result['status'] == 'ok', result
-    assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.2.0' for i in range(65))
+    assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.2.0' for i in range(directory_count))
     AgentService(home, token='test')
-    assert len(writes) <= 31
+    assert len(writes) <= write_limit
 
 
 @pytest.mark.parametrize('replacement', [False, True])
