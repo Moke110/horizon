@@ -20,6 +20,7 @@
 | [test_desktop_runtime.py](test_desktop_runtime.py) | Behavioral checks for desktop runtime. |
 | [test_desktop_upgrade.py](test_desktop_upgrade.py) | Behavioral checks for desktop upgrade. |
 | [test_diagnostics.py](test_diagnostics.py) | Behavioral checks for diagnostics. |
+| [test_editor_reports.py](test_editor_reports.py) | Editor report persistence and original source reading. |
 | [test_dist_e2e.py](test_dist_e2e.py) | Behavioral checks for dist e2e. |
 | [test_dist_install.py](test_dist_install.py) | Behavioral checks for dist install. |
 | [test_dist_pending.py](test_dist_pending.py) | Behavioral checks for dist pending. |

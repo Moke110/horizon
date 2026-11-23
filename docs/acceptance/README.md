@@ -605,3 +605,9 @@ The former PDF reader showed page one alongside a format error and lacked visibl
 
 The maintainer verified Windows caption controls, drag, double-click, native snapping, tray restoration and the native file chooser before the global caption was separated from conversation navigation.
 After separating the caption, the maintainer confirmed dragging the global bar. The final conversation navigation contains Chat and an empty Trace tab, verified after rebuild. Issue #247 tracks the Trace redesign. The maintainer confirmed that the global bar, native caption controls and sidebar share the same color and that the lower divider is absent.
+
+## Editor single-source report (#214) — 2026-11-23
+
+- Passed on Windows source commit `b985b0f`: the real Editor child used DeepSeek `deepseek-flash` and a captured [IANA Example Domains page](https://www.iana.org/help/example-domains) to save report `4c8123bc-4c54-4509-94cc-d80f52f6d154` v1. The source snapshot SHA-256 was `ba3e46bd30c2ab5d120ae677a4c455073f5e05491d3fb20cd8089103a49ec457`. The saved report contained 11 Chinese claims and the `editor-default` v1 preference provenance. Each of the 21 citations reopened its exact excerpt, and the full pinned text opened through the source-reading interface.
+- The user confirmed the visible Electron reading flow in the isolated fixture. They opened the **Editor 引用验收** conversation and report **4c8123bc** v1, followed a citation, and opened the original snapshot. The live model generation evidence came from the desktop worker probe.
+- The 81 focused Python checks passed, along with the Agent and Electron source builds and TypeScript checks. Long sources supply a located prefix with a 42 KB budget and a displayed coverage limitation. The full pinned snapshot remains available through paged reading.

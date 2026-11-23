@@ -22,6 +22,7 @@ from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
+from hostrun.editor_reports import ReportService
 from hostrun.keeper_runtime import KeeperRuntime, review_event, test_principal
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
@@ -644,6 +645,7 @@ def serve(resolved):
     app.service, app.service_token = service, token
     deliveries = DeliveryService(service)
     materials = MaterialsService(service.home,token=token)
+    reports = ReportService(service.home, token=token)
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
@@ -801,6 +803,18 @@ def serve(resolved):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action == 'report_open':
+                        if not chats:
+                            raise CommandError('not_found', '找不到报道')
+                        report = reports.get(cmd.get('report_id'), chats[current]['task_id'], token=token)
+                        emit('report_view', report)
+                    elif action == 'report_citation':
+                        if not chats:
+                            raise CommandError('not_found', '找不到报道')
+                        citation = reports.citation(cmd.get('report_id'), chats[current]['task_id'],
+                                                    cmd.get('claim_index'), cmd.get('citation_index'),
+                                                    token=token, snapshot_offset=cmd.get('snapshot_offset'))
+                        emit('report_citation', {'report_id': cmd.get('report_id'), 'citation': citation})
                     elif action=='materials_web':
                         if exiting.is_set() or web_jobs:
                             raise CommandError('web_busy','已有网页正在获取')

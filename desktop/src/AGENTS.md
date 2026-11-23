@@ -4,6 +4,7 @@
 |---|---|
 | [app.tsx](app.tsx) | Routes the renderer between task, Voyager, knowledge and material workspaces. |
 | [DeliveryPanel.tsx](DeliveryPanel.tsx) | Shows delivery attempts and guides recovery when the outcome is unknown. |
+| [EditorReports.tsx](EditorReports.tsx) | Selects report sources and reads saved reports, citations and pinned snapshots. |
 | [index.html](index.html) | Desktop renderer document. |
 | [KeeperGroupUndoPanel.tsx](KeeperGroupUndoPanel.tsx) | Previews and confirms undo of a previously applied Keeper group. |
 | [KeeperProposalPanel.tsx](KeeperProposalPanel.tsx) | Displays a proposed change, its revision and the available decisions. |
