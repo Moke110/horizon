@@ -119,6 +119,28 @@ class DesktopWorker:
             from hostrun.voyager_service import VoyagerService
             voyager_context = child_evidence(VoyagerService(self.home, token=self.service_token),
                 event.get('input'), self.task_id, token=self.service_token)
+        editor_context = None
+        saved_report = None
+        if event.get('role') == 'editor':
+            from hostrun.editor_reports import ReportService, report_evidence
+            from hostrun.knowledge_workbench import KnowledgeWorkbenchService
+
+            reports = ReportService(self.home, token=self.service_token)
+            saved_report = reports.get_by_operation(operation, self.task_id, event.get('input'),
+                                                    token=self.service_token)
+            if saved_report is None:
+                evidence = report_evidence(reports.materials, event.get('input'), self.task_id,
+                                           token=self.service_token)
+                workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
+                known = workbench.search(token=self.service_token, limit=8)['results']
+                versions = {'knowledge': [{key: item[key] for key in ('kind', 'id', 'version')}
+                                          for item in known], 'preferences': []}
+                editor_context = {'source': {key: evidence[key] for key in
+                                              ('text', 'title', 'snapshot', 'limitation')},
+                                  'knowledge': known, 'preferences': []}
+                if len(json.dumps(editor_context, ensure_ascii=False).encode('utf8')) > 65_000:
+                    raise ValueError('Editor source and knowledge exceed the context limit')
+        child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
         else:
@@ -135,47 +157,61 @@ class DesktopWorker:
         status, error = 'failed', ''
         child_failure = None
         saw_voyager_context = False
+        saw_editor_context = False
         try:
             if self.cancelled.is_set():
                 raise RuntimeError('Task cancelled')
-            task = ('Use voyager_context to return an evidence package for this retrieval.'
-                    if voyager_context is not None else child['input_text'])
-            argv = embedded_agent.argv(self.home, task, kind='agent',
-                code=Path(self.resolved['code']), session_id=child['session_id'])
-            argv.extend(['--child-role', child['role']])
-            context_pipe = subprocess.PIPE if voyager_context is not None else subprocess.DEVNULL
-            self.child_process = subprocess.Popen(argv, cwd=self.resolved['code'],
-                env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=context_pipe,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            self.record_diagnostic('child_started', child_id=child['child_id'], session_id=child['session_id'],
-                                   pid=getattr(self.child_process, 'pid', None), parent_pid=os.getpid())
-            threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
-            if voyager_context is not None:
-                self.child_process.stdin.write(json.dumps(voyager_context, ensure_ascii=False) + '\n')
-                self.child_process.stdin.close()
-            if self.cancelled.is_set():
-                self.child_process.terminate()
-            for line in self.child_process.stdout:
-                try: item = json.loads(line)
-                except ValueError: continue
-                if item.get('type') in ('retry', 'error'):
-                    self.record_diagnostic(item['type'], child_id=child['child_id'],
-                                           **{k:v for k,v in item.items() if k != 'type'})
-                if item.get('type') == 'error':
-                    child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
-                if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
-                if item.get('type') == 'tool_result':
-                    if item.get('name') == 'voyager_context' and not item.get('isError'):
-                        saw_voyager_context = True
-                    self.events.put(('agent', {'type': 'tool_result', 'name': child['role'] + ': ' + str(item.get('name')), 'isError': item.get('isError', False)}))
-            exit_code = self.child_process.wait()
-            if exit_code or self.cancelled.is_set() or not output.strip():
-                raise RuntimeError('Child failed or cancelled')
-            if voyager_context is not None:
-                if not saw_voyager_context:
-                    raise RuntimeError('Voyager did not read the bound retrieval')
-                output = json.dumps({'evidence': voyager_context, 'analysis': output[:12000]}, ensure_ascii=False)
+            if saved_report is not None:
+                output = json.dumps({'report_id': saved_report['report_id'],
+                                     'version': saved_report['version']})
+            else:
+                task = ('Use voyager_context to return an evidence package for this retrieval.'
+                        if voyager_context is not None else 'Read editor_context and return the report JSON.'
+                        if editor_context is not None else child['input_text'])
+                argv = embedded_agent.argv(self.home, task, kind='agent',
+                    code=Path(self.resolved['code']), session_id=child['session_id'])
+                argv.extend(['--child-role', child['role']])
+                context_pipe = subprocess.PIPE if child_context is not None else subprocess.DEVNULL
+                self.child_process = subprocess.Popen(argv, cwd=self.resolved['code'],
+                    env=dict(os.environ, HORIZON_PYTHON=sys.executable), stdin=context_pipe,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                self.record_diagnostic('child_started', child_id=child['child_id'], session_id=child['session_id'],
+                                       pid=getattr(self.child_process, 'pid', None), parent_pid=os.getpid())
+                threading.Thread(target=lambda p=self.child_process: p.stderr.read(), daemon=True).start()
+                if child_context is not None:
+                    self.child_process.stdin.write(json.dumps(child_context, ensure_ascii=False) + '\n')
+                    self.child_process.stdin.close()
+                if self.cancelled.is_set():
+                    self.child_process.terminate()
+                for line in self.child_process.stdout:
+                    try: item = json.loads(line)
+                    except ValueError: continue
+                    if item.get('type') in ('retry', 'error'):
+                        self.record_diagnostic(item['type'], child_id=child['child_id'],
+                                               **{k:v for k,v in item.items() if k != 'type'})
+                    if item.get('type') == 'error':
+                        child_failure = {key:item.get(key) for key in ('category','retryable','attempts','message')}
+                    if item.get('type') == 'final': output = str(item.get('text', ''))[:100000]
+                    if item.get('type') == 'tool_result':
+                        if item.get('name') == 'voyager_context' and not item.get('isError'):
+                            saw_voyager_context = True
+                        if item.get('name') == 'editor_context' and not item.get('isError'):
+                            saw_editor_context = True
+                        self.events.put(('agent', {'type': 'tool_result', 'name': child['role'] + ': ' + str(item.get('name')), 'isError': item.get('isError', False)}))
+                exit_code = self.child_process.wait()
+                if exit_code or self.cancelled.is_set() or not output.strip():
+                    raise RuntimeError('Child failed or cancelled')
+                if voyager_context is not None:
+                    if not saw_voyager_context:
+                        raise RuntimeError('Voyager did not read the bound retrieval')
+                    output = json.dumps({'evidence': voyager_context, 'analysis': output[:12000]}, ensure_ascii=False)
+                if editor_context is not None:
+                    if not saw_editor_context:
+                        raise RuntimeError('Editor did not read the bound material')
+                    report = reports.save(operation, self.task_id, evidence, versions,
+                                          json.loads(output)['claims'], token=self.service_token)
+                    output = json.dumps({'report_id': report['report_id'], 'version': report['version']})
             status = 'succeeded'
         except Exception:
             error = 'Child execution failed or was cancelled; completed sibling results are retained.'

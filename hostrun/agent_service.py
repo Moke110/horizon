@@ -245,7 +245,7 @@ class AgentService:
                     raise CommandError('invalid_command', 'Child result exceeds bounded context')
         else:
             roles = ('development_reader', 'development_summarizer', 'voyager', 'keeper') if keeper else (
-                'development_reader', 'development_summarizer', 'voyager')
+                'development_reader', 'development_summarizer', 'voyager', 'editor')
             if command.get('role') not in roles:
                 raise CommandError('invalid_command', 'Unsupported child role')
             text = command.get('input_text')
