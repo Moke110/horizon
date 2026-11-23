@@ -48,6 +48,81 @@ def test_cleanup_reports_repeat_outcomes_and_postverification_without_process_cl
     assert 'SECRET-POSTCHECK-MARKER' not in json.dumps(first)
 
 
+def test_cleanup_bounds_registration_reads_and_blocks_receipt_overwrite(tmp_path, monkeypatch):
+    from hostrun import cleanup
+    from hostrun.windows_cleanup import PinnedEntry
+    from test_dist_install import _build
+
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    cleanup.initialize_layout(tmp_path, identity)
+    package = _build(tmp_path.parent / 'package')
+    assert cleanup.install_test_package(
+        tmp_path, identity, package['artifact']['path'], package['artifact']['sha256']
+    )['status'] == 'ok'
+    original_read = cleanup._read_registration
+    original_delete = PinnedEntry.delete
+    reads = []
+    overwrite_attempts = []
+
+    def read(path):
+        reads.append(path)
+        return original_read(path)
+
+    def delete(pin):
+        if not overwrite_attempts:
+            overwrite_attempts.append(True)
+            with pytest.raises(OSError):
+                instance['registration'].write_bytes(b'changed')
+            with pytest.raises(OSError):
+                cleanup._write_registration(instance['registration'], original_read(instance['registration']))
+        original_delete(pin)
+
+    monkeypatch.setattr(cleanup, '_read_registration', read)
+    monkeypatch.setattr(PinnedEntry, 'delete', delete)
+    result = cleanup.cleanup_instance(tmp_path, identity, tmp_path.parent / 'report',
+                                      confirmation=identity)
+    assert result['status'] == 'cleaned'
+    assert overwrite_attempts
+    assert len(reads) <= 12
+    assert result['postverification']['status'] == 'verified'
+
+
+def test_cleanup_refuses_registered_file_beneath_replaced_parent(tmp_path, monkeypatch):
+    from hostrun import cleanup
+    from hostrun.embedded_agent import configure
+    from hostrun.windows_cleanup import PinnedEntry
+
+    instance = prepare_instance(tmp_path)
+    identity = instance['instance_id']
+    cleanup.initialize_layout(tmp_path, identity)
+    configure(instance['home'], provider='test', model='test', api_key='PRIVATE-REPLACEMENT-TEST')
+    parent = instance['home'] / 'agent'
+    file = parent / 'model.json'
+    original_id = file.stat().st_ino
+    old_parent = tmp_path.parent / 'original-agent'
+    original_pin = PinnedEntry.__init__
+    deletion_started = swapped = False
+
+    def pin(entry, path, **options):
+        nonlocal deletion_started, swapped
+        if path == instance['registration'] and options.get('read_only_share'):
+            deletion_started = True
+        if deletion_started and path == parent and not swapped:
+            parent.rename(old_parent)
+            parent.mkdir()
+            (old_parent / file.name).rename(file)
+            swapped = True
+        original_pin(entry, path, **options)
+
+    monkeypatch.setattr(PinnedEntry, '__init__', pin)
+    result = cleanup.cleanup_instance(tmp_path, identity, tmp_path.parent / 'report',
+                                      confirmation=identity)
+    assert swapped
+    assert result['status'] == 'partial'
+    assert file.stat().st_ino == original_id
+
+
 def test_cleanup_outcomes_preserve_replacement_and_redact_unknown_names(tmp_path):
     import json
     from hostrun.cleanup import initialize_layout, cleanup_instance
@@ -1942,8 +2017,9 @@ def test_managed_real_desktop_failure_exports_category_without_raw_traceback(tmp
     (tool / 'sitecustomize.py').write_text(
         'import ctypes\nctypes.windll.user32.MessageBoxW = lambda owner, message, title, flags: print(message) or 1\n',
         encoding='utf-8')
+    code = instance['code'] if mode == 'ordinary' else instance['code'] / 'current'
     result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.desktop',
-                             '--code', str(instance['code']), '--archive', str(instance['archive'])],
+                             '--code', str(code), '--archive', str(instance['archive'])],
                             cwd=tool, env={**os.environ, 'PYTHONPATH': os.pathsep.join((str(tool), str(source))),
                                            'HORIZON_DATA_HOME': str(home)},
                             capture_output=True, text=True, encoding='utf-8', timeout=10)
@@ -1952,7 +2028,7 @@ def test_managed_real_desktop_failure_exports_category_without_raw_traceback(tmp
         assert 'Traceback' in (tool / '.horizon/desktop-error.log').read_text(encoding='utf-8')
         return
     assert result.returncode == 2
-    assert 'RuntimeError' in result.stdout
+    assert 'OSError' in result.stdout
     assert 'Traceback' not in result.stdout + result.stderr
     assert not (tool / '.horizon/desktop-error.log').exists()
     if mode == 'report_unavailable':
@@ -1963,7 +2039,7 @@ def test_managed_real_desktop_failure_exports_category_without_raw_traceback(tmp
     assert len(reports) == 1
     assert str(reports[0]) in result.stdout
     events = (reports[0] / 'events.jsonl').read_text(encoding='utf-8')
-    assert 'RuntimeError' in events
+    assert 'OSError' in events
 
 
 @pytest.mark.parametrize('managed,connected', [(True, True), (False, True), (True, False)])
@@ -1983,7 +2059,9 @@ def test_managed_renderer_raw_stderr_is_not_persisted_and_exit_is_reported(tmp_p
     shutil.copyfile(source / 'common.py', tool / 'common.py')
     (tool / 'sitecustomize.py').write_text(
         'import ctypes\nctypes.windll.user32.MessageBoxW = lambda *args: 1\n', encoding='utf-8')
-    desktop = instance['code'] / 'desktop'
+    code = instance['code'] / 'current' if managed else instance['code']
+    renderer_source = tmp_path.parent / 'renderer-source' if managed else code
+    desktop = renderer_source / 'desktop'
     runtime = desktop / 'node_modules/electron/dist'
     runtime.mkdir(parents=True)
     shutil.copyfile(shutil.which('node'), runtime / 'electron.exe')
@@ -2002,8 +2080,18 @@ const socket = net.connect(Number(process.env.HORIZON_DESKTOP_PORT), '127.0.0.1'
 socket.once('data', () => process.exit(17));
 setTimeout(() => process.exit(18), 8000);
 ''', encoding='utf-8')
+    if managed:
+        from hostrun.cleanup import install_test_package
+        from hostrun.distribution import build
+        from test_dist_install import PACKAGE_FILES, _host_compat, _write_tree
+
+        _write_tree(renderer_source, PACKAGE_FILES)
+        package = build(source=renderer_source, out=tmp_path.parent / 'renderer-package',
+                        version='0.1.0', channel='stable', commit='test', compat=_host_compat())
+        assert install_test_package(tmp_path, instance['instance_id'], package['artifact']['path'],
+                                    package['artifact']['sha256'])['status'] == 'ok'
     result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'hostrun.desktop',
-                             '--code', str(instance['code']), '--archive', str(instance['archive'])],
+                             '--code', str(code), '--archive', str(instance['archive'])],
                             cwd=tool, env={**os.environ, 'PYTHONPATH': os.pathsep.join((str(tool), str(source))),
                                            'HORIZON_DATA_HOME': str(home),
                                            'ELECTRON_LOG_FILE': str(tmp_path.parent / 'inherited.log'),
@@ -2552,9 +2640,10 @@ def test_internal_upgrade_recovers_stage_and_initializer_refusal(tmp_path, monke
     ('version_before', None), ('version_after', None),
     ('backup', 'replacement'), ('version_after', 'replacement'),
     ('code_move', 'wrong_artifact'),
-    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32)],
+    *[(f'batch_{direction}_{position}', None) for direction in ('old', 'new') for position in (1, 16, 32, 33, 256, 257)],
     ('batch_old_16', 'code_replacement'), ('batch_new_16', 'code_replacement'),
-    ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit')])
+    ('batch_old_16', 'recover_exit'), ('batch_new_16', 'recover_exit'),
+    ('batch_new_257', 'recover_exit_256'), ('batch_new_257', 'recover_exit_257')])
 def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damage):
     import json
     import os
@@ -2567,7 +2656,10 @@ def test_internal_upgrade_recovers_code_move_process_exit(tmp_path, phase, damag
     instance = prepare_instance(tmp_path)
     initialize_layout(tmp_path, instance['instance_id'])
     first = _build(tmp_path.parent / 'first')
-    extra = {f'hostrun/payload/file-{i:03}.txt': 'original' for i in range(40)} if phase.startswith('batch_') else {}
+    extra = {}
+    if phase.startswith('batch_'):
+        position = int(phase.rsplit('_', 1)[1])
+        extra = {f'hostrun/payload/file-{i:03}.txt': 'original' for i in range(max(40, position))}
     if extra:
         initial_source = _write_tree(tmp_path.parent / 'initial-source', {**PACKAGE_FILES, **extra})
         first = build(source=initial_source, out=tmp_path.parent / 'initial', version='0.1.0', channel='stable', commit='test', compat=_host_compat())
@@ -2654,16 +2746,21 @@ print({key: result.get(key) for key in ('status', 'reason', 'recovery')}, flush=
     repository = Path(__file__).resolve().parents[1]
     shutil.copytree(repository / 'hostrun', tool / 'hostrun', ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copyfile(repository / 'common.py', tool / 'common.py')
-    if damage == 'recover_exit':
+    if damage and damage.startswith('recover_exit'):
+        recovery_position = int(damage.rsplit('_', 1)[-1]) if damage != 'recover_exit' else 1
         recovery_script = '''
 import ctypes,os,sys
 from hostrun.managed_upgrade_operation import recover_upgrade
 native=ctypes.WinDLL
 kernel=native('kernel32',use_last_error=True)
+rename_count=0
 def set_info(*args):
+    global rename_count
     kernel.SetFileInformationByHandle.argtypes=set_info.argtypes
     result=kernel.SetFileInformationByHandle(*args)
-    if args[1]==3 and result: os._exit(78)
+    if args[1]==3 and result:
+        rename_count += 1
+        if rename_count == int(sys.argv[4]): os._exit(78)
     return result
 class Proxy:
     def __getattr__(self,name):
@@ -2671,7 +2768,7 @@ class Proxy:
 ctypes.WinDLL=lambda name,*a,**kw: Proxy() if name=='kernel32' else native(name,*a,**kw)
 recover_upgrade(sys.argv[1],sys.argv[2],sha256=sys.argv[3])
 '''
-        interrupted = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', recovery_script, str(code), str(home), digest],
+        interrupted = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', recovery_script, str(code), str(home), digest, str(recovery_position)],
                                      cwd=tool, env={**os.environ, 'PYTHONPATH': str(tool)}, capture_output=True, timeout=15)
         assert interrupted.returncode == 78, interrupted.stderr
         damage = None
@@ -2838,8 +2935,8 @@ def test_public_upgrade_handles_deep_installed_code_and_rollback(tmp_path, schem
 
 
 
-@pytest.mark.parametrize('receipt_failure', [False, True])
-def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypatch, receipt_failure):
+@pytest.mark.parametrize('receipt_failure,directory_count,write_limit', [(False, 65, 31), (True, 65, 31), (False, 320, 56)])
+def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypatch, receipt_failure, directory_count, write_limit):
     import time
     from test_dist_install import _write_tree, PACKAGE_FILES, _host_compat
     from hostrun.distribution import build
@@ -2849,7 +2946,7 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
     module = (Path(__file__).resolve().parents[1] / 'hostrun/agent_service.py').read_text(encoding='utf-8')
     def package(version):
         files = {**PACKAGE_FILES, 'hostrun/agent_service.py': module,
-                 **{f'hostrun/payload/file-{i:03}.txt': version for i in range(65)}}
+                 **{f'hostrun/payload/dir-{i:03}/file.txt': version for i in range(directory_count)}}
         source = _write_tree(tmp_path.parent / ('source-' + version), files)
         return build(source=source, out=tmp_path.parent / version, version=version,
                      channel='stable', commit='test', compat=_host_compat())
@@ -2885,13 +2982,13 @@ def test_public_upgrade_bounds_registration_io_for_many_files(tmp_path, monkeypa
         import zipfile
         with zipfile.ZipFile(second['artifact']['path']) as archive:
             assert all((operation / 'new' / name).read_bytes() == archive.read(name) for name in prior_names)
-        assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.1.0' for i in range(65))
+        assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.1.0' for i in range(directory_count))
         AgentService(home, token='test')
         return
     assert result['status'] == 'ok', result
-    assert all((code / f'hostrun/payload/file-{i:03}.txt').read_text() == '0.2.0' for i in range(65))
+    assert all((code / f'hostrun/payload/dir-{i:03}/file.txt').read_text() == '0.2.0' for i in range(directory_count))
     AgentService(home, token='test')
-    assert len(writes) < 100
+    assert len(writes) <= write_limit
 
 
 @pytest.mark.parametrize('replacement', [False, True])

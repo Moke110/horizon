@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -56,3 +57,120 @@ def test_installed_runtime_is_reused_when_install_lock_is_not_writable(tmp_path,
     with pytest.raises(PermissionError, match='read-only install lock'):
         executable(tmp_path / 'code', local_app_data=local)
     assert installed.read_bytes() == b'runtime'
+
+_ELECTRON = 'desktop/node_modules/electron/dist'
+
+
+@pytest.fixture
+def managed_package(tmp_path, monkeypatch):
+    from hostrun import cleanup, distribution
+    from test_dist_install import PACKAGE_FILES, _host_compat, _write_tree
+
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    control = cleanup.control_directory()
+    control.mkdir(parents=True)
+    source = _write_tree(tmp_path / 'source', {**PACKAGE_FILES,
+        f'{_ELECTRON}/electron.exe': 'electron fixture',
+        f'{_ELECTRON}/locales/en-US.pak': 'resource fixture',
+    })
+    package = distribution.build(source=source, out=tmp_path / 'package', version='0.9.0',
+                                 channel='stable', commit='test', compat=_host_compat())
+    def install():
+        instance = cleanup.prepare_instance(control)
+        cleanup.initialize_layout(control, instance['instance_id'])
+        assert cleanup.install_test_package(control, instance['instance_id'],
+            package['artifact']['path'], package['artifact']['sha256'])['status'] == 'ok'
+        return instance, instance['code'] / 'current'
+    return control, install
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='requires native Windows instance receipts')
+def test_managed_runtime_uses_its_owned_bundle_and_leaves_legacy_cache(managed_package, tmp_path, monkeypatch):
+    from hostrun import cleanup, desktop_bridge, desktop_runtime
+
+    control, install = managed_package
+    first, first_code = install()
+    second, second_code = install()
+    legacy = control.parent / 'desktop-runtime/legacy/electron.exe'
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b'legacy runtime')
+    with desktop_runtime.managed_executable(first_code, first['home']) as path:
+        assert path == first_code / _ELECTRON / 'electron.exe'
+        with pytest.raises(OSError):
+            path.write_bytes(b'replacement')
+        with pytest.raises(OSError):
+            path.rename(path.with_name('renamed.exe'))
+        with desktop_runtime.managed_executable(second_code, second['home']) as other:
+            assert other == second_code / _ELECTRON / 'electron.exe'
+        result = cleanup.cleanup_instance(control, first['instance_id'], tmp_path / 'blocked-report',
+                                          confirmation=first['instance_id'])
+        assert result['status'] == 'blocked' and result['reason'] == 'instance_busy'
+    def expect_managed_launch(resolved, path, managed):
+        assert path == first_code / _ELECTRON / 'electron.exe'
+        assert managed
+        with pytest.raises(OSError):
+            path.write_bytes(b'live replacement')
+        return 'launched'
+
+    def refuse_shared_runtime(*args, **kwargs):
+        pytest.fail('Managed package used shared runtime')
+
+    monkeypatch.setattr(desktop_bridge, '_serve', expect_managed_launch)
+    monkeypatch.setattr(desktop_runtime, 'executable', refuse_shared_runtime)
+    from hostrun.windows_cleanup import io_path
+    assert desktop_bridge.serve({'code': str(io_path(first_code)),
+                                 'runtime': str(io_path(first['home']))}) == 'launched'
+    assert cleanup.cleanup_instance(control, first['instance_id'], tmp_path / 'report',
+                                    confirmation=first['instance_id'])['status'] == 'cleaned'
+    assert legacy.read_bytes() == b'legacy runtime'
+    assert list(legacy.parent.parent.iterdir()) == [legacy.parent]
+    assert (second_code / _ELECTRON / 'electron.exe').is_file()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='requires native Windows instance receipts')
+@pytest.mark.parametrize('damage', ['missing', 'modified', 'same_bytes_replacement', 'unknown', 'wrong_instance'])
+def test_managed_runtime_does_not_fall_back_to_shared_cache(managed_package, damage):
+    from hostrun import cleanup, desktop_runtime
+
+    control, install = managed_package
+    instance, code = install()
+    runtime = code / _ELECTRON
+    target = runtime / 'locales/en-US.pak'
+    if damage == 'missing':
+        target.unlink()
+    elif damage == 'modified':
+        target.write_bytes(b'changed resource')
+    elif damage == 'same_bytes_replacement':
+        backup = target.with_suffix('.old')
+        target.rename(backup)
+        target.write_bytes(backup.read_bytes())
+        backup.unlink()
+    elif damage == 'unknown':
+        (runtime / 'unknown.dll').write_bytes(b'unowned')
+    else:
+        _, code = install()
+    with pytest.raises((cleanup.InstanceInvalid, OSError)):
+        with desktop_runtime.managed_executable(code, instance['home']):
+            pytest.fail('An unverified bundle was selected')
+    assert not (control.parent / 'desktop-runtime').exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='requires native Windows instance receipts')
+@pytest.mark.parametrize('mismatch', ['other_instance', 'developer_source'])
+def test_bridge_rejects_other_code_with_implicit_managed_home(managed_package, monkeypatch, mismatch):
+    from hostrun import cleanup, desktop_bridge, desktop_runtime
+
+    control, install = managed_package
+    first, _ = install()
+    _, other_code = install()
+    if mismatch == 'developer_source':
+        other_code = control.parent / 'source'
+
+    def refuse_launch(*args, **kwargs):
+        pytest.fail('An invalid managed launch reached runtime selection')
+
+    monkeypatch.setattr(desktop_runtime, 'executable', refuse_launch)
+    monkeypatch.setattr(desktop_runtime, 'managed_executable', refuse_launch)
+    with pytest.raises(cleanup.InstanceInvalid):
+        desktop_bridge.serve({'code': str(other_code), 'runtime': str(first['home'])})
+    assert not (control.parent / 'desktop-runtime').exists()

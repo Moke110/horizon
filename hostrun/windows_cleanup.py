@@ -89,7 +89,7 @@ def publish_registration_snapshot(path, payload):
 
 
 class PinnedEntry:
-    def __init__(self, path, *, delete=False, create_parent=None, create_share=1, create_delete=True, writable=False, create_file=False):
+    def __init__(self, path, *, delete=False, create_parent=None, create_share=1, create_delete=True, writable=False, create_file=False, read_only_share=False):
         self.path = Path(path)
         self.api = ctypes.WinDLL('kernel32', use_last_error=True)
         self.api.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
@@ -104,7 +104,7 @@ class PinnedEntry:
                                             directory=not create_file, writable=writable)
         else:
             self.handle = self.api.CreateFileW(str(io_path(self.path)), 0x81 | (2 if writable else 0) | (0x10000 if delete else 0),
-                                              3, None, 3, 0x02200000, None)
+                                              1 if read_only_share else 3, None, 3, 0x02200000, None)
         if self.handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         try:
@@ -212,7 +212,7 @@ def remove_owned_files(root, relative_paths, validate, *, removed=None, identiti
             pin = PinnedEntry(directory)
             stack.callback(pin.close)
             pins[directory] = pin
-        validate()
+        validate(root)
         for relative in relative_paths:
             target = root / relative
             if not target.is_relative_to(root) or '..' in Path(relative).parts:
@@ -231,7 +231,7 @@ def remove_owned_files(root, relative_paths, validate, *, removed=None, identiti
                     stat = io_path(target).stat()
                     if identities[relative] != [stat.st_dev, stat.st_ino]:
                         raise ValueError('Inventoried file identity changed')
-                validate()
+                validate(target)
                 entry.delete()
                 removed.append(relative)
     return removed
@@ -240,7 +240,7 @@ def remove_owned_files(root, relative_paths, validate, *, removed=None, identiti
 def remove_empty_children(root, names, validate, removed):
     root = Path(root)
     with pin_ancestors(root):
-        validate()
+        validate(root)
         for name in names:
             if name not in ('app', 'data', 'archive'):
                 raise ValueError('Unknown owned directory')
@@ -250,7 +250,7 @@ def remove_empty_children(root, names, validate, removed):
             with ExitStack() as held:
                 pin = PinnedEntry(path, delete=True)
                 held.callback(pin.close)
-                validate()
+                validate(path)
                 if pin.directory and not any(io_path(path).iterdir()):
                     pin.delete()
                     removed.append(name + '/')
@@ -267,7 +267,7 @@ def remove_empty_inventory(root, inventory, validate, removed):
         with pin_ancestors(path.parent), ExitStack() as held:
             pin = PinnedEntry(path, delete=True)
             held.callback(pin.close)
-            validate()
+            validate(path)
             stat = io_path(path).stat()
             if inventory[relative] != [stat.st_dev, stat.st_ino]:
                 raise ValueError('Directory inventory identity changed')

@@ -594,9 +594,24 @@ def voyager_command(voyager, command, *, token, fulltext=None, cancelled=None):
 
 
 def serve(resolved):
+    from hostrun.cleanup import InstanceInvalid, _lexical_home, control_directory
+    code = _lexical_home(resolved['code'])
+    home = _lexical_home(resolved['runtime'])
+    managed = os.name == 'nt' and home.parent.parent == control_directory()
+    if managed:
+        if home.name != 'data' or code != home.parent / 'app/current':
+            raise InstanceInvalid('Unexpected managed desktop application')
+        bound = {**resolved, 'code': str(code), 'runtime': str(home)}
+        with desktop_runtime.managed_executable(code, home) as executable:
+            return _serve(bound, executable, managed)
+    return _serve(resolved, desktop_runtime.executable(resolved['code']), managed)
+
+
+def _serve(resolved, executable, managed):
+    from hostrun.cleanup import _lexical_home
     from hostrun.desktop_worker import DesktopWorker
     code = Path(resolved['code'])
-    executable = desktop_runtime.executable(code)
+    home = _lexical_home(resolved['runtime'])
     env = dict(os.environ)
     env.pop('ELECTRON_RUN_AS_NODE', None)
     listener = socket.socket()
@@ -606,9 +621,6 @@ def serve(resolved):
     token = secrets.token_hex(32)
     env['HORIZON_DESKTOP_PORT'] = str(listener.getsockname()[1])
     env['HORIZON_DESKTOP_TOKEN'] = token
-    from hostrun.cleanup import _lexical_home, control_directory
-    home = _lexical_home(resolved['runtime'])
-    managed = os.name == 'nt' and home.parent.parent == control_directory()
     with ExitStack() as logging:
         if managed:
             env.pop('ELECTRON_LOG_FILE', None)
