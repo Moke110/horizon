@@ -113,11 +113,12 @@ def test_synthesis_resolves_each_citation_to_its_own_source(tmp_path):
         evidence.append(report_evidence(reports.materials, material["material_id"], "task", token=token))
     result = reports.save_synthesis("op", "task", "Do the studies agree?", evidence, {}, [
         {"kind": "disagreement", "text": "两次观察结论不同。",
-         "citations": [{"material_id": row["material_id"], "locator": "p1", "excerpt": excerpt}
+         "citations": [{"material_id": row["material_id"], "locator": "p7", "excerpt": excerpt}
                        for row, excerpt in zip(evidence, observed, strict=True)]}
     ], token=token)
     assert result["title"] == "Do the studies agree?"
     assert len(result["sources"]) == 2
+    assert [item["locator"] for item in result["claims"][0]["citations"]] == ["p1", "p1"]
     reopened = ReportService(tmp_path, token=token)
     assert [reopened.citation(result["report_id"], "task", 0, i, token=token)["segment"]
             for i in range(2)] == observed

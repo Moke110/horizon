@@ -3,7 +3,8 @@
 import json
 
 from hostrun.agent_service import CommandError
-from hostrun.editor_reports import DEFAULT_PREFERENCE_VERSION, build_editor_context, report_evidence
+from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, SYNTHESIS_SOURCE_BUDGET,
+                                    build_editor_context, report_evidence)
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.voyager_service import VoyagerService
 
@@ -77,7 +78,7 @@ def prepare_synthesis(reports, home, task_id, command, *, token):
              and item["sources"] and all(ref.get("status") != "removed" for ref in item["sources"])][:8]
     versions = {"knowledge": [{key: item[key] for key in ("kind", "id", "version")} for item in known],
                 "preferences": [DEFAULT_PREFERENCE_VERSION]}
-    sources = [{**build_editor_context(item, [], budget=42_000 // len(evidence))["source"],
+    sources = [{**build_editor_context(item, [], budget=SYNTHESIS_SOURCE_BUDGET // len(evidence))["source"],
                 "material_id": item["material_id"], "repost": item["material_id"] in reposts}
                for item in evidence]
     context = {"mode": "synthesis", "question": command["question"], "sources": sources,

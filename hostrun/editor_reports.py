@@ -11,6 +11,7 @@ from hostrun.voyager_materials import MaterialsService, citation_anchors
 from hostrun.managed_database import database_connection
 
 
+SYNTHESIS_SOURCE_BUDGET = 14_000
 DEFAULT_PREFERENCE_VERSION = {"id": "editor-default", "version": 1}
 
 
@@ -148,7 +149,7 @@ class ReportService:
                     raise CommandError("version_conflict", "资料或摘要授权已更新，请重新生成报道")
 
             report_id = str(uuid.uuid4())
-            budget = 42_000 // len(evidence)
+            budget = SYNTHESIS_SOURCE_BUDGET // len(evidence) if synthesis else 42_000
             projections = {mid: build_editor_context(item, [], budget=budget)["source"]
                            for mid, item in sources.items()}
             summaries = [{key: item[key] for key in
@@ -195,9 +196,15 @@ class ReportService:
                 raise CommandError("invalid_source", "引用指向未选择的资料")
             evidence, projection = sources[mid], projections[mid]
             excerpt, locator = item["excerpt"], item["locator"]
-            if projection["limitation"] != evidence["limitation"] and not any(
-                    ref["locator"] == locator and excerpt in ref["text"] for ref in projection["locators"]):
-                raise CommandError("invalid_source", "引用不在本次提供的快照片段中")
+            if synthesis or projection["limitation"] != evidence["limitation"]:
+                sample = " ".join(excerpt.split())
+                matching = [ref["locator"] for ref in projection["locators"]
+                            if sample in " ".join(ref["text"].split())]
+                if locator not in matching:
+                    if synthesis and len(matching) == 1:
+                        locator = matching[0]
+                    else:
+                        raise CommandError("invalid_source", "引用不在本次提供的快照片段中")
             authorization = evidence["abstract_authorization"]
             if authorization is None and not re.fullmatch(r"p[1-9][0-9]*|page [1-9][0-9]*", locator):
                 raise CommandError("invalid_source", "引用需要真实快照页码或段落编号")
