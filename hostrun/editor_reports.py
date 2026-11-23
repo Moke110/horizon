@@ -95,21 +95,71 @@ class ReportService:
                 report_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL,
                 task_id TEXT NOT NULL, request_digest TEXT NOT NULL, result TEXT NOT NULL)""")
 
+            db.execute("""CREATE TABLE IF NOT EXISTS editor_report_versions(
+                report_id TEXT NOT NULL, version INTEGER NOT NULL, operation_id TEXT UNIQUE NOT NULL,
+                task_id TEXT NOT NULL, request_digest TEXT NOT NULL, result TEXT NOT NULL,
+                PRIMARY KEY(report_id, version))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS editor_report_feedback(
+                report_id TEXT NOT NULL, version INTEGER NOT NULL, revision INTEGER NOT NULL,
+                operation_id TEXT UNIQUE NOT NULL, result TEXT NOT NULL,
+                PRIMARY KEY(report_id, version, revision))""")
+
+    def set_feedback(self, report_id, task_id, version, operation_id, expected_revision,
+                     *, score, reason=None, claim_index=None, token):
+        if type(version) is not int or version < 1:
+            raise CommandError("invalid_version", "请指定报道版本")
+        report = self._read(report_id, task_id, version=version, token=token)
+        if (type(expected_revision) is not int or expected_revision < 0
+                or not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 128
+                or score is not None and (type(score) is not int or not 1 <= score <= 5)
+                or reason is not None and (not isinstance(reason, str) or len(reason) > 2000)
+                or claim_index is not None and (type(claim_index) is not int or not 0 <= claim_index < len(report["claims"]))
+                or score is None and (reason is not None or claim_index is not None)):
+            raise CommandError("invalid_feedback", "评分、原因或段落无效")
+        feedback = {"revision": expected_revision + 1, "score": score,
+                    "reason": reason, "claim_index": claim_index}
+        with database_connection(self.home) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            prior = db.execute(
+                "SELECT report_id, version, result FROM editor_report_feedback WHERE operation_id=?",
+                (operation_id,)).fetchone()
+            if prior:
+                if tuple(prior[:2]) != (report_id, version) or json.loads(prior[2]) != feedback:
+                    raise CommandError("operation_conflict", "操作标识与已保存反馈冲突")
+                return feedback
+            current = self._feedback(db, report_id, version)
+            if expected_revision != (current["revision"] if current else 0):
+                raise CommandError("version_conflict", "反馈已更新，请重新读取该报道版本")
+            db.execute("INSERT INTO editor_report_feedback VALUES(?,?,?,?,?)",
+                       (report_id, version, feedback["revision"], operation_id, json.dumps(feedback)))
+        return feedback
+
+    def _feedback(self, db, report_id, version):
+        row = db.execute(
+            "SELECT result FROM editor_report_feedback WHERE report_id=? AND version=? ORDER BY revision DESC LIMIT 1",
+            (report_id, version)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def _authorize(self, token):
         if not isinstance(token, str) or not hmac.compare_digest(token, self._token):
             raise PermissionError("Unauthorized Editor command")
 
-    def save(self, operation_id, task_id, evidence, context_versions, claims, *, token):
+    def save(self, operation_id, task_id, evidence, context_versions, claims, *, token, report_id=None, base_version=None):
         self._authorize(token)
         if not isinstance(claims, list) or not 1 <= len(claims) <= 40:
             raise CommandError("invalid_report", "报道需要至少一条有效判断")
         request = [task_id, evidence, context_versions, claims]
+        if report_id is not None:
+            if type(base_version) is not int or base_version < 1:
+                raise CommandError("invalid_version", "报道版本无效")
+            request.extend([report_id, base_version])
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         with database_connection(self.home) as db, db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute(
-                "SELECT request_digest, result FROM editor_reports WHERE operation_id=?",
-                (operation_id,),
+                "SELECT request_digest, result FROM editor_reports WHERE operation_id=? "
+                "UNION ALL SELECT request_digest, result FROM editor_report_versions WHERE operation_id=?",
+                (operation_id, operation_id),
             ).fetchone()
             if previous:
                 if previous[0] != digest:
@@ -120,21 +170,38 @@ class ReportService:
             if current != evidence:
                 raise CommandError("version_conflict", "资料或摘要授权已更新，请重新生成报道")
 
-            report_id = str(uuid.uuid4())
+            version = 1
+            if report_id is None:
+                report_id = str(uuid.uuid4())
+            else:
+                original = self._version(db, report_id, task_id, None)
+                if original["version"] != base_version:
+                    raise CommandError("version_conflict", "报道已有新版本，请重新读取")
+                if original["source"]["material_id"] != evidence["material_id"]:
+                    replacement = self.materials.get_package(evidence["material_id"], task_id=task_id, token=token)
+                    if (original["source"]["snapshot"] is not None
+                            or (replacement.get("academic") or {}).get("supplemented_from") != original["source"]["material_id"]):
+                        raise CommandError("invalid_source", "改写必须使用原报道的资料或同一条目的补充全文")
+                version = base_version + 1
             projection = build_editor_context(evidence, [])["source"]
             result = {
-                "report_id": report_id, "version": 1, "task_id": task_id,
+                "report_id": report_id, "version": version, "task_id": task_id,
                 "title": evidence["title"], "context_versions": context_versions,
                 "limitation": projection["limitation"],
                 "source": {key: evidence[key] for key in
                            ("material_id", "material_version", "snapshot", "source")},
-                "claims": [self._claim(db, claim, evidence, projection, report_id, task_id, token) for claim in claims],
+                "claims": [self._claim(db, claim, evidence, projection, report_id, version, task_id, token) for claim in claims],
             }
-            db.execute("INSERT INTO editor_reports VALUES(?,?,?,?,?)",
-                       (report_id, operation_id, task_id, digest, json.dumps(result, ensure_ascii=False)))
+            encoded = json.dumps(result, ensure_ascii=False)
+            if version == 1:
+                db.execute("INSERT INTO editor_reports VALUES(?,?,?,?,?)",
+                           (report_id, operation_id, task_id, digest, encoded))
+            else:
+                db.execute("INSERT INTO editor_report_versions VALUES(?,?,?,?,?,?)",
+                           (report_id, version, operation_id, task_id, digest, encoded))
             return result
 
-    def _claim(self, db, claim, evidence, projection, report_id, task_id, token):
+    def _claim(self, db, claim, evidence, projection, report_id, version, task_id, token):
         if not isinstance(claim, dict):
             raise CommandError("invalid_report", "报道判断必须为结构化对象")
         kind = claim.get("kind")
@@ -161,7 +228,7 @@ class ReportService:
                         "material_version": evidence["material_version"],
                         "excerpt": excerpt, "locator": locator}
             references.append(self.materials.report_reference(
-                db, citation, report_id=report_id, task_id=task_id,
+                db, citation, report_id=report_id, report_version=version, task_id=task_id,
                 abstract_operation=authorization["operation_id"] if authorization else None,
                 token=token))
         return {"kind": claim["kind"], "text": claim["text"], "citations": references}
@@ -169,8 +236,9 @@ class ReportService:
     def get_by_operation(self, operation_id, task_id, material_id, *, token):
         self._authorize(token)
         with database_connection(self.home) as db, db:
-            row = db.execute("SELECT result FROM editor_reports WHERE operation_id=? AND task_id=?",
-                             (operation_id, task_id)).fetchone()
+            row = db.execute("SELECT result FROM editor_reports WHERE operation_id=? AND task_id=? "
+                             "UNION ALL SELECT result FROM editor_report_versions WHERE operation_id=? AND task_id=?",
+                             (operation_id, task_id, operation_id, task_id)).fetchone()
         if row is None:
             return None
         result = json.loads(row[0])
@@ -178,8 +246,12 @@ class ReportService:
             raise CommandError("operation_conflict", "操作标识与已保存资料冲突")
         return result
 
-    def get(self, report_id, task_id, *, token):
-        report = self._read(report_id, task_id, token=token)
+    def get(self, report_id, task_id, *, token, version=None):
+        report = self._read(report_id, task_id, version=version, token=token)
+        with database_connection(self.home) as db, db:
+            feedback = self._feedback(db, report_id, report["version"])
+        if feedback is not None:
+            report["feedback"] = feedback
         for claim in report["claims"]:
             for citation in claim["citations"]:
                 if citation.get("status") == "abstract":
@@ -188,20 +260,46 @@ class ReportService:
                         citation["excerpt"] = "原摘要不可用"
         return report
 
-    def _read(self, report_id, task_id, *, token):
+    def _read(self, report_id, task_id, *, token, version=None):
         self._authorize(token)
         with database_connection(self.home) as db, db:
-            row = db.execute("SELECT result FROM editor_reports WHERE report_id=? AND task_id=?", (report_id, task_id)).fetchone()
+            return self._version(db, report_id, task_id, version)
+
+    def _version(self, db, report_id, task_id, version):
+        if version is not None and (type(version) is not int or version < 1):
+            raise CommandError("not_found", "找不到报道")
+        row = db.execute(
+            "SELECT result FROM editor_report_versions WHERE report_id=? AND task_id=? "
+            "AND (version=? OR ? IS NULL) ORDER BY version DESC LIMIT 1",
+            (report_id, task_id, version, version)).fetchone()
+        if not row and version in (None, 1):
+            row = db.execute("SELECT result FROM editor_reports WHERE report_id=? AND task_id=?",
+                             (report_id, task_id)).fetchone()
         if not row:
             raise CommandError("not_found", "找不到报道")
         return json.loads(row[0])
+
+    def late_fulltext_input(self, db, task_id, material_id, supplemented_from, *, token):
+        """Resolve the latest summary report in the plan's original task."""
+        self._authorize(token)
+        summary_reports = db.execute(
+            "SELECT report_id FROM editor_reports WHERE task_id=? "
+            "AND json_extract(result, '$.source.material_id')=? ORDER BY rowid DESC",
+            (task_id, supplemented_from))
+        for (identity,) in summary_reports:
+            report = self._version(db, identity, task_id, None)
+            if report["source"]["snapshot"] is None:
+                return json.dumps({"report_id": identity, "base_version": report["version"],
+                                   "material_id": material_id, "question": "全文现已就绪，请用全文证据核对并改写已有摘要报道。"},
+                                  ensure_ascii=False)
+        return material_id
 
     def _open_abstract(self, report, citation, *, token):
         owner = f"report:{report['report_id']}:{report['version']}:{citation['content_hash']}"
         return self.materials.report_abstract_view(citation, owner, report["task_id"], token=token)
 
-    def citation(self, report_id, task_id, claim_index, citation_index, *, token, snapshot_offset=None):
-        report = self._read(report_id, task_id, token=token)
+    def citation(self, report_id, task_id, claim_index, citation_index, *, token, snapshot_offset=None, version=None):
+        report = self._read(report_id, task_id, version=version, token=token)
         try:
             if claim_index < 0 or citation_index < 0:
                 raise IndexError

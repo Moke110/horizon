@@ -97,3 +97,58 @@ def test_large_source_limits_report_coverage_but_preserves_original_reading(tmp_
     original = service.citation(report["report_id"], "task", 0, 0, snapshot_offset=0, token=token)
     assert original["segment"] == body[:12_000]
     assert original["next_offset"] == 12_000
+
+def test_report_feedback_is_revisioned_withdrawn_and_scoped_to_version(tmp_path):
+    import pytest
+    from hostrun.agent_service import CommandError
+    from hostrun.editor_reports import ReportService
+
+    token = "editor-test"
+    service = ReportService(tmp_path, token=token)
+    material = service.materials.register_text(
+        {"schema_version": 1, "operation_id": "source", "title": "Observations",
+         "source_label": "Field notes", "text": "Twelve observations."}, token=token)
+    evidence = report_evidence(service.materials, material["material_id"], "task", token=token)
+    report = service.save("report", "task", evidence, {}, [{"kind": "unknown", "text": "样本未知"}], token=token)
+    identity = report["report_id"]
+    first = service.set_feedback(identity, "task", 1, "first", 0, score=3,
+                                 reason="需要解释", claim_index=0, token=token)
+    assert first["revision"] == 1
+    assert first["score"] == 3
+    restarted = ReportService(tmp_path, token=token)
+    assert restarted.get(identity, "task", token=token, version=1)["feedback"] == first
+    with pytest.raises(CommandError, match="反馈已更新"):
+        restarted.set_feedback(identity, "task", 1, "stale", 0, score=4, token=token)
+    withdrawn = restarted.set_feedback(identity, "task", 1, "withdraw", 1, score=None, token=token)
+    assert withdrawn["score"] is None
+    assert restarted.set_feedback(identity, "task", 1, "first", 0, score=3,
+                                  reason="需要解释", claim_index=0, token=token) == first
+    assert restarted.get(identity, "task", token=token, version=1)["feedback"] == withdrawn
+
+def test_rewrite_reuses_report_identity_and_preserves_old_version_and_feedback(tmp_path):
+    import pytest
+    from hostrun.agent_service import CommandError
+    from hostrun.editor_reports import ReportService
+
+    token = "editor-test"
+    service = ReportService(tmp_path, token=token)
+    material = service.materials.register_text(
+        {"schema_version": 1, "operation_id": "source", "title": "Observations",
+         "source_label": "Field notes", "text": "Twelve observations."}, token=token)
+    evidence = report_evidence(service.materials, material["material_id"], "task", token=token)
+    source = {"kind": "source", "text": "原始记录有十二条观察。",
+              "citations": [{"excerpt": "Twelve observations.", "locator": "p1"}]}
+    v1 = service.save("report", "task", evidence, {}, [source], token=token)
+    identity = v1["report_id"]
+    service.set_feedback(identity, "task", 1, "rating", 0, score=4, token=token)
+    changed = {**source, "text": "来源描述了十二条观察。"}
+    v2 = service.save("rewrite", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token)
+    assert (v2["report_id"], v2["version"]) == (identity, 2)
+    assert service.get_by_operation("rewrite", "task", material["material_id"], token=token) == v2
+    assert service.get(identity, "task", version=2, token=token) == v2
+    assert service.get(identity, "task", version=1, token=token)["feedback"]["score"] == 4
+    assert service.get(identity, "task", version=1, token=token)["claims"] == v1["claims"]
+    assert service.citation(identity, "task", 0, 0, version=2, token=token)["segment"] == "Twelve observations."
+    assert service.save("rewrite", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token) == v2
+    with pytest.raises(CommandError, match="已有新版本"):
+        service.save("old", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token)

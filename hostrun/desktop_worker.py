@@ -127,10 +127,25 @@ class DesktopWorker:
             from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 
             reports = ReportService(self.home, token=self.service_token)
-            saved_report = reports.get_by_operation(operation, self.task_id, event.get('input'),
+            material_id = event.get('input')
+            rewrite = None
+            if isinstance(material_id, str) and material_id.startswith('{'):
+                rewrite = json.loads(material_id)
+                if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
+                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id'}
+                        or not isinstance(rewrite['report_id'], str)
+                        or ('material_id' in rewrite and not isinstance(rewrite['material_id'], str))
+                        or not isinstance(rewrite['question'], str)
+                        or not 1 <= len(rewrite['question'].strip()) <= 2000
+                        or type(rewrite['base_version']) is not int):
+                    raise ValueError('Invalid Editor follow-up')
+                previous = reports.get(rewrite['report_id'], self.task_id,
+                                       version=rewrite['base_version'], token=self.service_token)
+                material_id = rewrite.get('material_id', previous['source']['material_id'])
+            saved_report = reports.get_by_operation(operation, self.task_id, material_id,
                                                     token=self.service_token)
             if saved_report is None:
-                evidence = report_evidence(reports.materials, event.get('input'), self.task_id,
+                evidence = report_evidence(reports.materials, material_id, self.task_id,
                                            token=self.service_token)
                 workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
                 known = workbench.search(token=self.service_token, limit=8)['results']
@@ -138,6 +153,14 @@ class DesktopWorker:
                                           for item in known],
                             'preferences': [DEFAULT_PREFERENCE_VERSION]}
                 editor_context = build_editor_context(evidence, known)
+                if rewrite:
+                    editor_context['follow_up'] = {
+                        'question': rewrite['question'],
+                        'previous_claims': [
+                            {'kind': claim['kind'], 'text': claim['text'][:240]}
+                            for claim in previous['claims'][:8]
+                        ],
+                    }
         child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
@@ -208,7 +231,9 @@ class DesktopWorker:
                     if not saw_editor_context:
                         raise RuntimeError('Editor did not read the bound material')
                     report = reports.save(operation, self.task_id, evidence, versions,
-                                          read_report_response(output), token=self.service_token)
+                                          read_report_response(output), token=self.service_token,
+                                          report_id=rewrite['report_id'] if rewrite else None,
+                                          base_version=rewrite['base_version'] if rewrite else None)
                     output = json.dumps({'report_id': report['report_id'], 'version': report['version']})
             status = 'succeeded'
         except Exception:

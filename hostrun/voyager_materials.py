@@ -506,11 +506,11 @@ class MaterialsService(MaterialLifecycle):
         reference['source_label'] = material['source'].get('label')
         return reference
 
-    def report_reference(self, db, citation, *, report_id, task_id, abstract_operation, token):
+    def report_reference(self, db, citation, *, report_id, task_id, abstract_operation, token, report_version=1):
         """Validate and bind Editor evidence within the caller's write transaction."""
         self._authorize(token)
         material = _record(db, citation["material_id"])
-        owner = f"report:{report_id}:1"
+        owner = f"report:{report_id}:{report_version}"
         if abstract_operation is None:
             resolved = self.validate_citation(db, citation)
             self._bind_reference(db, material, owner)

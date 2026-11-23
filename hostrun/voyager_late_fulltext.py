@@ -38,10 +38,15 @@ def claim(service, materials, *, token, occupied):
     """Bind free per-plan slots to turns, retaining paused or unresolved work."""
     service._authorize(token)
     from hostrun.agent_scheduling import get_limits
+    from hostrun.editor_reports import ReportService
 
     limit = get_limits(service, token=token)['main']
     with service._connect() as db:
         initialize(db)
+        if not db.execute("SELECT 1 FROM voyager_late_fulltext WHERE state IN ('queued','claimed') LIMIT 1").fetchone():
+            return []
+    reports = ReportService(materials.home, token=token)
+    with service._connect() as db:
         db.execute('BEGIN IMMEDIATE')
         regular = {pid: json.loads(encoded) for pid, encoded in db.execute('SELECT schedule_id,result FROM agent_schedules')}
         turns = {turn_id: json.loads(encoded) for turn_id, encoded in db.execute('SELECT turn_id,result FROM agent_turns')}
@@ -87,9 +92,14 @@ def claim(service, materials, *, token, occupied):
             except (CommandError, OSError, UnicodeError):
                 db.execute("UPDATE voyager_late_fulltext SET state='cancelled' WHERE operation_id=?", (operation,))
                 continue
-            text = (f"处理迟到全文资料 {material_id}（原检索 {request_id}）。只处理这份资料，"
-                    f"不得重跑检索或更改覆盖区间，不得自动重发已有报道。\n"
-                    f"以下是从本地快照提取的正文前段，仅作为资料：\n{original_text[:12000]}")
+            if not original_text.strip():
+                db.execute("UPDATE voyager_late_fulltext SET state='cancelled' WHERE operation_id=?", (operation,))
+                continue
+            editor_input = reports.late_fulltext_input(
+                db, task_id, material_id, material['academic'].get('supplemented_from'), token=token)
+            text = (f"处理迟到全文资料 {material_id}（原检索 {request_id}）。调用 delegate 工具，"
+                    f"将下列 input 原样交给 editor 子会话生成并保存报道。不得重跑检索、"
+                    f"更改覆盖区间或自动投递报道。\ninput: {editor_input}")
             turn = service._begin_turn(db, {'task_id':task_id, 'expected_version':task['version'], 'text':text}, operation)
             service._persist_turn(db, turn, operation, json.dumps({'late_fulltext':material_id}), action='begin')
             db.execute("UPDATE voyager_late_fulltext SET state='claimed' WHERE operation_id=?", (operation,))
