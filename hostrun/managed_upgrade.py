@@ -174,7 +174,6 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                 moves = []
                 for name in old_names[offset:offset + _MOVE_BATCH_SIZE]:
                     source, destination = code / name, base / 'old' / name
-                    directory(destination.parent)
                     held.enter_context(pin_ancestors(source.parent))
                     pin = PinnedEntry(source, delete=True)
                     held.callback(pin.close)
@@ -182,6 +181,8 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
                     if inventory[source.relative_to(root).as_posix()] != [stat.st_dev, stat.st_ino]:
                         raise cleanup.InstanceInvalid('Installed file changed')
                     moves.append((source, destination, pin))
+                for _, destination, _ in moves:
+                    directory(destination.parent)
                 _move_registered_batch(root, inventory, moves, save)
             # Never mix old and new current aliases in a publication batch.
             for offset in range(0, len(names), _MOVE_BATCH_SIZE):
