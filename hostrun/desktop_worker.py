@@ -122,7 +122,8 @@ class DesktopWorker:
         editor_context = None
         saved_report = None
         if event.get('role') == 'editor':
-            from hostrun.editor_reports import ReportService, read_report_response, report_evidence
+            from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
+                                                read_report_response, report_evidence)
             from hostrun.knowledge_workbench import KnowledgeWorkbenchService
 
             reports = ReportService(self.home, token=self.service_token)
@@ -134,12 +135,9 @@ class DesktopWorker:
                 workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
                 known = workbench.search(token=self.service_token, limit=8)['results']
                 versions = {'knowledge': [{key: item[key] for key in ('kind', 'id', 'version')}
-                                          for item in known], 'preferences': []}
-                editor_context = {'source': {key: evidence[key] for key in
-                                              ('locators', 'title', 'snapshot', 'limitation')},
-                                  'knowledge': known, 'preferences': []}
-                if len(json.dumps(editor_context, ensure_ascii=False).encode('utf8')) > 65_000:
-                    raise ValueError('Editor source and knowledge exceed the context limit')
+                                          for item in known],
+                            'preferences': [DEFAULT_PREFERENCE_VERSION]}
+                editor_context = build_editor_context(evidence, known)
         child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing

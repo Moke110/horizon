@@ -506,6 +506,40 @@ class MaterialsService(MaterialLifecycle):
         reference['source_label'] = material['source'].get('label')
         return reference
 
+    def report_reference(self, db, citation, *, report_id, task_id, abstract_operation, token):
+        """Validate and bind Editor evidence within the caller's write transaction."""
+        self._authorize(token)
+        material = _record(db, citation["material_id"])
+        owner = f"report:{report_id}:1"
+        if abstract_operation is None:
+            resolved = self.validate_citation(db, citation)
+            self._bind_reference(db, material, owner)
+            return {**resolved, "excerpt": citation["excerpt"], "locator": citation["locator"]}
+        grants = (material.get("academic") or {}).get("abstract_authorizations", [])
+        for grant in grants:
+            if (grant["operation_id"] == abstract_operation and grant["task_id"] == task_id
+                    and citation["locator"] == "abstract" and citation["excerpt"] in grant["abstract"]):
+                return {**self._bind_reference(db, material, owner), "status": "abstract",
+                        "abstract_operation": abstract_operation, "excerpt": citation["excerpt"],
+                        "locator": "abstract", "limitation": grant["limitation"]}
+        raise CommandError("invalid_source", "本任务的授权摘要不包含该摘录")
+
+    def report_abstract_view(self, citation, owner, task_id, *, token):
+        reference = self.resolve_reference(citation["material_id"], owner, token=token)
+        if reference["status"] == "removed":
+            return {"status": "removed", "segment": None}
+        try:
+            package = self.get_package(citation["material_id"], task_id=task_id, token=token)
+        except CommandError as error:
+            if error.code != "not_found":
+                raise
+            return {"status": "removed", "segment": None}
+        for grant in package["academic"]["abstract_authorizations"]:
+            if grant["operation_id"] == citation["abstract_operation"]:
+                return {"status": "abstract", "segment": grant["abstract"],
+                        "limitation": grant["limitation"]}
+        return {"status": "unavailable", "segment": None}
+
     def knowledge_reference(self, db, material_id, excerpt, *, card_id, token):
         """Verify and bind a Knowledge Card citation on the caller's transaction."""
         self._authorize(token)

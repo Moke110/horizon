@@ -253,11 +253,11 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     const ownerInput = createInterface({ input: process.stdin, crlfDelay: Infinity });
     const context = await new Promise<string>((accept, reject) => {
       ownerInput.once("line", line => {
-        if (Buffer.byteLength(line) > 65_536) reject(new Error("Voyager context exceeds its bound"));
+        if (Buffer.byteLength(line) > 65_536) reject(new Error(childRole + " context exceeds its bound"));
         else accept(line);
         ownerInput.close();
       });
-      ownerInput.once("close", () => reject(new Error("Voyager context missing")));
+      ownerInput.once("close", () => reject(new Error(childRole + " context missing")));
     });
     process.stdin.pause();
     tools.push(defineTool({ name: editor ? "editor_context" : "voyager_context", label: "Saved source evidence", description: "Read the bound evidence and limitations.", parameters: Type.Object({}), execute: async () => result(context) }));

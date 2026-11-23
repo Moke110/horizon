@@ -468,4 +468,4 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     assert saved["status"] == "succeeded"
     assert app.delegate(ask) == saved
     report_id = json.loads(saved["result"])["report_id"]
-    assert ReportService(tmp_path, token=token).citation(report_id, 0, 0, token=token)["segment"] == body
+    assert ReportService(tmp_path, token=token).citation(report_id, task["task_id"], 0, 0, token=token)["segment"] == body

@@ -804,11 +804,16 @@ def serve(resolved):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
                     elif action == 'report_open':
-                        report = reports.get(cmd.get('report_id'), token=token)
+                        if not chats:
+                            raise CommandError('not_found', '找不到报道')
+                        report = reports.get(cmd.get('report_id'), chats[current]['task_id'], token=token)
                         emit('report_view', report)
                     elif action == 'report_citation':
-                        citation = reports.citation(cmd.get('report_id'), cmd.get('claim_index'),
-                                                    cmd.get('citation_index'), token=token)
+                        if not chats:
+                            raise CommandError('not_found', '找不到报道')
+                        citation = reports.citation(cmd.get('report_id'), chats[current]['task_id'],
+                                                    cmd.get('claim_index'), cmd.get('citation_index'),
+                                                    token=token, snapshot_offset=cmd.get('snapshot_offset'))
                         emit('report_citation', {'report_id': cmd.get('report_id'), 'citation': citation})
                     elif action=='materials_web':
                         if exiting.is_set() or web_jobs:

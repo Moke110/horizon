@@ -2,9 +2,9 @@ import React, {useEffect, useState} from 'react';
 import type {MaterialSummary} from './MaterialsPanel';
 
 type Child = {child_id:string; role:string; status:string; result?:string};
-type Claim = {kind:'source'|'inference'|'unknown'; text:string; citations:{locator:string; excerpt:string}[]};
+type Claim = {kind:'source'|'inference'|'unknown'; text:string; citations:{locator:string; excerpt:string; status?:string}[]};
 type Report = {report_id:string; version:number; task_id:string; title:string; claims:Claim[]; limitation?:string};
-type Citation = {segment?:string; status:string; segment_truncated?:boolean};
+type Citation = {segment?:string; status:string; segment_truncated?:boolean; next_offset?:number|null};
 
 export function EditorReports({taskId, materials, children, disabled, prepare, send}:{
   taskId:string; materials:MaterialSummary[]; children:Child[]; disabled:boolean;
@@ -13,10 +13,12 @@ export function EditorReports({taskId, materials, children, disabled, prepare, s
   const [material, setMaterial] = useState('');
   const [report, setReport] = useState<Report|null>(null);
   const [citation, setCitation] = useState<Citation|null>(null);
+  const [snapshot, setSnapshot] = useState<{claimIndex:number; citationIndex:number}|null>(null);
   useEffect(() => window.horizon.subscribe(event => {
     if (event.kind === 'report_view' && event.data.task_id === taskId) {
       setReport(event.data);
       setCitation(null);
+      setSnapshot(null);
     }
     if (event.kind === 'report_citation' && event.data.report_id === report?.report_id) {
       setCitation(event.data.citation);
@@ -43,13 +45,25 @@ export function EditorReports({taskId, materials, children, disabled, prepare, s
       {report.limitation && <p>{report.limitation}</p>}
       {report.claims.map((claim, claimIndex)=><section key={claimIndex}>
         <p><strong>{{source:'来源结论', inference:'综合推断', unknown:'未知或争议'}[claim.kind]}</strong> {claim.text}</p>
-        {claim.citations.map((ref, citationIndex)=><button key={citationIndex} onClick={()=>send({
-          action:'report_citation', report_id:report.report_id, claim_index:claimIndex, citation_index:citationIndex,
-        })}>{ref.locator} · {ref.excerpt}</button>)}
+        {claim.citations.map((ref, citationIndex)=><React.Fragment key={citationIndex}>
+          <button onClick={()=>{
+            setSnapshot(null);
+            send({action:'report_citation', report_id:report.report_id, claim_index:claimIndex, citation_index:citationIndex});
+          }}>{ref.locator} · {ref.excerpt}</button>
+          {ref.status!=='abstract' && <button onClick={()=>{
+            setSnapshot({claimIndex,citationIndex});
+            send({action:'report_citation', report_id:report.report_id, claim_index:claimIndex,
+                  citation_index:citationIndex, snapshot_offset:0});
+          }}>打开原文快照</button>}
+        </React.Fragment>)}
       </section>)}
-      {citation && <blockquote>{citation.status==='removed'?'原快照已永久移除。':citation.segment}
+      {citation && <blockquote>{citation.status==='removed'?'原快照已永久移除。':citation.status==='unavailable'?'该摘要授权已不可用。':citation.segment}
         {citation.segment_truncated && '…'}
       </blockquote>}
+      {snapshot && citation?.next_offset != null && <button onClick={()=>send({action:'report_citation',
+        report_id:report.report_id, claim_index:snapshot.claimIndex, citation_index:snapshot.citationIndex,
+        snapshot_offset:citation.next_offset,
+      })}>下一段原文</button>}
     </article>}
   </details>;
 }

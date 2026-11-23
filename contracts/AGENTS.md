@@ -10,6 +10,7 @@
 | [diagnostics.md](diagnostics.md) | Local diagnostic reports |
 | [distribution-manifest.schema.json](distribution-manifest.schema.json) | Stores distribution manifest.schema fields including $schema, title, description, type. |
 | [distribution-runtime.md](distribution-runtime.md) | 内置运行时与启动包装器 |
+| [editor-reports.md](editor-reports.md) | Editor generation, report persistence and citation reading. |
 | [embedded-agent.md](embedded-agent.md) | Embedded Horizon Agent |
 | [install-lock.schema.json](install-lock.schema.json) | Stores install lock.schema fields including $schema, title, description, type. |
 | [knowledge.md](knowledge.md) | Knowledge Frontier and Knowledge Card service |

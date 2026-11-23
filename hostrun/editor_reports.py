@@ -1,13 +1,17 @@
 """Read-only source evidence for Editor report generation."""
 
 import hashlib
+import hmac
 import json
 import re
 import uuid
 
 from hostrun.agent_service import CommandError
 from hostrun.voyager_materials import MaterialsService, citation_anchors
-from hostrun.voyager_material_lifecycle import _record
+from hostrun.managed_database import database_connection
+
+
+DEFAULT_PREFERENCE_VERSION = {"id": "editor-default", "version": 1}
 
 
 def report_evidence(materials, material_id, task_id, *, token):
@@ -45,6 +49,31 @@ def report_evidence(materials, material_id, task_id, *, token):
 
 
 
+def build_editor_context(evidence, known):
+    """Project an explicitly limited prefix of a large captured source."""
+    source = {key: evidence[key] for key in ("title", "snapshot", "limitation")}
+    locators = []
+    budget = 42_000
+    for segment in evidence["locators"]:
+        encoded = json.dumps(segment, ensure_ascii=False).encode("utf8")
+        if len(encoded) <= budget:
+            locators.append(segment)
+            budget -= len(encoded) + 2
+            continue
+        if budget > 250:
+            limit = min(budget - 130, len(segment["text"]))
+            while limit and len(json.dumps({**segment, "text": segment["text"][:limit]},
+                                           ensure_ascii=False).encode("utf8")) > budget:
+                limit //= 2
+            if limit:
+                locators.append({**segment, "text": segment["text"][:limit]})
+        notice = "资料超出本次模型可读范围。报道仅覆盖提供的前部快照片段。"
+        source["limitation"] = " ".join(filter(None, (source["limitation"], notice)))
+        break
+    source["locators"] = locators
+    return {"source": source, "knowledge": known, "preferences": [DEFAULT_PREFERENCE_VERSION]}
+
+
 def read_report_response(response):
     """Parse one JSON object, including provider responses wrapped in a JSON fence."""
     response = response.strip()
@@ -58,19 +87,25 @@ class ReportService:
     """Persist immutable Editor reports and their source references together."""
 
     def __init__(self, home, *, token):
+        self.home = home
+        self._token = token
         self.materials = MaterialsService(home, token=token)
-        with self.materials._connect() as db:
+        with database_connection(self.home) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS editor_reports(
                 report_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL,
                 task_id TEXT NOT NULL, request_digest TEXT NOT NULL, result TEXT NOT NULL)""")
 
+    def _authorize(self, token):
+        if not isinstance(token, str) or not hmac.compare_digest(token, self._token):
+            raise PermissionError("Unauthorized Editor command")
+
     def save(self, operation_id, task_id, evidence, context_versions, claims, *, token):
-        self.materials._authorize(token)
+        self._authorize(token)
         if not isinstance(claims, list) or not 1 <= len(claims) <= 40:
             raise CommandError("invalid_report", "报道需要至少一条有效判断")
         request = [task_id, evidence, context_versions, claims]
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
-        with self.materials._connect() as db:
+        with database_connection(self.home) as db, db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute(
                 "SELECT request_digest, result FROM editor_reports WHERE operation_id=?",
@@ -86,20 +121,20 @@ class ReportService:
                 raise CommandError("version_conflict", "资料或摘要授权已更新，请重新生成报道")
 
             report_id = str(uuid.uuid4())
-            material = _record(db, evidence["material_id"])
+            projection = build_editor_context(evidence, [])["source"]
             result = {
                 "report_id": report_id, "version": 1, "task_id": task_id,
                 "title": evidence["title"], "context_versions": context_versions,
-                "limitation": evidence["limitation"],
+                "limitation": projection["limitation"],
                 "source": {key: evidence[key] for key in
                            ("material_id", "material_version", "snapshot", "source")},
-                "claims": [self._claim(db, claim, evidence, material, report_id) for claim in claims],
+                "claims": [self._claim(db, claim, evidence, projection, report_id, task_id, token) for claim in claims],
             }
             db.execute("INSERT INTO editor_reports VALUES(?,?,?,?,?)",
                        (report_id, operation_id, task_id, digest, json.dumps(result, ensure_ascii=False)))
             return result
 
-    def _claim(self, db, claim, evidence, material, report_id):
+    def _claim(self, db, claim, evidence, projection, report_id, task_id, token):
         if not isinstance(claim, dict):
             raise CommandError("invalid_report", "报道判断必须为结构化对象")
         kind = claim.get("kind")
@@ -116,24 +151,24 @@ class ReportService:
                     or not isinstance(item.get("locator"), str) or len(item["locator"]) > 50):
                 raise CommandError("invalid_report", "引用需要可核对的摘录与定位")
             excerpt, locator = item["excerpt"], item["locator"]
-            if evidence["abstract_authorization"] is not None:
-                if locator != "abstract" or excerpt not in evidence["text"]:
-                    raise CommandError("invalid_source", "授权摘要不包含该摘录")
-                references.append({"excerpt": excerpt, "locator": locator, "status": "abstract",
-                                   "segment": evidence["text"], "limitation": evidence["limitation"]})
-                continue
-            if not re.fullmatch(r"p[1-9][0-9]*|page [1-9][0-9]*", locator):
+            if projection["limitation"] != evidence["limitation"] and not any(
+                    ref["locator"] == locator and excerpt in ref["text"] for ref in projection["locators"]):
+                raise CommandError("invalid_source", "引用不在本次提供的快照片段中")
+            authorization = evidence["abstract_authorization"]
+            if authorization is None and not re.fullmatch(r"p[1-9][0-9]*|page [1-9][0-9]*", locator):
                 raise CommandError("invalid_source", "引用需要真实快照页码或段落编号")
-            citation = {"material_id": material["material_id"], "material_version": material["version"],
+            citation = {"material_id": evidence["material_id"],
+                        "material_version": evidence["material_version"],
                         "excerpt": excerpt, "locator": locator}
-            resolved = self.materials.validate_citation(db, citation)
-            self.materials._bind_reference(db, material, f"report:{report_id}:1")
-            references.append({**resolved, "excerpt": excerpt, "locator": locator})
+            references.append(self.materials.report_reference(
+                db, citation, report_id=report_id, task_id=task_id,
+                abstract_operation=authorization["operation_id"] if authorization else None,
+                token=token))
         return {"kind": claim["kind"], "text": claim["text"], "citations": references}
 
     def get_by_operation(self, operation_id, task_id, material_id, *, token):
-        self.materials._authorize(token)
-        with self.materials._connect() as db:
+        self._authorize(token)
+        with database_connection(self.home) as db, db:
             row = db.execute("SELECT result FROM editor_reports WHERE operation_id=? AND task_id=?",
                              (operation_id, task_id)).fetchone()
         if row is None:
@@ -143,23 +178,45 @@ class ReportService:
             raise CommandError("operation_conflict", "操作标识与已保存资料冲突")
         return result
 
-    def get(self, report_id, *, token):
-        self.materials._authorize(token)
-        with self.materials._connect() as db:
-            row = db.execute("SELECT result FROM editor_reports WHERE report_id=?", (report_id,)).fetchone()
+    def get(self, report_id, task_id, *, token):
+        report = self._read(report_id, task_id, token=token)
+        for claim in report["claims"]:
+            for citation in claim["citations"]:
+                if citation.get("status") == "abstract":
+                    view = self._open_abstract(report, citation, token=token)
+                    if view["status"] != "abstract":
+                        citation["excerpt"] = "原摘要不可用"
+        return report
+
+    def _read(self, report_id, task_id, *, token):
+        self._authorize(token)
+        with database_connection(self.home) as db, db:
+            row = db.execute("SELECT result FROM editor_reports WHERE report_id=? AND task_id=?", (report_id, task_id)).fetchone()
         if not row:
             raise CommandError("not_found", "找不到报道")
         return json.loads(row[0])
 
-    def citation(self, report_id, claim_index, citation_index, *, token):
-        report = self.get(report_id, token=token)
+    def _open_abstract(self, report, citation, *, token):
+        owner = f"report:{report['report_id']}:{report['version']}:{citation['content_hash']}"
+        return self.materials.report_abstract_view(citation, owner, report["task_id"], token=token)
+
+    def citation(self, report_id, task_id, claim_index, citation_index, *, token, snapshot_offset=None):
+        report = self._read(report_id, task_id, token=token)
         try:
             if claim_index < 0 or citation_index < 0:
                 raise IndexError
             citation = report["claims"][claim_index]["citations"][citation_index]
         except (IndexError, TypeError):
             raise CommandError("not_found", "找不到报道引用") from None
-        if citation.get("status") == "abstract":
-            return citation
         owner = f"report:{report_id}:{report['version']}:{citation['content_hash']}"
+        if citation.get("status") == "abstract":
+            return self._open_abstract(report, citation, token=token)
+        if snapshot_offset is not None:
+            if type(snapshot_offset) is not int or snapshot_offset < 0:
+                raise CommandError("invalid_offset", "快照位置无效")
+            reference = self.materials.resolve_reference(citation["material_id"], owner, token=token)
+            text = reference["original_text"]
+            end = snapshot_offset + 12_000
+            return {"status": reference["status"], "segment": text[snapshot_offset:end] if text else None,
+                    "snapshot_offset": snapshot_offset, "next_offset": end if text and end < len(text) else None}
         return self.materials.citation_view(citation, owner, token=token)
