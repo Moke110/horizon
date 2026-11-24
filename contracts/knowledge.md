@@ -26,6 +26,8 @@ In the test-enabled bridge, startup resumes queued requests with their existing 
 
 ### Group decisions
 
+For production reviews, a transient provider error or desktop cancellation leaves the request or revision in a recoverable state. The Knowledge Workbench reads `keeper_retryable_reviews` and the Explorer explicitly submits `keeper_retry_review` with one request or revision identifier and an idempotent operation ID. A new attempt has a separate child identity. Recovery of a completed child before the Keeper receipt commits reuses its recorded outcome. The desktop resumes only production work at startup, including interrupted revisions. Test requests require their dedicated explicit entry.
+
 The authenticated `keeper_decide` action binds one Explorer decision to a `proposal_id`, `revision`, ordered `expected_versions`, and `operation_id`. `expected_versions` follows the order of the changes on the displayed card, with `null` for a creation. `decision` is `approve` or `reject`, with an optional `reason`. The desktop adapter provides the trusted Explorer identity. Keeper and Editor cannot decide.
 
 Approval validates all expected versions and material references before committing any change. Knowledge records, material bindings, owner operation receipts and events, and the proposal status, receipt and audit commit together. A validation failure leaves the group unapplied. Rejection records the decision without writing knowledge. The same operation and payload replay the original receipt. An operation ID with different payload conflicts, and an already-decided revision cannot be applied again. `keeper_open` returns the saved decision on a terminal card, and authenticated `keeper_audit` reads its audit record.

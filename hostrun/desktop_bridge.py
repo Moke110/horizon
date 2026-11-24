@@ -55,6 +55,8 @@ def keeper_bridge_command(commands, command, *, test_enabled):
         return commands.undo_preview(command)
     if action == 'keeper_undo':
         return commands.undo(command)
+    if action in ('keeper_retryable_reviews', 'keeper_retry_review'):
+        return commands.retry_review(command)
     if action == 'keeper_revise':
         return commands.revise(command)
     if action == 'keeper_audit':
@@ -383,9 +385,27 @@ class KeeperCommands:
         for request_id in self._service().queued(token=self.token, production_only=production_only):
             self._queue_review(request_id)
 
-    def resume_queued_revisions(self):
-        for review_id in self._service().queued_revisions(token=self.token):
+    def resume_queued_revisions(self, *, production_only=False):
+        for review_id in self._service().queued_revisions(token=self.token, production_only=production_only):
             self.queue_revision(review_id)
+
+    def retry_review(self, command):
+        from hostrun.keeper import KeeperPrincipal
+        if command.get('action') == 'keeper_retryable_reviews':
+            return 'keeper_retryable_reviews', self._service().retryable_reviews(token=self.token)
+        clean = {key: value for key, value in command.items() if key != 'action'}
+        work = clean.get('request_id') if 'request_id' in clean else ('revision', clean.get('review_id'))
+        if not isinstance(work, (str, tuple)) or isinstance(work, tuple) and not isinstance(work[1], str):
+            raise CommandError('invalid_command', '请选择一个可重试的 Keeper 审核')
+        with self._lock:
+            if work in self._jobs:
+                raise CommandError('review_running', 'Keeper 正在结束上次审核，请稍后重试')
+        result = self._service().retry_review(clean, token=self.token, principal=KeeperPrincipal('explorer', False))
+        if 'request_id' in result:
+            self._queue_review(result['request_id'])
+        else:
+            self.queue_revision(result['review_id'])
+        return 'keeper_retry_review', result
 
     def _queue_review(self, request_id):
         with self._lock:
@@ -991,7 +1011,7 @@ def _serve(resolved, executable, managed):
                             emit('material_archive_list', materials.list_summaries(archived=True, token=token))
                     elif action in ('keeper_list', 'keeper_open', 'keeper_decide',
                                     'keeper_undo_preview', 'keeper_undo',
-                                    'keeper_revise', 'keeper_audit',
+                                    'keeper_revise', 'keeper_audit', 'keeper_retryable_reviews', 'keeper_retry_review',
                                     'keeper_test_request', 'keeper_request'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         result = keeper_bridge_command(keeper_commands, cmd,
@@ -1008,8 +1028,8 @@ def _serve(resolved, executable, managed):
                     elif action == 'ready':
                         if not ui_ready.is_set():
                             keeper_commands.resume_editor_requests(reports)
-                            keeper_commands.resume_queued(production_only=not keeper_test_enabled)
-                            keeper_commands.resume_queued_revisions()
+                            keeper_commands.resume_queued(production_only=True)
+                            keeper_commands.resume_queued_revisions(production_only=True)
                         ui_ready.set()
                     elif action == 'export_diagnostics':
                         report = export_report(service.home, code=code, tasks=service.list_turns(token=token))

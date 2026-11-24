@@ -43,9 +43,10 @@ _REQUIRED_CONTEXT = ('request_id', 'task_id', 'report_id')
 class KeeperRuntimeError(RuntimeError):
     """A visible failure of the trusted Keeper child; never a silent review."""
 
-    def __init__(self, message, *, child_id=None):
+    def __init__(self, message, *, child_id=None, retryable=False):
         super().__init__(message)
         self.child_id = child_id
+        self.retryable = retryable
 
 
 def _bounded_text(value, name, limit=512):
@@ -86,7 +87,8 @@ def _child_outcome(child):
     if status == 'running':
         raise KeeperRuntimeError('Keeper child did not finish', child_id=child.get('child_id'))
     raise KeeperRuntimeError(str(child.get('error') or 'Keeper child ' + str(status)),
-                             child_id=child.get('child_id'))
+                             child_id=child.get('child_id'),
+                             retryable=(child.get('failure') or {}).get('retryable') is True)
 
 
 def review_event(request_id, value):
@@ -236,7 +238,7 @@ class KeeperRuntime:
         if not groups:
             raise KeeperRuntimeError('groups must be a nonempty list')
         if self._cancelled.is_set():
-            raise KeeperRuntimeError('Keeper review cancelled')
+            raise KeeperRuntimeError('Keeper review cancelled', retryable=True)
         evidence = {'schema_version': 1, 'request_id': request_id,
                     'task_id': task_id, 'task_version': task_version,
                     'report_id': report_id, 'report_version': report_version,
@@ -245,7 +247,9 @@ class KeeperRuntime:
         if len(encoded) > MAX_EVIDENCE_BYTES:
             raise KeeperRuntimeError('Keeper evidence exceeds the bounded input size')
 
-        start_operation = _operation(request_id, 'start')
+        attempt = context.get('execution_attempt', 0)
+        ledger_id = f'{request_id}:retry:{attempt}' if attempt else request_id
+        start_operation = _operation(ledger_id, 'start')
         child = self._find_child(task_id, start_operation)
         if child is None:
             child = self.agent.start_keeper_child({
@@ -257,11 +261,11 @@ class KeeperRuntime:
         if child['status'] != 'running':
             return _child_outcome(child)
         if self._cancelled.is_set():
-            self._finish(child, request_id=request_id, status='failed',
-                         error='Keeper review cancelled', failure={'category': 'cancelled'})
-            raise KeeperRuntimeError('Keeper review cancelled', child_id=child['child_id'])
+            self._finish(child, request_id=ledger_id, status='failed',
+                         error='Keeper review cancelled', failure={'category': 'cancelled', 'retryable': True})
+            raise KeeperRuntimeError('Keeper review cancelled', child_id=child['child_id'], retryable=True)
         child = self.agent.attempt_child({
-            'schema_version': 1, 'operation_id': _operation(request_id, 'attempt:' + str(child['version'])),
+            'schema_version': 1, 'operation_id': _operation(ledger_id, 'attempt:' + str(child['version'])),
             'child_id': child['child_id'], 'expected_version': child['version'],
             'snapshots': self._snapshots(context, attempting=True),
         }, token=self.token)
@@ -275,20 +279,23 @@ class KeeperRuntime:
             if result.get('request_id') != request_id:
                 raise KeeperRuntimeError('Keeper worker returned another request')
         except BaseException as exc:
-            failure = {'category': 'cancelled' if self._cancelled.is_set() else 'transient',
-                       'retryable': not self._cancelled.is_set(), 'attempts': 1,
+            cancelled = self._cancelled.is_set()
+            retryable = cancelled or getattr(exc, 'retryable', False) is True
+            failure = {'category': 'cancelled' if cancelled else 'transient' if retryable else 'review',
+                       'retryable': retryable, 'attempts': 1,
                        'message': str(exc)[:1000]}
             try:
-                self._finish(child, request_id=request_id, status='failed',
+                self._finish(child, request_id=ledger_id, status='failed',
                              error=str(exc), failure=failure)
             except Exception:
                 pass
             if isinstance(exc, KeeperRuntimeError):
                 if exc.child_id is None:
                     exc.child_id = child['child_id']
+                exc.retryable = retryable
                 raise
-            raise KeeperRuntimeError(str(exc), child_id=child['child_id'])
-        finished = self._finish(child, request_id=request_id, status='succeeded',
+            raise KeeperRuntimeError(str(exc), child_id=child['child_id'], retryable=retryable)
+        finished = self._finish(child, request_id=ledger_id, status='succeeded',
                                 result=json.dumps(result, ensure_ascii=False))
         return _child_outcome(finished)
 
@@ -362,10 +369,13 @@ class KeeperRuntime:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.communicate()
-                raise KeeperRuntimeError('Keeper model timed out') from None
-            if process.returncode or self._cancelled.is_set():
-                raise KeeperRuntimeError('Keeper model execution failed')
+                raise KeeperRuntimeError('Keeper model timed out', retryable=True) from None
+            if self._cancelled.is_set():
+                raise KeeperRuntimeError('Keeper model cancelled', retryable=True)
             events = [json.loads(line) for line in out.decode('utf8').splitlines() if line.strip()]
+            if process.returncode:
+                failure = next((item for item in reversed(events) if item.get('type') == 'error'), {})
+                raise KeeperRuntimeError('Keeper model execution failed', retryable=failure.get('category') == 'transient')
             if not any(item.get('type') == 'tool_result' and item.get('name') == 'keeper_context'
                        and not item.get('isError') for item in events):
                 raise KeeperRuntimeError('Keeper did not read the pinned evidence')

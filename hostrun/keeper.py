@@ -435,9 +435,7 @@ class KeeperService:
             try:
                 outcome = self._validate_dispatch(dispatch(context))
             except Exception as error:
-                outcome = {"status": "failed", "child_id": getattr(error, "child_id", None),
-                           "reason": "invalid_dispatch" if isinstance(error, CommandError)
-                           else "keeper_execution_failed"}
+                outcome = self._dispatch_failure(error, production=command.get("report_kind") == "editor")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             command, receipt = self._load_request(db, request_id)
@@ -657,14 +655,16 @@ class KeeperService:
                        (command["operation_id"], encoded, json.dumps(result)))
         return result
 
-    def queued_revisions(self, *, token):
+    def queued_revisions(self, *, token, production_only=False):
         """Identify jobs that still need a Keeper child, including startup recovery."""
         self._authorize(token)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT review_id,status,request,result FROM keeper_revision_jobs "
-                "ORDER BY rowid").fetchall()
+                "SELECT j.review_id,j.status,j.request,j.result FROM keeper_revision_jobs j "
+                "JOIN keeper_proposals p ON p.proposal_id=j.proposal_id "
+                "WHERE (?=0 OR json_extract(p.result, '$.provenance')='editor') ORDER BY j.rowid",
+                (int(production_only),)).fetchall()
             queued = []
             for review_id, status, request, _result in rows:
                 if status == "running":
@@ -729,10 +729,7 @@ class KeeperService:
         try:
             outcome = self._validate_dispatch(dispatch(context))
         except Exception as error:
-            outcome = {"status": "failed",
-                       "child_id": getattr(error, "child_id", None),
-                       "reason": "invalid_dispatch" if isinstance(error, CommandError)
-                       else "keeper_execution_failed"}
+            outcome = self._dispatch_failure(error, production=proposal.get("provenance") == "editor")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             job = self._load_job(db, review_id)
@@ -767,7 +764,8 @@ class KeeperService:
                     reason=outcome.get("reason"),
                     child_id=outcome.get("child_id"))
                 self._save_job(db, job, outcome["status"], result)
-                self._persist_returned(db, proposal, job, result)
+                if outcome["status"] != "retry_required":
+                    self._persist_returned(db, proposal, job, result)
                 self._audit_revision(db, proposal["proposal_id"],
                                      "keeper.revision_" + outcome["status"],
                                      result,
@@ -1131,6 +1129,7 @@ class KeeperService:
             "provenance": provenance,
             "feedback": request.get("feedback") or "",
             "fingerprint": request.get("fingerprint"),
+            "execution_attempt": request.get("execution_attempt", 0),
             "groups": [{"proposal_id": revised["proposal_id"],
                         "changes": copy.deepcopy(revised["changes"])}],
         }
@@ -1334,6 +1333,59 @@ class KeeperService:
                 (int(production_only),))]
 
     @staticmethod
+    def _dispatch_failure(error, *, production):
+        from hostrun.keeper_runtime import KeeperRuntimeError
+        if production and isinstance(error, KeeperRuntimeError) and error.retryable:
+            return {"status": "retry_required", "reason": "keeper_retry_required", "child_id": error.child_id}
+        return {"status": "failed", "child_id": getattr(error, "child_id", None),
+                "reason": "invalid_dispatch" if isinstance(error, CommandError) else "keeper_execution_failed"}
+
+    def retryable_reviews(self, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            requests = [json.loads(row[0]) for row in db.execute(
+                "SELECT result FROM keeper_requests WHERE json_extract(result, '$.status')='retry_required'")]
+            revisions = [json.loads(row[0]) for row in db.execute(
+                "SELECT result FROM keeper_revision_jobs WHERE status='retry_required'")]
+        return requests + revisions
+
+    def retry_review(self, command, *, token, principal):
+        self._authorize(token)
+        self._check_explorer(principal)
+        if (type(command.get("schema_version")) is not int or command["schema_version"] != 1
+                or set(command) not in ({"schema_version", "operation_id", "request_id"},
+                                        {"schema_version", "operation_id", "review_id"})):
+            raise CommandError("invalid_command", "请选择一个可重试的 Keeper 审核")
+        operation = _bounded_identifier(command["operation_id"], name="operation_id")
+        encoded = json.dumps({"action": "retry_review", "command": command}, sort_keys=True)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            prior = db.execute("SELECT request,result FROM keeper_operations WHERE operation_id=?", (operation,)).fetchone()
+            if prior:
+                if encoded != prior[0]:
+                    raise CommandError("operation_conflict", "审核重试操作标识冲突")
+                return json.loads(prior[1])
+            if "request_id" in command:
+                request, receipt = self._load_request(db, command["request_id"])
+                if receipt["status"] != "retry_required" or request.get("report_kind") != "editor":
+                    raise CommandError("invalid_transition", "该审核已完成或不可重试")
+                receipt.update(status="queued", execution_attempt=receipt.get("execution_attempt", 0) + 1)
+                receipt.pop("reason", None)
+                self._persist_request(db, receipt, request)
+                result = {"status": "queued", "request_id": command["request_id"]}
+            else:
+                job = self._load_job(db, command["review_id"])
+                proposal = self._load_proposal(db, job["proposal_id"])
+                if (job["status"] != "retry_required" or proposal.get("provenance") != "editor"
+                        or proposal["status"] != "revising" or proposal.get("revision_job") != command["review_id"]):
+                    raise CommandError("invalid_transition", "该复审已完成或不可重试")
+                job["request"]["execution_attempt"] = job["request"].get("execution_attempt", 0) + 1
+                result = self._revision_receipt(job["request"], "queued")
+                self._save_job(db, job, "queued", result)
+            db.execute("INSERT INTO keeper_operations VALUES(?,?,?)", (operation, encoded, json.dumps(result)))
+        return result
+
+    @staticmethod
     def _validate_dispatch(result):
         if not isinstance(result, dict) or set(result) - {"status", "reason", "child_id"}:
             raise CommandError("invalid_dispatch", "Dispatcher returned an invalid outcome")
@@ -1388,7 +1440,7 @@ class KeeperService:
             "report_version": command["report_version"],
             "groups": groups,
             "owners": owners,
-            **({"provenance": {"source": "editor"}} if command.get("report_kind") == "editor" else {}),
+            **({"provenance": {"source": "editor"}, "execution_attempt": receipt.get("execution_attempt", 0)} if command.get("report_kind") == "editor" else {}),
         }
 
     @staticmethod
