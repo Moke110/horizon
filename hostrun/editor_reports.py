@@ -7,6 +7,8 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.editor_preferences import record_feedback_candidate
+from hostrun.frontier import FrontierService
 from hostrun.voyager_materials import MaterialsService, citation_anchors
 from hostrun.managed_database import database_connection
 
@@ -112,6 +114,30 @@ class ReportService:
                 operation_id TEXT UNIQUE NOT NULL, result TEXT NOT NULL,
                 PRIMARY KEY(report_id, version, revision))""")
 
+    def prepare_feedback_handoff(self, report_id, task_id, version, *, owner, note,
+                                 claim_index=None, frontier_id=None, token):
+        """Bind a cross-domain feedback draft to an owned report and publish no change."""
+        if type(version) is not int or version < 1 or owner not in ("voyager", "knowledge", "frontier"):
+            raise CommandError("invalid_feedback", "请选择报道版本与反馈所属流程")
+        if not isinstance(note, str) or not 1 <= len(note.strip()) <= 2000:
+            raise CommandError("invalid_feedback", "请填写反馈内容")
+        report = self._read(report_id, task_id, version=version, token=token)
+        if claim_index is not None and (type(claim_index) is not int or not 0 <= claim_index < len(report["claims"])):
+            raise CommandError("invalid_feedback", "请选择该版本的有效段落")
+
+        original_frontier = report["context_versions"].get("writing_frontier_id")
+        scope = None
+        if owner == "frontier":
+            target = frontier_id or original_frontier
+            if not target:
+                raise CommandError("invalid_feedback", "请为范围调整选择 Frontier")
+            frontier = FrontierService(self.home, token=token).view(target, token=token)
+            scope = {"frontier_id": target, "version": frontier["version"], "question": frontier["question"]}
+        return {"owner": owner, "task_id": task_id, "report_id": report_id, "report_version": version,
+                "claim_index": claim_index, "claim_text": report["claims"][claim_index]["text"]
+                if claim_index is not None else None, "note": note.strip(),
+                "report_frontier_id": original_frontier, "frontier_scope": scope}
+
     def set_feedback(self, report_id, task_id, version, operation_id, expected_revision,
                      *, score, reason=None, claim_index=None, token):
         if type(version) is not int or version < 1:
@@ -140,6 +166,7 @@ class ReportService:
                 raise CommandError("version_conflict", "反馈已更新，请重新读取该报道版本")
             db.execute("INSERT INTO editor_report_feedback VALUES(?,?,?,?,?)",
                        (report_id, version, feedback["revision"], operation_id, json.dumps(feedback)))
+            record_feedback_candidate(db, report_id, version, task_id, feedback)
         return feedback
 
     def _feedback(self, db, report_id, version):
