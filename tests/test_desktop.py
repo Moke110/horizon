@@ -422,6 +422,8 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     import json
     from hostrun.agent_service import AgentService
     from hostrun.editor_reports import ReportService
+    from hostrun.editor_preferences import PreferenceService
+    from hostrun.frontier import FrontierService
     from hostrun.voyager_materials import MaterialsService
     from hostrun import desktop_worker as module
 
@@ -432,6 +434,15 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     task = app.service.create_task({"schema_version": 1, "operation_id": "parent",
                                     "title": "Editor test"}, token=token)
     app.task_id, app.input_version = task["task_id"], task["version"]
+    frontier = FrontierService(tmp_path, token=token).create(
+        {"schema_version": 1, "operation_id": "frontier", "question": "Observations?",
+         "scope": {"text": "Observations", "sources": ["arxiv"]}, "hard_constraints": {}}, token=token)
+    frontier_id = frontier["frontier_id"]
+    prefs = PreferenceService(tmp_path, token=token)
+    prefs.change({"action": "save", "key": "length", "value": "detailed", "frontier_id": frontier_id,
+                  "expected_version": 0, "operation_id": "scope-style"}, token=token)
+    prefs.change({"action": "save", "key": "length", "value": "concise",
+                  "expected_version": 0, "operation_id": "global-style"}, token=token)
     body = "The original source recorded twelve observations."
     material = MaterialsService(tmp_path, token=token).register_text(
         {"schema_version": 1, "operation_id": "source", "title": "Observations",
@@ -459,16 +470,31 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
         def poll(self):
             return 0
 
-    children = iter([Process(False), Process(True)])
+    children = iter([Process(False), Process(True), Process(True), Process(True)])
     monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: next(children))
     request = {"role": "editor", "input": material["material_id"]}
     assert app.delegate({**request, "requestId": "unread"})["status"] == "failed"
-    ask = {**request, "requestId": "read"}
+    ask = {**request, "requestId": "read", "input": json.dumps(
+        {"material_id": material["material_id"], "frontier_id": frontier_id})}
     saved = app.delegate(ask)
     assert saved["status"] == "succeeded"
     assert app.delegate(ask) == saved
     report_id = json.loads(saved["result"])["report_id"]
     assert ReportService(tmp_path, token=token).citation(report_id, task["task_id"], 0, 0, token=token)["segment"] == body
+    reports = ReportService(tmp_path, token=token)
+    base = {"report_id": report_id, "base_version": 1, "question": "Count the observations."}
+    inherited = app.delegate({**request, "requestId": "inherit", "input": json.dumps(base)})
+    assert inherited["status"] == "succeeded"
+    assert reports.get(report_id, app.task_id, token=token, version=2)["context_versions"]["preferences"][0]["value"] == "detailed"
+    global_request = {**base, "base_version": 2, "frontier_id": None}
+    global_rewrite = app.delegate({**request, "requestId": "global", "input": json.dumps(global_request)})
+    assert global_rewrite["status"] == "succeeded"
+    latest = reports.get(report_id, app.task_id, token=token, version=3)["context_versions"]
+    assert latest["preferences"][0]["value"] == "concise"
+    assert latest["preferences"][0]["scope"] == "global"
+    assert "writing_frontier_id" not in latest
+    assert reports.get(report_id, app.task_id, token=token, version=1)["context_versions"]["writing_frontier_id"] == frontier_id
+
 
 def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypatch):
     from hostrun import desktop_worker as module

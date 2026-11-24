@@ -1,18 +1,29 @@
 import React, {useEffect, useState} from 'react';
+import type {FeedbackHandoff} from './EditorFeedbackPreview';
 import type {MaterialSummary} from './MaterialsPanel';
+import {CurrentWritingOptions, EditorPreferences, UsedWritingPreferences,
+  type FrontierChoice, type WritingPreference, type WritingRequest} from './EditorPreferences';
 
 type Child = {child_id:string; role:string; status:string; result?:string};
 type Claim = {kind:'source'|'inference'|'unknown'|'disagreement'|'known'; text:string; independent_source_count?:number; citations:{locator:string; excerpt:string; status?:string; title?:string}[]};
 type Report = {report_id:string; version:number; task_id:string; title:string; claims:Claim[]; limitation?:string; sources?:{material_id:string; title:string; limitation?:string; repost?:boolean}[];
+  context_versions?:{preferences?:WritingPreference[]; writing_frontier_id?:string};
   feedback?:{revision:number; score:number|null; reason?:string; claim_index?:number}; gaps?:{material_id?:string; reason:string; source?:string; detail?:string}[]};
 type Citation = {segment?:string; status:string; segment_truncated?:boolean; next_offset?:number|null};
 
-export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, send}:{
+export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, frontiers, handoff, send}:{
   taskId:string; materials:MaterialSummary[]; children:Child[]; disabled:boolean;
-  prepareRewrite:(id:string,version:number,question:string)=>void;
-  prepare:(id:string)=>void; prepareSynthesis:(command:{question:string; material_ids:string[]; expand_known:boolean})=>void; send:(command:unknown)=>void;
+  prepareRewrite:(id:string,version:number,question:string,options:WritingRequest)=>void;
+  frontiers:FrontierChoice[]; handoff:(draft:FeedbackHandoff)=>void;
+  prepare:(id:string,options:WritingRequest)=>void; prepareSynthesis:(command:{question:string; material_ids:string[]; expand_known:boolean}&WritingRequest)=>void; send:(command:unknown)=>void;
 }) {
+  const [writing, setWriting] = useState<WritingRequest>({});
+  const takeWriting = () => {
+    setWriting({frontier_id:writing.frontier_id});
+    return writing;
+  };
   const [material, setMaterial] = useState('');
+  const [feedbackOwner, setFeedbackOwner] = useState<FeedbackHandoff['owner']>('voyager');
   const [question, setQuestion] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [expandKnown, setExpandKnown] = useState(false);
@@ -21,6 +32,9 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
   const [citation, setCitation] = useState<Citation|null>(null);
   const [snapshot, setSnapshot] = useState<{claimIndex:number; citationIndex:number}|null>(null);
   useEffect(() => window.horizon.subscribe(event => {
+    if (event.kind === 'editor_feedback_handoff' && event.data.task_id === taskId) {
+      handoff(event.data);
+    }
     if (event.kind === 'report_view' && event.data.task_id === taskId) {
       setReport(event.data);
       setCitation(null);
@@ -29,15 +43,17 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
     if (event.kind === 'report_citation' && event.data.report_id === report?.report_id && event.data.version === report?.version) {
       setCitation(event.data.citation);
     }
-  }), [taskId, report?.report_id, report?.version]);
+  }), [taskId, report?.report_id, report?.version, handoff]);
 
   return <details>
     <summary>Editor 报道</summary>
+    <CurrentWritingOptions frontiers={frontiers} value={writing} inherited={report?.context_versions?.writing_frontier_id} onChange={setWriting}/>
+    <EditorPreferences frontiers={frontiers} taskId={taskId} send={send}/>
     <label>选择资料 <select value={material} onChange={event=>setMaterial(event.target.value)}>
       <option value="">请选择</option>
       {materials.map(row=><option key={row.material_id} value={row.material_id}>{row.title}</option>)}
     </select></label>
-    <button disabled={disabled || !materials.some(row=>row.material_id===material)} onClick={()=>prepare(material)}>准备生成报道</button>
+    <button disabled={disabled || !materials.some(row=>row.material_id===material)} onClick={()=>prepare(material,takeWriting())}>准备生成报道</button>
     <details>
       <summary>综合多份资料</summary>
       <label>综合问题 <input value={question} onChange={event=>setQuestion(event.target.value)} maxLength={500}/></label>
@@ -47,7 +63,7 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
       </select></label>
       <label><input type="checkbox" checked={expandKnown} onChange={event=>setExpandKnown(event.target.checked)}/> 展开已知背景</label>
       <button disabled={disabled || !question.trim() || materialIds.length<2 || materialIds.length>4}
-        onClick={()=>prepareSynthesis({question:question.trim(), material_ids:materialIds, expand_known:expandKnown})}>
+        onClick={()=>prepareSynthesis({question:question.trim(), material_ids:materialIds, expand_known:expandKnown,...takeWriting()})}>
         准备综合报道
       </button>
     </details>
@@ -64,6 +80,7 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
     })}
     {report && <article aria-label="报道正文">
       <h2>{report.title} · v{report.version}</h2>
+      <UsedWritingPreferences rows={report.context_versions?.preferences || []} frontiers={frontiers}/>
       <form key={JSON.stringify([report.report_id, report.version, report.feedback?.revision])} onSubmit={event=>{
         event.preventDefault();
         const data = new FormData(event.currentTarget);
@@ -91,11 +108,34 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
       <form key={JSON.stringify([report.report_id, report.version])} onSubmit={event=>{
         event.preventDefault();
         const question = String(new FormData(event.currentTarget).get('question') || '').trim();
-        if(question) prepareRewrite(report.report_id, report.version, question);
+        if(question) prepareRewrite(report.report_id, report.version, question, takeWriting());
       }}>
         <label>追问或纠错 <input name="question" required maxLength={2000}/></label>
         <button type="submit" disabled={disabled}>准备改写</button>
       </form>
+      <details><summary>交给其他流程的反馈</summary>
+        <form key={`${report.report_id}:${report.version}`} onSubmit={event=>{
+          event.preventDefault();
+          const values=new FormData(event.currentTarget);
+          const claim=values.get('claim');
+          send({action:'editor_feedback_handoff', owner:feedbackOwner, report_id:report.report_id,
+            version:report.version, note:values.get('note'), claim_index:claim ? Number(claim) : null,
+            frontier_id:values.get('frontier') || null});
+        }}>
+          <label>反馈类型 <select value={feedbackOwner} onChange={event=>setFeedbackOwner(event.target.value as FeedbackHandoff['owner'])}>
+            <option value="voyager">来源与检索</option><option value="knowledge">知识库</option><option value="frontier">Frontier 范围</option>
+          </select></label>
+          <label>反馈内容 <textarea name="note" required maxLength={2000}/></label>
+          <label>段落 <select name="claim"><option value="">全文</option>
+            {report.claims.map((_,index)=><option key={index} value={index}>第 {index+1} 段</option>)}
+          </select></label>
+          {feedbackOwner==='frontier' && <label>要调整的 Frontier <select name="frontier" required defaultValue={report.context_versions?.writing_frontier_id || ''}>
+            <option value="">请选择</option>
+            {frontiers.filter(row=>row.status==='following').map(row=><option key={row.frontier_id} value={row.frontier_id}>{row.question}</option>)}
+          </select></label>}
+          <button type="submit">交给对应流程</button>
+        </form>
+      </details>
       {report.limitation && <p>{report.limitation}</p>}
       {report.sources && <ul aria-label="资料范围">{report.sources.map(source=>
         <li key={source.material_id}>{source.title}{source.repost && '（转载，不计独立证据）'} {source.limitation}</li>)}</ul>}

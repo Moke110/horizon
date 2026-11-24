@@ -1,4 +1,5 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
+import {EditorFeedbackPreview,type FeedbackHandoff} from './EditorFeedbackPreview';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
@@ -154,7 +155,7 @@ export function KnowledgeWorkbench({
   cardSelected,cardViewEvent,cardError,
   frontierSelected,frontierViewEvent,frontierError,
   themeSelected,themeViewEvent,themeError,
-  onCommand,onPendingCount,openPendingNonce=0,
+  onCommand,onPendingCount,openPendingNonce=0,editorFeedback,closeEditorFeedback,
 }:{
   initialType?:TypeFilter;
   frontiers:FrontierSummary[];
@@ -173,6 +174,8 @@ export function KnowledgeWorkbench({
   onCommand:(command:unknown)=>void;
   onPendingCount?:(count:number|null)=>void;
   openPendingNonce?:number;
+  editorFeedback?:FeedbackHandoff|null;
+  closeEditorFeedback?:()=>void;
 }){
   const [query,setQuery]=useState('');
   const [type,setType]=useState<TypeFilter>(initialType);
@@ -873,6 +876,12 @@ export function KnowledgeWorkbench({
     setHistoryOpen(false);
     setActive({type:row.kind,mode:'open',id:row.id,version:row.version,nonce:crypto.randomUUID()});
   };
+  useEffect(()=>{
+    const frontier=editorFeedback?.frontier_scope;
+    if (editorFeedback?.owner!=='frontier' || !frontier) return;
+    setHistoryOpen(false);
+    setActive({type:'frontier',mode:'open',id:frontier.frontier_id,version:frontier.version,nonce:crypto.randomUUID()});
+  },[editorFeedback]);
   const startCreate=(kind:EntityType)=>{
     setHistoryOpen(false);
     const values:SearchValues={query:'',type:kind,scope:'active',relationTarget:''};
@@ -1116,6 +1125,11 @@ export function KnowledgeWorkbench({
 
   return <div className="workbench">
     <section className="workbench-list" aria-label="知识库搜索">
+      {editorFeedback && closeEditorFeedback && <EditorFeedbackPreview draft={editorFeedback} onClose={closeEditorFeedback}>
+        {editorFeedback.owner==='knowledge' && <button type="button"
+          disabled={new TextEncoder().encode(editorFeedback.note).length>4096}
+          onClick={()=>setQuery(editorFeedback.note)}>填入知识库搜索草稿</button>}
+      </EditorFeedbackPreview>}
       <form className="workbench-filters" role="search" onSubmit={event=>{event.preventDefault();submit();}}>
         <label>搜索<input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder="标题、判断、问题或范围"/></label>
         <div className="workbench-filter-row">
