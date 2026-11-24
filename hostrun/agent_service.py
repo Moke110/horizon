@@ -123,6 +123,9 @@ class AgentService:
         """Read one committed task on a caller's open transaction."""
         if not isinstance(task_id, str) or not task_id.strip():
             raise CommandError('not_found', 'Unknown task_id')
+        # A caller can open the shared database before Agent initializes it.
+        if db.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='agent_tasks'").fetchone() is None:
+            raise CommandError('not_found', 'Unknown task_id')
         row = db.execute('SELECT result FROM agent_tasks WHERE task_id=?', (task_id,)).fetchone()
         if row is None:
             raise CommandError('not_found', 'Unknown task_id')

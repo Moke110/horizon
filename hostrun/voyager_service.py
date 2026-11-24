@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 import uuid
 
-from hostrun.agent_service import CommandError
+from hostrun.agent_service import AgentService, CommandError
 from hostrun.embedded_agent import load_source_configuration, save_source_key, save_tavily_budget
 from hostrun.managed_database import database_connection
 from hostrun.voyager_relevance import candidate_change, candidate_identity, scope_identity, selection_reason
@@ -191,8 +191,7 @@ class VoyagerService:
             value={'schema_version':1,'request_id':identity,'scope':scope,'window':window,'queries':queries,'limits':limits,'version':1,'status':'planned','used':{k:0 for k in DEFAULT_LIMITS},'candidates':[],'successful_cursors':{},'gaps':[]}
             task_id = command.get('task_id')
             if task_id is not None:
-                if not isinstance(task_id, str) or not db.execute('SELECT 1 FROM agent_tasks WHERE task_id=?', (task_id,)).fetchone():
-                    raise CommandError('not_found', 'Unknown Voyager task')
+                AgentService.read_task_in_transaction(db, task_id)
                 value['task_id'] = task_id
             return self._save(db,value,command,encoded,'voyager.request_created')
 
