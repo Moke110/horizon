@@ -262,3 +262,7 @@ and the public landing page. To enable Unpaywall, save a contact email under
 its provenance or shows why the material is still waiting for full text.
 
 For an academic item awaiting full text, open its source record in **Materials** to supplement it with a readable PDF, abandon it, or explicitly authorize abstract-only analysis for its original task. The abstract carries a full-text limitation. A late supplement from a scheduled task waits in the same plan's queue. It neither changes the covered interval nor resumes a paused plan.
+
+### Optional desktop Feishu setup
+
+Choose **选项 → 飞书适配器** in the installed Windows desktop. Install or verify the pinned official CLI, then enter the App ID and App Secret for your Feishu custom app. Use the displayed developer console link or QR code to grant the listed permissions and publish the app. The setup panel gives separate instructions for message subscription, card callbacks and private-chat binding. The bot identity check is read-only.

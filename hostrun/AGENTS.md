@@ -55,6 +55,7 @@
 | [knowledge_history.py](knowledge_history.py) | Cross-owner knowledge history, undo preview and non-covering undo. |
 | [knowledge_themes.py](knowledge_themes.py) | Local Themes (命题) with applicability conditions and directional evidence. |
 | [knowledge_workbench.py](knowledge_workbench.py) | Read-only search across the local Knowledge Workbench. |
+| [lark_adapter.py](lark_adapter.py) | Install and diagnose the pinned optional Feishu CLI in the desktop data home. |
 | [lark.py](lark.py) | Lark CLI: discover or privately install it, then check identity and access. |
 | [launcher.py](launcher.py) | Pure generators for the launchers an installation runs. |
 | [layout.py](layout.py) | One resolution of the two top-level locations: code directory and archive. |
