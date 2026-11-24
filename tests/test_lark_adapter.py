@@ -85,7 +85,15 @@ def test_verified_install_survives_repeated_install_and_corrupt_download(tmp_pat
     adapter = module.LarkAdapter(tmp_path / 'home', tmp_path / 'code', fetch=fetch)
     monkeypatch.setattr(adapter, '_run', lambda *a, **kw: 'lark-cli version 1.0.99')
     monkeypatch.setattr(adapter, '_verify_npm_metadata', lambda metadata: None)
+    write_new = module._write_new
+    def write_checked(parent, path, body):
+        for directory in (adapter.root, path.parent):
+            with pytest.raises(OSError):
+                directory.rename(directory.with_suffix('.replaced'))
+        return write_new(parent, path, body)
+    monkeypatch.setattr(module, '_write_new', write_checked)
     assert adapter.install()['installation']['status'] == 'installed'
+    assert (adapter.root / 'install.lock').read_bytes() == b''
     assert adapter.install()['installation']['status'] == 'installed'
     assert downloads == [module.NPM_URL, module.RELEASE]
     persisted = module.LarkAdapter(tmp_path / 'home', tmp_path / 'code', fetch=fetch)
@@ -167,3 +175,37 @@ def test_native_executable_is_pinned_until_the_launch_returns(tmp_path, monkeypa
     adapter._verify_npm_metadata('{}')
     assert adapter._run(staged, ['--version']) == 'lark-cli version 1.0.99'
     assert checked == [node, native]
+
+def test_native_install_lock_refuses_external_hard_links(tmp_path):
+    import os
+    from hostrun import lark_adapter as module
+
+    if os.name != 'nt':
+        pytest.skip('Windows native lock behavior')
+    home, code = tmp_path / 'home', tmp_path / 'code'
+    root = home / 'feishu'
+    root.mkdir(parents=True)
+    sentinel = tmp_path / 'external-empty.txt'
+    sentinel.touch()
+    os.link(sentinel, root / 'install.lock')
+    adapter = module.LarkAdapter(home, code, fetch=lambda *args: pytest.fail('started downloading'))
+    with pytest.raises(CommandError, match='安装未完成'):
+        adapter.install()
+    assert sentinel.read_bytes() == b''
+    assert adapter.status()['installation']['status'] == 'missing'
+
+def test_second_install_cannot_write_or_download_under_native_lock(tmp_path):
+    from hostrun import lark_adapter as module
+
+    home, code = tmp_path / 'home', tmp_path / 'code'
+    contender = module.LarkAdapter(home, code, fetch=lambda *args: pytest.fail('contender downloaded'))
+    def competing_fetch(*args):
+        with pytest.raises(CommandError) as error:
+            contender.install()
+        assert error.value.code == 'lark_busy'
+        return b'bad first archive'
+    first = module.LarkAdapter(home, code, fetch=competing_fetch)
+    with pytest.raises(CommandError) as error:
+        first.install()
+    assert error.value.code == 'lark_install_integrity'
+    assert (home / 'feishu' / 'install.lock').read_bytes() == b''

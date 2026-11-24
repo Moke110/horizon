@@ -20,9 +20,10 @@ import urllib.request
 import uuid
 import zipfile
 
-from common import file_lock, json_bytes
+from common import json_bytes
 from hostrun.agent_service import CommandError
-from hostrun.windows_cleanup import PinnedEntry, pin_ancestors
+from hostrun.cleanup import lock_native_file
+from hostrun.windows_cleanup import PinnedEntry, io_path, pin_ancestors, publish_registration_snapshot
 from hostrun.windows_protection import protect
 
 
@@ -68,21 +69,31 @@ def _safe_entry(path):
 
 
 def _publish(path, data):
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.horizon-write-', delete=False) as stream:
-        stage = Path(stream.name)
-        try:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-            stream.close()
-            os.replace(stage, path)
-        finally:
-            stage.unlink(missing_ok=True)
+    publish_registration_snapshot(path, data)
+
+
+@contextmanager
+def _native_leaf(path, parent, *, directory):
+    try:
+        pin = PinnedEntry(path, create_parent=parent, create_share=3, create_delete=False,
+                          create_file=not directory)
+    except FileExistsError:
+        pin = PinnedEntry(path)
+    with closing(pin):
+        if pin.directory != directory or (not directory and io_path(path).stat().st_nlink != 1):
+            raise ValueError('Unexpected adapter entry type')
+        yield pin
+
+
+def _write_new(parent, path, data):
+    with closing(PinnedEntry(path, create_parent=parent, create_file=True, writable=True,
+                             create_delete=False)) as entry:
+        entry.write_bytes(data)
 
 
 class LarkAdapter:
     def __init__(self, home, code, *, fetch=None):
-        self.home = Path(home).resolve()
+        self.home = Path(os.path.abspath(home))
         self.code = Path(code).resolve()
         self.root = self.home / 'feishu'
         self.fetch = fetch or _download
@@ -113,14 +124,13 @@ class LarkAdapter:
     def _credential_path(self):
         return self.root / 'credentials.dpapi'
 
+    @contextmanager
     def _prepare_root(self):
-        if not _safe_entry(self.root):
-            raise CommandError('lark_store_unavailable', '飞书适配器目录不可用')
-        self.root.mkdir(parents=True, exist_ok=True)
-        store = self.root / 'cli-state'
-        if not _safe_entry(store):
-            raise CommandError('lark_store_unavailable', '飞书 CLI 状态目录不可用')
-        store.mkdir(exist_ok=True)
+        with pin_ancestors(self.home.parent), closing(PinnedEntry(self.home.parent)) as parent:
+            with _native_leaf(self.home, parent, directory=True) as home:
+                with _native_leaf(self.root, home, directory=True) as root:
+                    with _native_leaf(self.root / 'cli-state', root, directory=True):
+                        yield root
 
     def _manifest(self):
         return {'version': VERSION, 'npm_url': NPM_URL, 'npm_integrity': 'sha512-' + NPM_INTEGRITY,
@@ -201,16 +211,16 @@ class LarkAdapter:
             raise CommandError('lark_platform', '此固定版本的适配器需要 Windows x64')
         self.runtime_check = 'unchecked'
         try:
-            self._prepare_root()
-            lock = self.root / 'install.lock'
-            if not _safe_entry(lock):
-                raise CommandError('lark_store_unavailable', '飞书 CLI 安装锁不可用')
-            with pin_ancestors(self.root), file_lock(lock):
-                if self._verified(self._target):
-                    if self.run(['--version']).strip() != _VERSION_PROBE:
-                        raise CommandError('lark_install_integrity', '飞书 CLI 版本自检失败')
-                else:
-                    self._install_bytes()
+            with self._prepare_root() as root, _native_leaf(
+                    self.root / 'install.lock', root, directory=False) as receipt:
+                with lock_native_file(receipt.handle, exclusive=True) as acquired:
+                    if not acquired:
+                        raise CommandError('lark_busy', '飞书 CLI 正在安装')
+                    if self._verified(self._target):
+                        if self.run(['--version']).strip() != _VERSION_PROBE:
+                            raise CommandError('lark_install_integrity', '飞书 CLI 版本自检失败')
+                    else:
+                        self._install_bytes(root)
         except CommandError:
             self.runtime_check = 'failed'
             raise
@@ -220,7 +230,7 @@ class LarkAdapter:
         self.runtime_check = 'ready'
         return self.status()
 
-    def _install_bytes(self):
+    def _install_bytes(self, root):
         npm = self.fetch(NPM_URL, 1024 * 1024)
         if base64.b64encode(hashlib.sha512(npm).digest()).decode() != NPM_INTEGRITY:
             raise CommandError('lark_install_integrity', '官方 npm 制品的完整性校验失败')
@@ -236,24 +246,29 @@ class LarkAdapter:
             release = self.fetch(MIRROR, 70 * 1024 * 1024)
         if hashlib.sha256(release).hexdigest() != ZIP_SHA256:
             raise CommandError('lark_install_integrity', '飞书 CLI 二进制制品的完整性校验失败')
-        with tempfile.TemporaryDirectory(prefix='.cli-stage-', dir=self.root) as temp:
-            staged = Path(temp) / 'payload'
-            staged.mkdir()
+        generation = f'cli-{VERSION}-{uuid.uuid4().hex}'
+        staged = self.root / generation
+        with closing(PinnedEntry(staged, create_parent=root, create_share=3,
+                                 create_delete=False)) as candidate:
             with zipfile.ZipFile(io.BytesIO(release)) as archive:
                 for name, expected in FILE_DIGESTS.items():
                     body = archive.read(name)
                     if hashlib.sha256(body).hexdigest() != expected:
                         raise CommandError('lark_install_integrity', '飞书 CLI 文件摘要不匹配')
-                    (staged / name).write_bytes(body)
+                    _write_new(candidate, staged / name, body)
             if self._run(staged, ['--version']).strip() != _VERSION_PROBE:
                 raise CommandError('lark_install_integrity', '飞书 CLI 版本自检失败')
-            (staged / 'manifest.json').write_bytes(json_bytes(self._manifest()))
-            if self.stopped.is_set():
-                raise CommandError('lark_cancelled', '飞书 CLI 操作已停止')
-            generation = f'cli-{VERSION}-{uuid.uuid4().hex}'
-            staged.rename(self.root / generation)
-            # A crash before this pointer update leaves the previously selected generation available.
-            _publish(self.root / 'active-cli.json', json_bytes(generation))
+            _write_new(candidate, staged / 'manifest.json', json_bytes(self._manifest()))
+            # Reopen and hold every checked leaf through the pointer update.
+            with ExitStack() as held:
+                for name in ('manifest.json', *FILE_DIGESTS):
+                    held.enter_context(closing(PinnedEntry(staged / name, read_only_share=True)))
+                if not self._verified(staged):
+                    raise CommandError('lark_install_integrity', '候选飞书 CLI 安装内容已更改')
+                if self.stopped.is_set():
+                    raise CommandError('lark_cancelled', '飞书 CLI 操作已停止')
+                # The candidate never changes paths; only this atomic pointer publishes it.
+                _publish(self.root / 'active-cli.json', json_bytes(generation))
 
     def configure(self, app_id, secret):
         if not isinstance(app_id, str) or not re.fullmatch(r'cli_[a-zA-Z0-9]{6,64}', app_id):
@@ -263,16 +278,15 @@ class LarkAdapter:
             raise CommandError('lark_credential_input', '请输入有效的 App Secret')
         if not self._verified(self._target):
             raise CommandError('lark_install_required', '请先安装并校验飞书 CLI')
-        self._prepare_root()
         try:
-            candidate = {'app_id': app_id, 'secret': secret}
-            verified = json.loads(self.run(['api', 'GET', '/open-apis/bot/v3/info', '--as', 'bot', '--dry-run'],
-                                           credentials=candidate))
-            if (verified.get('ok') is not True or verified.get('identity') != 'bot'
-                    or verified.get('data', {}).get('context', {}).get('app_id') != app_id):
-                raise CommandError('lark_credentials_unavailable', '内置 CLI 未采用所填应用凭据')
-            sealed = protect(json_bytes(candidate), self._entropy())
-            with pin_ancestors(self.root):
+            with self._prepare_root():
+                candidate = {'app_id': app_id, 'secret': secret}
+                verified = json.loads(self.run(['api', 'GET', '/open-apis/bot/v3/info', '--as', 'bot', '--dry-run'],
+                                               credentials=candidate))
+                if (verified.get('ok') is not True or verified.get('identity') != 'bot'
+                        or verified.get('data', {}).get('context', {}).get('app_id') != app_id):
+                    raise CommandError('lark_credentials_unavailable', '内置 CLI 未采用所填应用凭据')
+                sealed = protect(json_bytes(candidate), self._entropy())
                 if not _safe_entry(self._credential_path):
                     raise ValueError
                 _publish(self._credential_path, sealed)
@@ -321,9 +335,8 @@ class LarkAdapter:
         return {'status': 'missing_scopes' if missing else 'unverified', 'missing_scopes': missing}
 
     def qr(self):
-        self._prepare_root()
         url = self.status()['console_url']
-        with tempfile.TemporaryDirectory(prefix='.auth-qr-', dir=self.root) as temp:
+        with self._prepare_root(), tempfile.TemporaryDirectory(prefix='.auth-qr-', dir=self.root) as temp:
             self.run(['auth', 'qrcode', url, '--output', 'authorization.png'], cwd=Path(temp))
             png = (Path(temp) / 'authorization.png').read_bytes()
             if not png.startswith(b'\x89PNG\r\n\x1a\n') or len(png) > 200_000:

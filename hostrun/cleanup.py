@@ -972,19 +972,25 @@ def lifecycle_lock(path, *, exclusive=False):
             finally:
                 fcntl.flock(stream, fcntl.LOCK_UN)
             return
-        import ctypes
-        from ctypes import wintypes as w
         import msvcrt
-        api = ctypes.WinDLL('kernel32', use_last_error=True)
-        api.LockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(_LeaseOverlapped)]
-        api.UnlockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(_LeaseOverlapped)]
-        handle = msvcrt.get_osfhandle(stream.fileno())
-        overlap = _LeaseOverlapped()
-        acquired = bool(api.LockFileEx(handle, 1 | (2 if exclusive else 0), 0, 1, 0, ctypes.byref(overlap)))
-        if not acquired and ctypes.get_last_error() != 33:
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
+        with lock_native_file(msvcrt.get_osfhandle(stream.fileno()), exclusive=exclusive) as acquired:
             yield acquired
-        finally:
-            if acquired:
-                api.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlap))
+
+
+@contextmanager
+def lock_native_file(handle, *, exclusive=False):
+    """Lock the byte range of an already-open Windows file handle."""
+    import ctypes
+    from ctypes import wintypes as w
+    api = ctypes.WinDLL('kernel32', use_last_error=True)
+    api.LockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(_LeaseOverlapped)]
+    api.UnlockFileEx.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, ctypes.POINTER(_LeaseOverlapped)]
+    overlap = _LeaseOverlapped()
+    acquired = bool(api.LockFileEx(handle, 1 | (2 if exclusive else 0), 0, 1, 0, ctypes.byref(overlap)))
+    if not acquired and ctypes.get_last_error() != 33:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            api.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlap))
