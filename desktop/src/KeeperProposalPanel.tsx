@@ -125,6 +125,7 @@ export type KeeperProposal={
   report_id?:string|null;
   report_version?:number|null;
   provenance?:string|null;
+  review_reason?:string;
   child_id?:string|null;
   review_id?:string|null;
   changes?:KeeperChange[];
@@ -688,6 +689,7 @@ function Meta({proposal}:{proposal:KeeperProposal}){
   if(proposal.child_id)rows.push(['子会话',proposal.child_id]);
   if(proposal.supersedes_proposal_id)rows.push(['此前拒绝的提议',proposal.supersedes_proposal_id]);
   if(proposal.new_evidence_reason)rows.push(['新证据说明',proposal.new_evidence_reason]);
+  if(proposal.review_reason)rows.push(['Keeper 审核',proposal.review_reason]);
   if(proposal.provenance)rows.push(['来源',proposal.provenance==='editor_test'?'测试（editor_test）':proposal.provenance]);
   if(proposal.queued_at!==null&&proposal.queued_at!==undefined)rows.push(['入队时间',timeLabel(proposal.queued_at)]);
   if(proposal.created_at!==null&&proposal.created_at!==undefined)rows.push(['创建时间',timeLabel(proposal.created_at)]);
@@ -765,6 +767,7 @@ function PriorProvenance({proposal,notes}:{proposal:KeeperProposal;notes:KeeperR
   if(proposal.report_id)rows.push(['测试报道',`${proposal.report_id}${typeof proposal.report_version==='number'?` · 固定版本 v${proposal.report_version}`:''}`]);
   if(proposal.child_id||notes?.child_id)rows.push(['子会话',proposal.child_id||notes?.child_id]);
   if(proposal.review_id||notes?.review_id)rows.push(['审阅编号',proposal.review_id||notes?.review_id]);
+  if(proposal.review_reason)rows.push(['Keeper 审核',proposal.review_reason]);
   if(proposal.provenance)rows.push(['来源',proposal.provenance==='editor_test'?'测试（editor_test）':proposal.provenance]);
   if(proposal.supersedes_proposal_id)rows.push(['此前拒绝的提议',proposal.supersedes_proposal_id]);
   if(!rows.length)return null;

@@ -28,7 +28,7 @@ from hostrun.keeper_runtime import KeeperRuntime, review_event, test_principal
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
 
-_AUTHORITY_FIELDS = ('role', 'principal', 'actor', 'output', 'provenance')
+_AUTHORITY_FIELDS = ('role', 'principal', 'actor', 'output', 'provenance', 'report_kind')
 
 
 def keeper_test_requests_enabled():
@@ -345,8 +345,42 @@ class KeeperCommands:
                                           'request': saved})
         self._queue_review(request_id)
 
-    def resume_queued(self):
-        for request_id in self._service().queued(token=self.token):
+    def resume_editor_requests(self, reports):
+        key = ('editor_outbox',)
+        with self._lock:
+            if key in self._jobs:
+                return
+            self._jobs.add(key)
+        threading.Thread(target=self._drain_editor_requests, args=(reports, key), daemon=True).start()
+
+    def _drain_editor_requests(self, reports, key):
+        from hostrun.keeper import KeeperPrincipal
+        try:
+            while commands := reports.pending_keeper_requests(token=self.token):
+                for command in commands:
+                    try:
+                        saved = self._service().request(
+                            command, token=self.token, principal=KeeperPrincipal("editor", False))
+                    except (CommandError, PermissionError) as exc:
+                        reports.settle_keeper_request(command["operation_id"], {"status": "returned"}, token=self.token)
+                        self.emit("keeper_review_error", {"message": str(exc)[:1000]})
+                    else:
+                        reports.settle_keeper_request(command["operation_id"], saved, token=self.token)
+                        if saved["status"] == "queued":
+                            self._queue_review(saved["request_id"])
+        except Exception as exc:
+            self.emit("keeper_review_error", {"message": str(exc)[:1000]})
+            restart = False
+        else:
+            restart = True
+        finally:
+            with self._lock:
+                self._jobs.discard(key)
+        if restart and reports.pending_keeper_requests(token=self.token):
+            self.resume_editor_requests(reports)
+
+    def resume_queued(self, *, production_only=False):
+        for request_id in self._service().queued(token=self.token, production_only=production_only):
             self._queue_review(request_id)
 
     def resume_queued_revisions(self):
@@ -973,8 +1007,8 @@ def _serve(resolved, executable, managed):
                     elif action == 'schedule_limits': agent_scheduling.set_limits(service,main=cmd['main'],children=cmd['children'],token=token)
                     elif action == 'ready':
                         if not ui_ready.is_set():
-                            if keeper_test_enabled:
-                                keeper_commands.resume_queued()
+                            keeper_commands.resume_editor_requests(reports)
+                            keeper_commands.resume_queued(production_only=not keeper_test_enabled)
                             keeper_commands.resume_queued_revisions()
                         ui_ready.set()
                     elif action == 'export_diagnostics':
@@ -1056,6 +1090,7 @@ def _serve(resolved, executable, managed):
                     if pending_turns and len(scheduler.workers)<agent_scheduling.get_limits(service,token=token)['main']:
                         start_turn(pending_turns[0]); state()
                 if ui_ready.is_set() and scheduler.step(foreground_busy=app.busy):
+                    keeper_commands.resume_editor_requests(reports)
                     refresh_chats();state()
             if consume_activation(app.home):
                 emit('activate')
@@ -1079,6 +1114,8 @@ def _serve(resolved, executable, managed):
                     state()
                 continue
             if kind == 'children':
+                if not exiting.is_set():
+                    keeper_commands.resume_editor_requests(reports)
                 state()
             if kind == 'agent':
                 if data['type'] == 'text': response += data['text']

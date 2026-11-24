@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hostrun import keeper_merge, keeper_revisions
+from hostrun.editor_keeper import verify_editor_request
+from hostrun.editor_reports import ReportService
 from hostrun.agent_service import AgentService, CommandError
 from hostrun.frontier import (
     FrontierService, _validate_constraints, _validate_question,
@@ -188,7 +190,9 @@ def _validate_command(command):
     if type(command.get("schema_version")) is not int \
             or command["schema_version"] != _SCHEMA_VERSION:
         raise CommandError("unsupported_schema", "Unsupported schema_version")
-    if set(command) not in (_TOP_LEVEL_FIELDS, _TOP_LEVEL_FIELDS | _RECONSIDERATION_FIELDS):
+    production = command.get("report_kind") == "editor"
+    fields = _TOP_LEVEL_FIELDS | ({"report_kind"} if production else set())
+    if set(command) not in (fields, fields | _RECONSIDERATION_FIELDS):
         raise CommandError("invalid_command", "Command contains unsupported fields")
     try:
         encoded = json.dumps(command, sort_keys=True, ensure_ascii=False)
@@ -246,6 +250,7 @@ def _validate_command(command):
         "report_id": report_id,
         "report_version": command["report_version"],
         "groups": normalized_groups, **reconsideration,
+        **({"report_kind": "editor"} if production else {}),
     }
 
 
@@ -313,10 +318,11 @@ class KeeperService:
             raise PermissionError("Unauthorized Keeper command")
 
     @staticmethod
-    def _check_principal(principal):
+    def _check_principal(principal, *, production=False):
         if not isinstance(principal, KeeperPrincipal):
             raise PermissionError("A trusted Keeper principal is required")
-        if principal.role != "editor" or principal.explicit_test is not True:
+        expected_test = not production
+        if principal.role != "editor" or principal.explicit_test is not expected_test:
             raise PermissionError("This principal cannot submit Keeper requests")
 
     @staticmethod
@@ -329,6 +335,13 @@ class KeeperService:
     @staticmethod
     def _check_pins(db, command):
         task = AgentService.read_task_in_transaction(db, command["task_id"])
+        if command.get("report_kind") == "editor":
+            if task["version"] < command["task_version"]:
+                raise CommandError("version_conflict", "Task version moved backwards")
+            verify_editor_request(db, command)
+            ReportService.read_version_in_transaction(db, command["report_id"], command["task_id"],
+                                                      command["report_version"])
+            return
         if task["version"] != command["task_version"]:
             raise CommandError("version_conflict", "Task version changed")
         report = AgentService.read_turn_in_transaction(db, command["report_id"])
@@ -362,7 +375,8 @@ class KeeperService:
     def request(self, command, *, token, principal):
         """Persist one queued request or a fair, persistent returned outcome."""
         self._authorize(token)
-        self._check_principal(principal)
+        production = isinstance(command, dict) and command.get("report_kind") == "editor"
+        self._check_principal(principal, production=production)
         command = _validate_command(command)
         encoded = json.dumps(command, sort_keys=True, ensure_ascii=False)
         with self._connect() as db:
@@ -439,6 +453,8 @@ class KeeperService:
                     outcome = self._returned_outcome(error)
             if outcome["status"] == "reviewed":
                 proposal_ids = []
+                if command.get("report_kind") == "editor":
+                    receipt["review_reason"] = outcome.get("reason", "")
                 for group in plan:
                     proposal = self._proposal(receipt, command, group)
                     proposal_ids.append(proposal["proposal_id"])
@@ -1076,6 +1092,10 @@ class KeeperService:
         task = AgentService.read_task_in_transaction(db, proposal["task_id"])
         if task["version"] < proposal["task_version"]:
             raise CommandError("version_conflict", "Task version moved backwards")
+        if proposal.get("provenance") == "editor":
+            ReportService.read_version_in_transaction(db, proposal["report_id"], proposal["task_id"],
+                                                      proposal["report_version"])
+            return
         report = AgentService.read_turn_in_transaction(db, proposal["report_id"])
         if report.get("task_id") != proposal["task_id"]:
             raise CommandError("invalid_report", "Report belongs to another task")
@@ -1303,13 +1323,15 @@ class KeeperService:
             return {"status": "returned", "reason": error.reason, "evidence": error.evidence}
         return {"status": "returned", "reason": error.code}
 
-    def queued(self, *, token):
+    def queued(self, *, token, production_only=False):
         """Identify only recorded requests interrupted before a review outcome."""
         self._authorize(token)
         with self._connect() as db:
             return [row[0] for row in db.execute(
                 "SELECT request_id FROM keeper_requests "
-                "WHERE json_extract(result, '$.status')='queued' ORDER BY rowid")]
+                "WHERE json_extract(result, '$.status')='queued' "
+                "AND (?=0 OR json_extract(request, '$.report_kind')='editor') ORDER BY rowid",
+                (int(production_only),))]
 
     @staticmethod
     def _validate_dispatch(result):
@@ -1366,6 +1388,7 @@ class KeeperService:
             "report_version": command["report_version"],
             "groups": groups,
             "owners": owners,
+            **({"provenance": {"source": "editor"}} if command.get("report_kind") == "editor" else {}),
         }
 
     @staticmethod
@@ -2148,8 +2171,9 @@ class KeeperService:
             "task_version": command["task_version"],
             "report_id": command["report_id"],
             "report_version": command["report_version"],
-            "provenance": "editor_test",
+            "provenance": "editor" if command.get("report_kind") == "editor" else "editor_test",
             "child_id": receipt.get("child_id"),
+            **({"review_reason": receipt["review_reason"]} if receipt.get("review_reason") else {}),
             "changes": [copy.deepcopy(entry["proposal"]) for entry in entries],
             **{field: command[field] for field in _RECONSIDERATION_FIELDS if field in command},
         }
