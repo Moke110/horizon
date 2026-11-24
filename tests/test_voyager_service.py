@@ -6,6 +6,29 @@ def request(operation='create'):
     return {'schema_version':1,'operation_id':operation,'scope':{'text':'可解释人工智能','alternatives':['explainable artificial intelligence'],'must_include':['解释'],'exclude':['广告'],'sources':['arxiv']},'window':{'mode':'initial','basis':'discovered','from_at':100,'until_at':200,'overlap_seconds':10}}
 
 
+def test_unknown_task_leaves_no_plan_or_receipt_before_or_after_agent_initialization(tmp_path):
+    from hostrun.agent_service import AgentService, CommandError
+
+    voyager = VoyagerService(tmp_path, token='s', providers={})
+    invalid = {**request(), 'task_id': 'missing'}
+    with pytest.raises(CommandError) as fresh_error:
+        voyager.create(invalid, token='s')
+    assert fresh_error.value.code == 'not_found'
+
+    agent = AgentService(tmp_path, token='s')
+    with pytest.raises(CommandError) as initialized_error:
+        voyager.create(invalid, token='s')
+    assert initialized_error.value.code == 'not_found'
+    assert voyager.list(token='s') == []
+
+    task = agent.create_task({'schema_version': 1, 'operation_id': 'task', 'title': 'Research'}, token='s')
+    valid = {**invalid, 'task_id': task['task_id']}
+    planned = voyager.create(valid, token='s')
+    assert planned['task_id'] == task['task_id']
+    assert voyager.create(valid, token='s') == planned
+    assert 'task_id' not in voyager.create(request('standalone'), token='s')
+
+
 def test_desktop_source_settings_persist_and_never_read_back_credentials(tmp_path, monkeypatch):
     from hostrun import embedded_agent
     from hostrun.desktop_bridge import voyager_command
