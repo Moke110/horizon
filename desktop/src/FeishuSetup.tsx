@@ -1,7 +1,7 @@
 import React, {useEffect, useState} from 'react';
 
 type State = {
-  installation: {status:'installed'|'invalid'|'missing'; version:string; source:string; archive_sha256:string};
+  installation: {status:'installed'|'invalid'|'missing'; runtime:'unchecked'|'ready'|'failed'; version:string; source:string; archive_sha256:string};
   credentials: 'unconfigured'|'configured'|'unreadable';
   console_url: string;
   required_scopes: string[];
@@ -24,6 +24,7 @@ export function FeishuSetup({send, close}: {send:(command:unknown)=>void; close:
         setBusy(false);
       }
       if (event.kind==='feishu_adapter_error') {
+        if (event.data.state) setState(event.data.state);
         setError(event.data.message);
         setBusy(false);
       }
@@ -34,10 +35,15 @@ export function FeishuSetup({send, close}: {send:(command:unknown)=>void; close:
   function run(action:string, options?:{app_id:string; secret:string}) {
     setBusy(true);
     setError('');
+    if (action==='feishu_install') {
+      setPermission(undefined);
+      setAuthorization(undefined);
+    }
     send({action, ...options});
   }
   const install = state?.installation;
-  const installed = install?.status==='installed';
+  const filesVerified = install?.status==='installed';
+  const installed = filesVerified && install?.runtime==='ready';
   const configured = state?.credentials==='configured';
   return <section className="messages" aria-label="飞书适配器">
     <header><h1>飞书适配器</h1><button onClick={close}>返回对话</button></header>
@@ -45,9 +51,11 @@ export function FeishuSetup({send, close}: {send:(command:unknown)=>void; close:
     {busy && <p role="status">处理中…</p>}
     <section>
       <h2>安装官方 CLI</h2>
-      {install && <p>版本 {install.version} · {installed?'已校验安装':install.status==='invalid'?'本地安装校验失败':'未安装'}</p>}
+      {install && <p>版本 {install.version} · {installed?'文件和启动自检通过':filesVerified
+        ? install.runtime==='failed'?'文件完整，启动自检失败':'文件完整，启动待校验'
+        : install.status==='invalid'?'本地安装校验失败':'未安装'}</p>}
       {install && <details><summary>来源与校验值</summary><p>{install.source}</p><p>ZIP SHA-256 <code>{install.archive_sha256}</code></p></details>}
-      <button disabled={busy} onClick={()=>run('feishu_install')}>{installed?'重新校验':'安装或重试'}</button>
+      <button disabled={busy} onClick={()=>run('feishu_install')}>{filesVerified?'校验启动':'安装或重试'}</button>
     </section>
     <section>
       <h2>应用凭据</h2>

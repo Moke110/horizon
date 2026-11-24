@@ -762,8 +762,8 @@ def _serve(resolved, executable, managed):
             except (OSError, ValueError):
                 pass
     def run_lark_action(command):
+        action = command['action']
         try:
-            action = command['action']
             result = {}
             if action == 'feishu_install':
                 lark_adapter.install()
@@ -780,6 +780,8 @@ def _serve(resolved, executable, managed):
             event = ('feishu_adapter_error', {'code': 'lark_unavailable', 'message': '飞书适配器当前不可用'})
         finally:
             lark_busy.clear()
+        if action == 'feishu_install' and event[0] == 'feishu_adapter_error':
+            event[1]['state'] = lark_adapter.status()
         emit(*event)
 
     keeper_commands = KeeperCommands(keeper_service_factory, keeper_runtime, token=token,

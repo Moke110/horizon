@@ -98,4 +98,72 @@ def test_verified_install_survives_repeated_install_and_corrupt_download(tmp_pat
     assert persisted.status()['installation']['status'] == 'invalid'
     assert manifest.with_name('lark-cli.exe').read_bytes() == binary
     good_download = True
+    publish = module._publish
+    with monkeypatch.context() as interrupted:
+        def fail_pointer(path, data):
+            if path.name == 'active-cli.json':
+                raise OSError('simulated interruption before publication')
+            return publish(path, data)
+        interrupted.setattr(module, '_publish', fail_pointer)
+        with pytest.raises(CommandError, match='安装未完成'):
+            adapter.install()
+    assert persisted.status()['installation']['status'] == 'invalid'
+    assert manifest.with_name('lark-cli.exe').read_bytes() == binary
     assert adapter.install()['installation']['status'] == 'installed'
+    assert manifest.with_name('lark-cli.exe').read_bytes() == binary
+
+def test_failed_runtime_recheck_preserves_files_and_reports_failure(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from hostrun import lark_adapter as module
+
+    home, code = tmp_path / 'home', tmp_path / 'code'
+    adapter = module.LarkAdapter(home, code)
+    installed = home / 'feishu' / f'cli-{module.VERSION}'
+    installed.mkdir(parents=True)
+    binary = b'verified native CLI bytes'
+    path = installed / 'lark-cli.exe'
+    path.write_bytes(binary)
+    monkeypatch.setattr(module, 'FILE_DIGESTS', {'lark-cli.exe':hashlib.sha256(binary).hexdigest()})
+    (installed / 'manifest.json').write_text(json.dumps(adapter._manifest()), encoding='utf8')
+    monkeypatch.setattr(adapter, 'run', lambda *args: 'unexpected runtime output')
+    with pytest.raises(CommandError):
+        adapter.install()
+    state = adapter.status()['installation']
+    assert state['status'] == 'installed'
+    assert state['runtime'] == 'failed'
+    assert path.read_bytes() == binary
+    assert module.LarkAdapter(home, code).status()['installation']['runtime'] == 'unchecked'
+
+def test_native_executable_is_pinned_until_the_launch_returns(tmp_path, monkeypatch):
+    import hashlib
+    import os
+    from hostrun import lark_adapter as module
+
+    if os.name != 'nt':
+        pytest.skip('Windows native pin behavior')
+    home, code = tmp_path / 'home', tmp_path / 'code'
+    runtime = code / 'runtime'
+    runtime.mkdir(parents=True)
+    node = runtime / 'node.exe'
+    node.write_bytes(b'node fixture')
+    staged = home / 'staged'
+    staged.mkdir(parents=True)
+    native = staged / 'lark-cli.exe'
+    native.write_bytes(b'lark fixture')
+    monkeypatch.setattr(module, '_NODE_SHA256', hashlib.sha256(node.read_bytes()).hexdigest())
+    monkeypatch.setattr(module, 'FILE_DIGESTS', {'lark-cli.exe':hashlib.sha256(native.read_bytes()).hexdigest()})
+    adapter = module.LarkAdapter(home, code)
+    checked = []
+    def execute(argv, **options):
+        image = Path(argv[0])
+        with pytest.raises(OSError):
+            image.write_bytes(b'replacement')
+        with pytest.raises(OSError):
+            image.rename(image.with_suffix('.old'))
+        checked.append(image)
+        return 'lark-cli version 1.0.99'
+    monkeypatch.setattr(adapter, '_execute', execute)
+    adapter._verify_npm_metadata('{}')
+    assert adapter._run(staged, ['--version']) == 'lark-cli version 1.0.99'
+    assert checked == [node, native]
