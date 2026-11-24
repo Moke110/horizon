@@ -10,6 +10,7 @@ from common import write_json_bytes
 
 PINNED_VERSIONS = {'python': '3.13.7', 'node': '24.16.0',
                    'electron': '45.2.3', '@earendil-works/pi-coding-agent': '1.5.0'}
+_PI_NOTICE_SHA256 = '0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48'
 
 
 def record_runtime(runtime, *, node_license):
@@ -86,10 +87,23 @@ def write_inventory(package):
                 continue
             if item['name'] in PINNED_VERSIONS and item['version'] != PINNED_VERSIONS[item['name']]:
                 raise ValueError('Unpinned dependency version: ' + item['name'])
+            notices = [p.relative_to(package).as_posix() for p in _licenses(metadata.parent)]
+            if item['name'] == '@earendil-works/pi-coding-agent':
+                notice_name = f"pi-{item['version']}.txt"
+                notice = Path(__file__).resolve().parents[1] / 'scripts/licenses' / notice_name
+                body = notice.read_bytes().replace(b'\r\n', b'\n')
+                if hashlib.sha256(body).hexdigest() != _PI_NOTICE_SHA256:
+                    raise ValueError('Pinned Pi license digest mismatch')
+                installed_notice = runtime / 'licenses' / notice_name
+                installed_notice.parent.mkdir(parents=True, exist_ok=True)
+                if installed_notice.exists() and installed_notice.read_bytes() != body:
+                    raise ValueError('Conflicting Pi license in prepared runtime')
+                installed_notice.write_bytes(body)
+                notices.append(installed_notice.relative_to(package).as_posix())
             components.append({'name': item['name'], 'version': item['version'],
                                'location': metadata.relative_to(package).as_posix(),
                                'license': item.get('license', 'Not declared in package metadata'),
-                               'license_files': [p.relative_to(package).as_posix() for p in _licenses(metadata.parent)]})
+                               'license_files': sorted(notices)})
     site = runtime / 'Lib/site-packages'
     for metadata in sorted(site.glob('*.dist-info/METADATA')):
         item = Parser().parsestr(metadata.read_text(encoding='utf-8'))
