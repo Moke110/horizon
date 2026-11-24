@@ -17,6 +17,26 @@ The Horizon GUI provides reading, ratings and negotiation about interpretations,
 
 The confirmed [product decision](docs/adr/0001-product-direction.md) defines the direction. The following commands and setup notes describe the existing implementation, including its Feishu adapter; they do not claim that the new knowledge suite and interaction flow are already implemented.
 
+## Modular architecture
+
+```mermaid
+flowchart LR
+    UI[Desktop interface] --> Bridge[Authenticated local bridge]
+    Bridge --> Agent[Agent · tasks and scheduling]
+    Bridge --> Voyager[Voyager · retrieval and materials]
+    Bridge --> KB[Knowledge Base · Frontiers, Cards and Themes]
+    Bridge --> Editor[Editor · reports and writing preferences]
+    Agent -->|dispatches work| Voyager
+    Agent -->|dispatches work| Editor
+    Voyager -->|reads scope| KB
+    Editor -->|reads material snapshots| Voyager
+    Editor -->|reads knowledge context| KB
+    Editor -->|submits evidence-linked proposals| Keeper[Keeper · proposal review]
+    Keeper -->|applies explorer-approved changes| KB
+```
+
+The desktop services share a local SQLite database. Agent owns task state, Voyager owns retrieval plans and source snapshots, Editor owns reports, and the Knowledge Base owns knowledge records. The diagram shows the main workflows across those boundaries. Search and report generation can run before the Explorer accepts any proposed Knowledge Base changes.
+
 ## Installation
 
 Horizon includes its own Pi-based Agent. You need Windows 10/11 x64, a model API key,

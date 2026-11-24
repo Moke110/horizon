@@ -17,6 +17,26 @@ Horizon GUI 提供阅读、评分及围绕理解、偏好和知识更新的谈�
 
 完整方向见已确认的[产品决策](docs/adr/0001-product-direction.md)。以下安装与命令说明描述现有实现及飞书适配链路，不代表自建知识库和新交互已经完成。
 
+## 模块化架构
+
+```mermaid
+flowchart LR
+    UI[桌面界面] --> Bridge[经认证的本地桥接]
+    Bridge --> Agent[Agent · 任务和调度]
+    Bridge --> Voyager[Voyager · 检索和资料]
+    Bridge --> KB[知识库 · 关注问题、知识卡片和命题]
+    Bridge --> Editor[Editor · 报道和写作偏好]
+    Agent -->|分派任务| Voyager
+    Agent -->|分派任务| Editor
+    Voyager -->|读取检索范围| KB
+    Editor -->|读取资料快照| Voyager
+    Editor -->|读取知识上下文| KB
+    Editor -->|提交附带证据的提案| Keeper[知识库管理员 · 审查提案]
+    Keeper -->|应用探索者已批准的变更| KB
+```
+
+桌面服务共用本地 SQLite 数据库。Agent 管理任务状态，Voyager 管理检索计划和资料快照，Editor 管理报道，知识库管理知识记录。图中展示了模块间的主要工作流。探索者可以先检索、生成报道，再决定是否采纳知识库更新提案。
+
 ## 安装
 
 Horizon 内置基于 Pi 开发的 Agent。你需要 Windows 10/11 x64、模型 API Key，以及有权限
