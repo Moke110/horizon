@@ -7,6 +7,7 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.editor_keeper import enqueue_editor_request
 from hostrun.editor_preferences import record_feedback_candidate
 from hostrun.frontier import FrontierService
 from hostrun.voyager_materials import MaterialsService, citation_anchors
@@ -80,7 +81,7 @@ def build_editor_context(evidence, known, *, budget=42_000):
         source["limitation"] = " ".join(filter(None, (source["limitation"], notice)))
         break
     source["locators"] = locators
-    return {"source": source, "knowledge": known, "preferences": [DEFAULT_PREFERENCE_VERSION]}
+    return {"source": source, "confirmed_knowledge": known, "preferences": [DEFAULT_PREFERENCE_VERSION]}
 
 
 def read_report_response(response, *, synthesis=False):
@@ -113,6 +114,20 @@ class ReportService:
                 report_id TEXT NOT NULL, version INTEGER NOT NULL, revision INTEGER NOT NULL,
                 operation_id TEXT UNIQUE NOT NULL, result TEXT NOT NULL,
                 PRIMARY KEY(report_id, version, revision))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS editor_keeper_outbox(
+                operation_id TEXT PRIMARY KEY, request TEXT NOT NULL, receipt TEXT)""")
+
+    def pending_keeper_requests(self, *, token):
+        self._authorize(token)
+        with database_connection(self.home) as db, db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT request FROM editor_keeper_outbox WHERE receipt IS NULL ORDER BY rowid LIMIT 8")]
+
+    def settle_keeper_request(self, operation, receipt, *, token):
+        self._authorize(token)
+        with database_connection(self.home) as db, db:
+            db.execute("UPDATE editor_keeper_outbox SET receipt=? WHERE operation_id=? AND receipt IS NULL",
+                       (json.dumps(receipt), operation))
 
     def prepare_feedback_handoff(self, report_id, task_id, version, *, owner, note,
                                  claim_index=None, frontier_id=None, token):
@@ -179,13 +194,14 @@ class ReportService:
         if not isinstance(token, str) or not hmac.compare_digest(token, self._token):
             raise PermissionError("Unauthorized Editor command")
 
-    def save(self, operation_id, task_id, evidence, context_versions, claims, *, token, report_id=None, base_version=None):
+    def save(self, operation_id, task_id, evidence, context_versions, claims, *, token, report_id=None, base_version=None, keeper_proposals=None, task_version=None):
         return self._save(operation_id, task_id, evidence["title"], [evidence], context_versions, claims,
-                          token=token, report_id=report_id, base_version=base_version)
+                          token=token, report_id=report_id, base_version=base_version,
+                          keeper_proposals=keeper_proposals, task_version=task_version)
 
     def save_synthesis(self, operation_id, task_id, question, evidence, context_versions, claims,
                        *, token, gaps=(), reposts=(), selected_material_ids=None,
-                       report_id=None, base_version=None, synthesis_options=None):
+                       report_id=None, base_version=None, synthesis_options=None, keeper_proposals=None, task_version=None):
         if not isinstance(question, str) or not question.strip() or len(question) > 500:
             raise CommandError("invalid_report", "综合报道需要明确的问题")
         if (not 1 <= len(evidence) <= 4 or (len(evidence) == 1 and not gaps)
@@ -194,11 +210,11 @@ class ReportService:
         return self._save(operation_id, task_id, question.strip(), evidence, context_versions, claims,
                           token=token, synthesis=True, gaps=list(gaps), reposts=set(reposts),
                           selected_material_ids=selected_material_ids, report_id=report_id, base_version=base_version,
-                          synthesis_options=synthesis_options)
+                          synthesis_options=synthesis_options, keeper_proposals=keeper_proposals, task_version=task_version)
 
     def _save(self, operation_id, task_id, title, evidence, context_versions, claims, *, token,
               synthesis=False, gaps=None, reposts=None, selected_material_ids=None,
-              report_id=None, base_version=None, synthesis_options=None):
+              report_id=None, base_version=None, synthesis_options=None, keeper_proposals=None, task_version=None):
         self._authorize(token)
         if not isinstance(claims, list) or not 1 <= len(claims) <= 40:
             raise CommandError("invalid_report", "报道需要至少一条有效判断")
@@ -216,6 +232,8 @@ class ReportService:
             if type(base_version) is not int or base_version < 1:
                 raise CommandError("invalid_version", "报道版本无效")
             request.extend([report_id, base_version])
+        if keeper_proposals:
+            request.extend([keeper_proposals, task_version])
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         with database_connection(self.home) as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -283,6 +301,7 @@ class ReportService:
             else:
                 db.execute("INSERT INTO editor_report_versions VALUES(?,?,?,?,?,?)",
                            (report_id, version, operation_id, task_id, digest, encoded))
+            enqueue_editor_request(db, result, task_version, keeper_proposals)
             return result
 
     def _claim(self, db, claim, sources, projections, report_id, version, task_id, token, *, synthesis, reposts, known):
@@ -290,7 +309,7 @@ class ReportService:
             raise CommandError("invalid_report", "报道判断必须为结构化对象")
         kind = claim.get("kind")
         citations = claim.get("citations", [] if kind in ("unknown", "known") else None)
-        if (kind not in (("source", "inference", "unknown", "disagreement", "known") if synthesis else ("source", "inference", "unknown"))
+        if (kind not in (("source", "inference", "unknown", "disagreement", "known") if synthesis else ("source", "inference", "unknown", "known"))
                 or not isinstance(claim.get("text"), str) or not claim["text"].strip()
                 or len(claim["text"]) > 4000 or not isinstance(citations, list)
                 or len(citations) > 10 or (kind not in ("unknown", "known") and not citations)):
@@ -381,7 +400,8 @@ class ReportService:
         with database_connection(self.home) as db, db:
             return self._version(db, report_id, task_id, version)
 
-    def _version(self, db, report_id, task_id, version):
+    @staticmethod
+    def _version(db, report_id, task_id, version):
         if version is not None and (type(version) is not int or version < 1):
             raise CommandError("not_found", "找不到报道")
         row = db.execute(
@@ -394,6 +414,10 @@ class ReportService:
         if not row:
             raise CommandError("not_found", "找不到报道")
         return json.loads(row[0])
+
+    @classmethod
+    def read_version_in_transaction(cls, db, report_id, task_id, version):
+        return cls._version(db, report_id, task_id, version)
 
     def late_fulltext_input(self, db, task_id, material_id, supplemented_from, *, token):
         """Resolve the latest summary report in the plan's original task."""

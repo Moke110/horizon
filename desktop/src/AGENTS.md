@@ -9,6 +9,7 @@
 | [EditorReports.tsx](EditorReports.tsx) | Selects report sources and reads saved reports, citations and pinned snapshots. |
 | [index.html](index.html) | Desktop renderer document. |
 | [KeeperGroupUndoPanel.tsx](KeeperGroupUndoPanel.tsx) | Previews and confirms undo of a previously applied Keeper group. |
+| [KeeperReviewRetry.tsx](KeeperReviewRetry.tsx) | Shows interrupted production reviews and sends an explicit Explorer retry. |
 | [KeeperProposalPanel.tsx](KeeperProposalPanel.tsx) | Displays a proposed change, its revision and the available decisions. |
 | [KnowledgeCardPanel.tsx](KnowledgeCardPanel.tsx) | Creates and edits versioned knowledge cards. |
 | [KnowledgeHistoryPanel.tsx](KnowledgeHistoryPanel.tsx) | Displays knowledge history, differences and undo controls. |

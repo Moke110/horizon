@@ -175,6 +175,8 @@ Open a specific version to rate it and optionally add a reason or select a parag
 
 Under **Editor 报道**, use **本次写作样式** for a one-report choice or **写作偏好** to save and manage a style for all reports or a Frontier. The precedence is this report, Frontier, global, then default. Adoption of a feedback suggestion requires choosing its scope. Saved reports show the versions of the styles they used.
 
+Editor may create an evidence-linked proposal for Keeper to review. Open **知识库 → 待确认** to review the exact report version, sources and proposed changes. Approve, reject or request adjustment there. A revised proposal requires a new confirmation. If the model or desktop interrupts a review, use **Keeper 待重试审核** in the Knowledge Workbench to retry it. Approved knowledge can appear as confirmed background in later reports.
+
 The Trace tab is currently empty. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
 
 Open **Materials** to paste text, give it a title and source label, and register it offline without model credentials. Select a saved material to read its exact original text and source identity, receipt time, SHA-256 and extraction version. Generated summaries appear separately; registration does not generate one or contact a remote service. Originals remain available independently of conversations.

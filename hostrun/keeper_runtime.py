@@ -2,8 +2,7 @@
 
 The public Keeper service owns pending requests and runs the dispatcher outside
 its database transaction. This module turns one review context into a real
-AgentService keeper child on the original task, runs the deterministic offline
-reviewer as a contained subprocess, and records the reviewer result through the
+AgentService keeper child on the original task, runs deterministic evidence checks and a restricted model for production reviews, and records the reviewer result through the
 same child attempt/finish ledger as other Agent children.
 
 Evidence contract (all values bounded by the caller):
@@ -18,9 +17,9 @@ Evidence contract (all values bounded by the caller):
           "source": str | object | list, "relations": list?}]}]
     }
 
-The child receives only this document, over private UTF-8 standard input, in a
-sanitized environment. It has no credentials, network, tools or storage and is
-always owned by the desktop job.
+The deterministic process receives private bounded evidence and no credentials.
+The production Pi reviewer receives a bounded projection and can use only its
+read-only context tool. Both processes remain owned by the desktop job.
 """
 import json
 import os
@@ -31,6 +30,7 @@ import time
 import uuid
 from pathlib import Path
 
+from hostrun import embedded_agent
 from hostrun.agent_capacity import child_slot
 
 KEEPER_ROLE = 'keeper'
@@ -43,9 +43,10 @@ _REQUIRED_CONTEXT = ('request_id', 'task_id', 'report_id')
 class KeeperRuntimeError(RuntimeError):
     """A visible failure of the trusted Keeper child; never a silent review."""
 
-    def __init__(self, message, *, child_id=None):
+    def __init__(self, message, *, child_id=None, retryable=False):
         super().__init__(message)
         self.child_id = child_id
+        self.retryable = retryable
 
 
 def _bounded_text(value, name, limit=512):
@@ -86,7 +87,8 @@ def _child_outcome(child):
     if status == 'running':
         raise KeeperRuntimeError('Keeper child did not finish', child_id=child.get('child_id'))
     raise KeeperRuntimeError(str(child.get('error') or 'Keeper child ' + str(status)),
-                             child_id=child.get('child_id'))
+                             child_id=child.get('child_id'),
+                             retryable=(child.get('failure') or {}).get('retryable') is True)
 
 
 def review_event(request_id, value):
@@ -236,7 +238,7 @@ class KeeperRuntime:
         if not groups:
             raise KeeperRuntimeError('groups must be a nonempty list')
         if self._cancelled.is_set():
-            raise KeeperRuntimeError('Keeper review cancelled')
+            raise KeeperRuntimeError('Keeper review cancelled', retryable=True)
         evidence = {'schema_version': 1, 'request_id': request_id,
                     'task_id': task_id, 'task_version': task_version,
                     'report_id': report_id, 'report_version': report_version,
@@ -245,7 +247,9 @@ class KeeperRuntime:
         if len(encoded) > MAX_EVIDENCE_BYTES:
             raise KeeperRuntimeError('Keeper evidence exceeds the bounded input size')
 
-        start_operation = _operation(request_id, 'start')
+        attempt = context.get('execution_attempt', 0)
+        ledger_id = f'{request_id}:retry:{attempt}' if attempt else request_id
+        start_operation = _operation(ledger_id, 'start')
         child = self._find_child(task_id, start_operation)
         if child is None:
             child = self.agent.start_keeper_child({
@@ -257,11 +261,11 @@ class KeeperRuntime:
         if child['status'] != 'running':
             return _child_outcome(child)
         if self._cancelled.is_set():
-            self._finish(child, request_id=request_id, status='failed',
-                         error='Keeper review cancelled', failure={'category': 'cancelled'})
-            raise KeeperRuntimeError('Keeper review cancelled', child_id=child['child_id'])
+            self._finish(child, request_id=ledger_id, status='failed',
+                         error='Keeper review cancelled', failure={'category': 'cancelled', 'retryable': True})
+            raise KeeperRuntimeError('Keeper review cancelled', child_id=child['child_id'], retryable=True)
         child = self.agent.attempt_child({
-            'schema_version': 1, 'operation_id': _operation(request_id, 'attempt:' + str(child['version'])),
+            'schema_version': 1, 'operation_id': _operation(ledger_id, 'attempt:' + str(child['version'])),
             'child_id': child['child_id'], 'expected_version': child['version'],
             'snapshots': self._snapshots(context, attempting=True),
         }, token=self.token)
@@ -269,23 +273,29 @@ class KeeperRuntime:
         try:
             with child_slot(self.agent, self.token, self._cancelled):
                 result = self._run_worker(encoded)
+                if result['status'] == 'reviewed' and provenance.get('source') == 'editor':
+                    model = self._run_model(context, child['session_id'])
+                    result.update(status=model['status'], reason=model['reason'], reviewer='embedded-model')
             if result.get('request_id') != request_id:
                 raise KeeperRuntimeError('Keeper worker returned another request')
         except BaseException as exc:
-            failure = {'category': 'cancelled' if self._cancelled.is_set() else 'transient',
-                       'retryable': not self._cancelled.is_set(), 'attempts': 1,
+            cancelled = self._cancelled.is_set()
+            retryable = cancelled or getattr(exc, 'retryable', False) is True
+            failure = {'category': 'cancelled' if cancelled else 'transient' if retryable else 'review',
+                       'retryable': retryable, 'attempts': 1,
                        'message': str(exc)[:1000]}
             try:
-                self._finish(child, request_id=request_id, status='failed',
+                self._finish(child, request_id=ledger_id, status='failed',
                              error=str(exc), failure=failure)
             except Exception:
                 pass
             if isinstance(exc, KeeperRuntimeError):
                 if exc.child_id is None:
                     exc.child_id = child['child_id']
+                exc.retryable = retryable
                 raise
-            raise KeeperRuntimeError(str(exc), child_id=child['child_id'])
-        finished = self._finish(child, request_id=request_id, status='succeeded',
+            raise KeeperRuntimeError(str(exc), child_id=child['child_id'], retryable=retryable)
+        finished = self._finish(child, request_id=ledger_id, status='succeeded',
                                 result=json.dumps(result, ensure_ascii=False))
         return _child_outcome(finished)
 
@@ -328,6 +338,60 @@ class KeeperRuntime:
             if field in context:
                 metadata[field] = context[field]
         return {'keeper': metadata}
+
+    def _run_model(self, context, session_id):
+        groups = [{"proposal_id": group.get("proposal_id"), "changes": [
+            {key: change[key] for key in ("kind", "action", "fields", "reason", "sources", "before", "after")
+             if key in change}
+            for change in group["changes"]]} for group in context["groups"]]
+        evidence = {"groups": groups, "feedback": context.get("feedback"),
+                    "report_id": context["report_id"], "report_version": context["report_version"]}
+        payload = (json.dumps(evidence, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf8')
+        if len(payload) > 60_000:
+            raise KeeperRuntimeError('Keeper model evidence exceeds its bound')
+        argv = embedded_agent.argv(self.agent.home, 'Read keeper_context and return a review decision.',
+                                    kind='agent', code=self.code_root, session_id=session_id)
+        argv.extend(['--child-role', 'keeper'])
+        env = _sanitized_environment(self.code_root)
+        env["HORIZON_PYTHON"] = self.python
+        if "LOCALAPPDATA" in os.environ:
+            env["LOCALAPPDATA"] = os.environ["LOCALAPPDATA"]
+        with self._lock:
+            if self._cancelled.is_set():
+                raise KeeperRuntimeError('Keeper review cancelled')
+            process = subprocess.Popen(argv, cwd=self.code_root, env=env, stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            self._processes.add(process)
+        try:
+            try:
+                out, _ = process.communicate(payload, timeout=90)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                raise KeeperRuntimeError('Keeper model timed out', retryable=True) from None
+            if self._cancelled.is_set():
+                raise KeeperRuntimeError('Keeper model cancelled', retryable=True)
+            events = [json.loads(line) for line in out.decode('utf8').splitlines() if line.strip()]
+            if process.returncode:
+                failure = next((item for item in reversed(events) if item.get('type') == 'error'), {})
+                raise KeeperRuntimeError('Keeper model execution failed', retryable=failure.get('category') == 'transient')
+            if not any(item.get('type') == 'tool_result' and item.get('name') == 'keeper_context'
+                       and not item.get('isError') for item in events):
+                raise KeeperRuntimeError('Keeper did not read the pinned evidence')
+            text = next((item['text'] for item in reversed(events) if item.get('type') == 'final'), '').strip()
+            if text.startswith('```') and text.endswith('```') and '\n' in text:
+                text = text.split('\n', 1)[1][:-3].strip()
+            result = json.loads(text)
+            if result.get('status') not in ('reviewed', 'returned') or not isinstance(result.get('reason'), str):
+                raise KeeperRuntimeError('Keeper model returned no review decision')
+            return {"status": result["status"], "reason": result["reason"].encode("utf8")[:1000].decode("utf8", errors="ignore")}
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+            if process.poll() is None:
+                process.kill()
+                process.wait()
 
     def _run_worker(self, payload):
         # Embedded Pythonw's _pth resolves modules relative to its own install.

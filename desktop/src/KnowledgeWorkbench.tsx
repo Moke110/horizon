@@ -1,4 +1,5 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
+import {KeeperReviewRetry} from './KeeperReviewRetry';
 import {EditorFeedbackPreview,type FeedbackHandoff} from './EditorFeedbackPreview';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
@@ -1130,6 +1131,7 @@ export function KnowledgeWorkbench({
           disabled={new TextEncoder().encode(editorFeedback.note).length>4096}
           onClick={()=>setQuery(editorFeedback.note)}>填入知识库搜索草稿</button>}
       </EditorFeedbackPreview>}
+      <KeeperReviewRetry/>
       <form className="workbench-filters" role="search" onSubmit={event=>{event.preventDefault();submit();}}>
         <label>搜索<input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder="标题、判断、问题或范围"/></label>
         <div className="workbench-filter-row">
