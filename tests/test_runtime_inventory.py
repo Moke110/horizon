@@ -24,14 +24,24 @@ def test_package_contains_verified_runtime_and_license_inventory(tmp_path):
     metadata = source / 'agent/node_modules/example/package.json'
     metadata.parent.mkdir(parents=True)
     metadata.write_text(json.dumps({'name': 'example', 'version': '2.4.6', 'license': 'MIT'}))
+    pi_metadata = source / 'agent/node_modules/@earendil-works/pi-coding-agent/package.json'
+    pi_metadata.parent.mkdir(parents=True)
+    pi_metadata.write_text(json.dumps({'name': '@earendil-works/pi-coding-agent',
+                                       'version': '1.5.0', 'license': 'MIT'}))
     result = build(source=source, out=tmp_path / 'out', version='0.0.1', channel='stable',
                    runtime_dir=runtime, compat={'os': 'windows', 'arch': 'x86_64'})
     package = Path(result['package'])
     inventory = json.loads((package / 'runtime-components.json').read_text())
-    assert [(c['name'], c['version']) for c in inventory['components']] == [('example', '2.4.6'), ('node', '24.16.0'), ('python', '3.13.7')]
-    assert inventory['components'][0]['license'] == 'MIT'
+    entries = {component['name']: component for component in inventory['components']}
+    assert {name: item['version'] for name, item in entries.items()} == {
+        '@earendil-works/pi-coding-agent': '1.5.0', 'example': '2.4.6',
+        'node': '24.16.0', 'python': '3.13.7'}
+    assert entries['example']['license'] == 'MIT'
+    notice, = entries['@earendil-works/pi-coding-agent']['license_files']
+    assert hashlib.sha256((package / notice).read_bytes()).hexdigest() == (
+        '0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48')
     manifest = json.loads(Path(result['manifest']).read_text())
-    assert 'runtime-components.json' in {f['path'] for f in manifest['files']}
+    assert {'runtime-components.json', notice} <= {f['path'] for f in manifest['files']}
     (runtime / 'node.exe').write_bytes(b'changed runtime')
     with pytest.raises(BuildError, match='digest'):
         build(source=source, out=tmp_path / 'bad', version='0.0.1', channel='stable', runtime_dir=runtime)
