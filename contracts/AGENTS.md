@@ -14,6 +14,7 @@
 | [embedded-agent.md](embedded-agent.md) | Embedded Horizon Agent |
 | [install-lock.schema.json](install-lock.schema.json) | Stores install lock.schema fields including $schema, title, description, type. |
 | [knowledge.md](knowledge.md) | Knowledge Frontier and Knowledge Card service |
+| [lark-adapter.md](lark-adapter.md) | Desktop Feishu CLI setup and credential boundary. |
 | [lark-storage.md](lark-storage.md) | 飞书存储适配：原文库 / 推送库 / 配额 |
 | [operations.json](operations.json) | Stores operations fields including schema_version, version, description, operations. |
 | [operations.md](operations.md) | 操作白名单与指令白名单（v1） |

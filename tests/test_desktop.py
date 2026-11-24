@@ -151,6 +151,21 @@ def test_authenticated_bridge_replayed_send_runs_model_once(tmp_path, monkeypatc
                             event = json.loads(incoming.readline())
                             if event['kind'] == 'state' and predicate(event['data']): return event['data']
                     wait_state(lambda state: True)
+                    send({'action':'feishu_status'})
+                    while True:
+                        adapter = json.loads(incoming.readline())
+                        if adapter['kind'] == 'feishu_adapter':
+                            break
+                    assert adapter['data']['installation']['status'] == 'missing'
+                    assert adapter['data']['credentials'] == 'unconfigured'
+                    assert adapter['data']['checks']['binding'] == 'pending'
+                    send({'action':'feishu_configure', 'app_id':'wrong', 'secret':'redaction-marker'})
+                    while True:
+                        adapter_error = json.loads(incoming.readline())
+                        if adapter_error['kind'] == 'feishu_adapter_error':
+                            break
+                    assert adapter_error['data']['code'] == 'lark_credential_input'
+                    assert 'redaction-marker' not in json.dumps(adapter_error)
                     send({'action':'export_diagnostics'})
                     while True:
                         diagnostic_event=json.loads(incoming.readline())

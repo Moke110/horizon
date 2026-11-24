@@ -24,6 +24,7 @@ from hostrun.model_catalog import providers
 from hostrun.agent_service import AgentService, CommandError, desktop_home
 from hostrun.editor_reports import ReportService
 from hostrun.editor_preferences import PreferenceService
+from hostrun.lark_adapter import LarkAdapter
 from hostrun.keeper_runtime import KeeperRuntime, review_event, test_principal
 from pathlib import Path
 from hostrun import embedded_agent, console, desktop_runtime, desktop_processes
@@ -751,6 +752,8 @@ def _serve(resolved, executable, managed):
     ui_ready = threading.Event()
     exiting = threading.Event()
     configuring = threading.Event()
+    lark_busy = threading.Event()
+    lark_adapter = LarkAdapter(service.home, code)
     def emit(kind, data=None):
         with lock:
             try:
@@ -758,6 +761,29 @@ def _serve(resolved, executable, managed):
                 outgoing.flush()
             except (OSError, ValueError):
                 pass
+    def run_lark_action(command):
+        action = command['action']
+        try:
+            result = {}
+            if action == 'feishu_install':
+                lark_adapter.install()
+            elif action == 'feishu_configure':
+                lark_adapter.configure(command.get('app_id'), command.get('secret'))
+            elif action == 'feishu_check':
+                result['permission_check'] = lark_adapter.check_bot()
+            elif action == 'feishu_qr':
+                result['authorization'] = lark_adapter.qr()
+            event = ('feishu_adapter', {**lark_adapter.status(), **result})
+        except CommandError as error:
+            event = ('feishu_adapter_error', {'code': error.code, 'message': str(error)})
+        except (OSError, ValueError, subprocess.SubprocessError):
+            event = ('feishu_adapter_error', {'code': 'lark_unavailable', 'message': '飞书适配器当前不可用'})
+        finally:
+            lark_busy.clear()
+        if action == 'feishu_install' and event[0] == 'feishu_adapter_error':
+            event[1]['state'] = lark_adapter.status()
+        emit(*event)
+
     keeper_commands = KeeperCommands(keeper_service_factory, keeper_runtime, token=token,
                                      emit=emit)
     def refresh_chats():
@@ -871,6 +897,14 @@ def _serve(resolved, executable, managed):
                     if action in ('enqueue_delivery','send_delivery','reconcile_delivery','resend_delivery'):
                         if exiting.is_set(): raise CommandError('exiting','Desktop is exiting')
                         threading.Thread(target=delivery_command,args=(dict(cmd),),daemon=True).start()
+                    elif action in ('feishu_status', 'feishu_install', 'feishu_configure', 'feishu_check', 'feishu_qr'):
+                        if exiting.is_set():
+                            raise CommandError('exiting', 'Desktop is exiting')
+                        if lark_busy.is_set():
+                            emit('feishu_adapter_error', {'code': 'lark_busy', 'message': '飞书适配器正在处理请求'})
+                        else:
+                            lark_busy.set()
+                            threading.Thread(target=run_lark_action, args=(dict(cmd),), daemon=True).start()
                     elif action in ('editor_preferences', 'editor_preference_change'):
                         task_id = chats[current]['task_id'] if chats else None
                         if action == 'editor_preference_change':
@@ -1039,6 +1073,7 @@ def _serve(resolved, executable, managed):
                         for cancel in web_jobs.values():cancel.set()
                         for cancel in fulltext_jobs.values():cancel.set()
                         keeper_runtime.stop()
+                        lark_adapter.stop()
                         scheduler.stopped=True
                         for turn in service.recoverable_turns(token=token):
                             while turn['status'] == 'running':
@@ -1155,6 +1190,7 @@ def _serve(resolved, executable, managed):
         incoming.close()
         connection.close()
         keeper_runtime.stop()
+        lark_adapter.stop()
         scheduler.stop()
         app.closed = True; app.stop(); app.answers.put(None)
         if exit_code:
