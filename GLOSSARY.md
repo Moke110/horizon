@@ -7,11 +7,17 @@
 | English | 中文 | Meaning |
 |---|---|---|
 | Horizon | 地平线 | The software |
-| Knowledge Base | 知识库 | Knowledge managed within Horizon |
-| Knowledge Card | 知识卡片 | A knowledge unit within the Knowledge Base |
-| Theme | 命题 | An evidence-backed claim within the Knowledge Base |
+| Library | 图书馆 | The Dictionary, Hpedia, Bulletin Board and Archive managed through the Librarian |
+| Dictionary | 词典 | The collection of Terms |
+| Term | 术语 | One vocabulary entry and its definition, corresponding to one existing Knowledge Card |
+| Hpedia | 百科 | The collection of Questions |
+| Question | 问题 | A specific question and its answer, together referencing at least one Term |
+| Bulletin Board | 白板 | The collection of Frontiers and links to unresolved Terms and Questions |
+| Frontier | 前沿 | An open-ended question the Explorer follows, with zero or more Updates |
+| Update | 进展 | A distinct development under a Frontier |
+| Archive | 资料库 | The collection of original source records and their references to source documents |
 | Explorer | 探索者 | A person using Horizon |
-| Keeper | 知识库管理员 | The child role that reviews evidence, possible duplicates and relationships before the Explorer sees a proposal |
+| Librarian | 图书管理员 | The module that mediates Library access, reviews proposed changes and applies changes the Explorer confirms |
 | Confirmation card | 确认卡 | A related group of proposed knowledge changes that the Explorer reviews together |
 
 Use these names in product copy, documentation and Agent explanations. Explorer names the person, not an Agent or Windows File Explorer. Technical protocol roles such as `user` and existing identity fields such as `owner` keep their technical meanings.
@@ -20,7 +26,9 @@ Existing `proposition` / `propositions` fields, IDs, commands and filenames repr
 
 ## Language
 
-### Knowledge
+### Existing knowledge model
+
+The terms below describe the existing implementation. See [Library and Librarian](docs/adr/0002-library-and-librarian.md) for the approved model.
 
 **Knowledge Card（知识卡片）**:
 The canonical unit of knowledge interest, defined by a label, recall terms and a precision annotation. It replaces the retired checkpoint.
@@ -61,7 +69,7 @@ _Avoid_: category, tag, folder
 **Knowledge Base（知识库）**:
 Horizon-managed knowledge representing what the Explorer has mastered, with automatic and manual Knowledge Card and Theme updates. Source collection alone does not establish mastery.
 
-**Frontier（关注问题）**:
+**Legacy Frontier（关注问题）**:
 The Explorer's focus question with an explicit research scope, hard constraints, a version and a following status; it is the durable knowledge scope a Voyager retrieval plan can use. Relations stay empty in K1.
 _Avoid_: topic, saved search, subscription
 
@@ -231,7 +239,7 @@ _Avoid_: venv, embedded Python, private environment
 An original source used for interpretation, including papers, news, posts and blogs. The existing PDF adapter keys its source file by `paper_id`.
 _Avoid_: literature, reference, attachment
 
-**Library（库）**:
+**Legacy storage library（旧版存储库）**:
 A Drive root directory plus its Base registration table; source and push libraries share one quota.
 _Avoid_: folder, bucket, archive
 
