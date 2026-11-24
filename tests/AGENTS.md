@@ -74,6 +74,7 @@
 | [test_knowledge_transaction.py](test_knowledge_transaction.py) | Behavioral checks for knowledge transaction. |
 | [test_knowledge_workbench.py](test_knowledge_workbench.py) | Behavioral checks for knowledge workbench. |
 | [test_lark_utf8_decoding.py](test_lark_utf8_decoding.py) | Behavioral checks for lark utf8 decoding. |
+| [test_lark_adapter.py](test_lark_adapter.py) | Pinned Feishu installation, isolation and diagnostic checks. |
 | [test_library.py](test_library.py) | Behavioral checks for library. |
 | [test_mac_lifecycle_probe.py](test_mac_lifecycle_probe.py) | Behavioral checks for mac lifecycle probe. |
 | [test_mac_supervision_prototype.py](test_mac_supervision_prototype.py) | Behavioral checks for mac supervision prototype. |
