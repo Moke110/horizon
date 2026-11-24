@@ -140,6 +140,7 @@ def test_owner_version_drift_starts_one_revision_job_without_owner_writes(tmp_pa
     assert result["applied"] == []
     assert result["status"] == "revising"
     assert result["review_id"]
+    assert owner.keeper.queued_revisions(token=TOKEN, production_only=True) == []
     assert owner.keeper.queued_revisions(token=TOKEN) == [result["review_id"]]
 
     stored = owner.keeper.view(identifier, token=TOKEN)

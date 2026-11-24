@@ -30,6 +30,14 @@ def synthesis_input(value):
     return command
 
 
+def confirmed_knowledge(home, *, token):
+    cards = KnowledgeCardService(home, token=token).query(token=token)
+    return [{"kind": "card", "id": item["card_id"], "version": item["version"],
+              "title": item["title"][:120], "summary": item["content"][:500]}
+             for item in cards if item["known"] and not item["source_pending"] and not item["questionable"]
+             and item["sources"] and all(ref.get("status") != "removed" for ref in item["sources"])][:8]
+
+
 def prepare_synthesis(reports, home, task_id, command, *, token):
     evidence, gaps, unavailable_origins = [], [], []
     for mid in command["material_ids"]:
@@ -86,11 +94,7 @@ def prepare_synthesis(reports, home, task_id, command, *, token):
         gaps.append({"reason": "more_gaps", "count": len(coverage) - 12})
     reposts = [item["material_id"] for item in evidence
                if any((row["source"], row["source_id"]) in reposted for row in item["provenance"])]
-    cards = KnowledgeCardService(home, token=token).query(token=token)
-    known = [{"kind": "card", "id": item["card_id"], "version": item["version"],
-              "title": item["title"][:120], "summary": item["content"][:500]}
-             for item in cards if item["known"] and not item["source_pending"] and not item["questionable"]
-             and item["sources"] and all(ref.get("status") != "removed" for ref in item["sources"])][:8]
+    known = confirmed_knowledge(home, token=token)
     versions = {"knowledge": [{key: item[key] for key in ("kind", "id", "version")} for item in known],
                 "preferences": [DEFAULT_PREFERENCE_VERSION]}
     sources = [{**build_editor_context(item, [], budget=SYNTHESIS_SOURCE_BUDGET // len(evidence))["source"],
@@ -102,7 +106,7 @@ def prepare_synthesis(reports, home, task_id, command, *, token):
     return context, evidence, versions, reposts
 
 
-def commit_synthesis(reports, operation, task_id, command, context, evidence, versions, reposts, result, *, token):
+def commit_synthesis(reports, operation, task_id, command, context, evidence, versions, reposts, result, *, token, task_version=None):
     if (result.get("outcome") == "no_new" and not command.get("report_id")
             and not command.get("expand_known", False)):
         if result.get("claims"):
@@ -113,5 +117,5 @@ def commit_synthesis(reports, operation, task_id, command, context, evidence, ve
         result.get("claims"), gaps=context["gaps"], reposts=reposts,
         selected_material_ids=command["material_ids"], token=token,
         report_id=command.get("report_id"), base_version=command.get("base_version"),
-        synthesis_options=options)
+        synthesis_options=options, keeper_proposals=result.get("keeper_proposals"), task_version=task_version)
     return {"report_id": report["report_id"], "version": report["version"]}

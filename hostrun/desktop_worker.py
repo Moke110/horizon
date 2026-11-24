@@ -147,8 +147,8 @@ class DesktopWorker:
         if event.get('role') == 'editor':
             from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
                                                 read_report_response, report_evidence)
-            from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis, synthesis_input
-            from hostrun.knowledge_workbench import KnowledgeWorkbenchService
+            from hostrun.editor_synthesis import commit_synthesis, confirmed_knowledge, prepare_synthesis, synthesis_input
+            from hostrun.frontier import FrontierService
             from hostrun.editor_preferences import PreferenceService
 
             reports = ReportService(self.home, token=self.service_token)
@@ -198,8 +198,7 @@ class DesktopWorker:
             elif saved_report is None:
                 evidence = report_evidence(reports.materials, material_id, self.task_id,
                                            token=self.service_token)
-                workbench = KnowledgeWorkbenchService(self.home, token=self.service_token)
-                known = workbench.search(token=self.service_token, limit=8)['results']
+                known = confirmed_knowledge(self.home, token=self.service_token)
                 versions = {'knowledge': [{key: item[key] for key in ('kind', 'id', 'version')}
                                           for item in known],
                             'preferences': [DEFAULT_PREFERENCE_VERSION]}
@@ -212,6 +211,9 @@ class DesktopWorker:
                 versions['preferences'] = [{**row, 'key': key} for key, row in effective.items()]
                 if frontier_id:
                     versions['writing_frontier_id'] = frontier_id
+                    frontier = FrontierService(self.home, token=self.service_token).view(frontier_id, token=self.service_token)
+                    editor_context['frontier'] = {key: frontier[key] for key in ('frontier_id', 'version', 'question')}
+                    versions['knowledge'].append({'kind': 'frontier', 'id': frontier_id, 'version': frontier['version']})
             if editor_context is not None and rewrite:
                 editor_context['follow_up'] = {
                     'question': rewrite['question'],
@@ -288,13 +290,16 @@ class DesktopWorker:
                 if editor_context is not None:
                     if not saw_editor_context:
                         raise RuntimeError('Editor did not read the bound material')
+                    reviewed = read_report_response(output, synthesis=True)
                     if synthesis:
                         receipt = commit_synthesis(
                             reports, operation, self.task_id, synthesis, editor_context, evidence, versions,
-                            reposts, read_report_response(output, synthesis=True), token=self.service_token)
+                            reposts, reviewed, token=self.service_token, task_version=self.input_version)
                     else:
                         report = reports.save(operation, self.task_id, evidence, versions,
-                                              read_report_response(output), token=self.service_token,
+                                              reviewed['claims'], token=self.service_token,
+                                              keeper_proposals=reviewed.get('keeper_proposals'),
+                                              task_version=self.input_version,
                                               report_id=rewrite['report_id'] if rewrite else None,
                                               base_version=rewrite['base_version'] if rewrite else None)
                         receipt = {'report_id': report['report_id'], 'version': report['version']}

@@ -29,6 +29,7 @@
 | [diagnostics.py](diagnostics.py) | Local, allowlisted diagnostics. Never copies configuration or conversation files. |
 | [dist.py](dist.py) | Install a distribution package and keep the installation's lock and evidence. |
 | [distribution.py](distribution.py) | Build the installable distribution package, its manifest and its digest. |
+| [editor_keeper.py](editor_keeper.py) | Evidence-linked Editor proposals and production Keeper request pins. |
 | [editor_preferences.py](editor_preferences.py) | Versioned writing styles and opt-in feedback suggestions. |
 | [editor_reports.py](editor_reports.py) | Editor source context, report persistence and citation reading. |
 | [editor_synthesis.py](editor_synthesis.py) | Question-led Editor context, coverage gaps and confirmed background. |
