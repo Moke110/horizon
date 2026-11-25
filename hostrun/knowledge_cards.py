@@ -375,6 +375,8 @@ class KnowledgeCardService:
             updated["known"] = True
             event_type = "knowledge_card.updated"
         else:
+            from hostrun.hpedia import check_term_removal
+            check_term_removal(db, card["card_id"])
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, {})

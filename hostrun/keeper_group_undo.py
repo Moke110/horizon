@@ -569,6 +569,9 @@ class KeeperGroupUndo:
                     key=lambda item: (order[item[1]["kind"]], item[0])):
                 target = plan["targets"][index]
                 record = copy.deepcopy(target["projected"])
+                if target["kind"] == "card" and record["status"] == "archived":
+                    from hostrun.hpedia import check_term_removal
+                    check_term_removal(db, target["id"])
                 owner_operation_id_value = (
                     f"group-undo:{command['operation_id']}:{index}")
                 record["operation_id"] = owner_operation_id_value

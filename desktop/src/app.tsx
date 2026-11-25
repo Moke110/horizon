@@ -10,6 +10,7 @@ import {MaterialsPanel,type MaterialSummary,type MaterialPackage} from './Materi
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
+import {HpediaPanel,type Question} from './HpediaPanel';
 import {KnowledgeWorkbench} from './KnowledgeWorkbench';
 import {EditorReports} from './EditorReports';
 import {readLocalHtml} from './LocalHtml';
@@ -17,9 +18,9 @@ import {FeishuSetup} from './FeishuSetup';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
 type Child={child_id:string;session_id:string;parent_session_id:string;role:string;input_version:number;status:string;artifact_ref:string;result?:string;error?:string};
 type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;changes:{action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
-type TermConfirmation={operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][]};
+type TermConfirmation={entity?:'question';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][]};
 
-function TermConfirmationCard({card,decide}:{card:TermConfirmation;decide:(choice:'confirm'|'reject')=>void}){
+function TermConfirmationCard({card,decide,terms=[]}:{card:TermConfirmation;terms?:CardSummary[];decide:(choice:'confirm'|'reject')=>void}){
   const [elapsed,setElapsed]=useState(false);
   useEffect(()=>{
     if(card.status!=='pending')return;
@@ -31,11 +32,13 @@ function TermConfirmationCard({card,decide}:{card:TermConfirmation;decide:(choic
   const status=elapsed&&card.status==='pending'?'expired':card.status;
   const labels:Record<string,string>={aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关系',
     questionable:'存疑',reason:'修改理由'};
-  return <article className="assistant" aria-label="术语变更确认">
+  const previewText=(value:unknown)=>typeof value==='string'?value.replace(
+    /\[\[term:([^\[\]\s]+)\]\]/g,(_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语'):'';
+  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':'术语变更确认'}>
     <div className="author">图书管理员</div>
     {card.changes.map(([action,change],index)=><div key={index}>
-      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {String(change.title??change.card_id??'')}</strong>
-      {typeof change.content==='string'&&<p>{change.content}</p>}
+      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(change.prompt??change.title??change.question_id??change.card_id)}</strong>
+      {previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
       <dl>{Object.entries(change).filter(([field])=>field in labels).map(([field,value])=><React.Fragment key={field}>
         <dt>{labels[field]}</dt><dd>{typeof value==='string'?value:JSON.stringify(value)}</dd>
       </React.Fragment>)}</dl>
@@ -50,12 +53,12 @@ type Chat={task_id:string;version:number;title:string;messages:{role:string;text
 declare global {interface Window {horizon:{send:(c:unknown)=>void;subscribe:(f:(e:any)=>void)=>()=>void}}}
 const childRoleLabel=(role:string)=>role==='voyager'?'Voyager 子会话':role==='keeper'?'Keeper 知识确认子会话':`开发工具 · ${role}`;
 function App(){
-const [state,setState]=useState<{web_jobs?:string[];subscriptions?:Subscription[];subscription_busy?:string[];voyager_requests?:VoyagerSummary[];voyager_busy?:string[];materials?:(MaterialSummary&{version?:number})[];frontiers?:FrontierSummary[];cards?:CardSummary[];term_confirmations?:TermConfirmation[];gui_term_confirmations?:TermConfirmation[];editor_term_proposals?:EditorTermProposal[];themes?:ThemeSummary[];deliveries?:{delivery_id:string;version:number;status:string;attempts:unknown[];receipts:unknown[];checked?:boolean}[];delivery_enabled?:boolean;schedules?:Schedule[];schedule_limits?:{main:number;children:number};chats:Chat[];current:number;busy:boolean;model:string;provider:string;turns:{turn_id:string;status:string;version:number;error?:string;failure?:{category:string;retryable:boolean;attempts:number;message:string}}[];children:Child[];configured:boolean;configuring:boolean;providers:{id:string;label:string}[];models:string[]}>({chats:[],current:0,busy:false,model:'',provider:'',turns:[],children:[],configured:false,configuring:false,providers:[],models:[]});
+const [state,setState]=useState<{web_jobs?:string[];subscriptions?:Subscription[];subscription_busy?:string[];voyager_requests?:VoyagerSummary[];voyager_busy?:string[];materials?:(MaterialSummary&{version?:number})[];frontiers?:FrontierSummary[];cards?:CardSummary[];questions?:Question[];term_confirmations?:TermConfirmation[];gui_term_confirmations?:TermConfirmation[];editor_term_proposals?:EditorTermProposal[];themes?:ThemeSummary[];deliveries?:{delivery_id:string;version:number;status:string;attempts:unknown[];receipts:unknown[];checked?:boolean}[];delivery_enabled?:boolean;schedules?:Schedule[];schedule_limits?:{main:number;children:number};chats:Chat[];current:number;busy:boolean;model:string;provider:string;turns:{turn_id:string;status:string;version:number;error?:string;failure?:{category:string;retryable:boolean;attempts:number;message:string}}[];children:Child[];configured:boolean;configuring:boolean;providers:{id:string;label:string}[];models:string[]}>({chats:[],current:0,busy:false,model:'',provider:'',turns:[],children:[],configured:false,configuring:false,providers:[],models:[]});
 const [text,setText]=useState(''),[stream,setStream]=useState(''),[tab,setTab]=useState('chat'),[tools,setTools]=useState<string[]>([]),[settings,setSettings]=useState(false),[notice,setNotice]=useState('');
 const [navCollapsed,setNavCollapsed]=useState(false);
 const [selectedMaterial,setSelectedMaterial]=useState<MaterialPackage|null>(null);
 const [detailHost,setDetailHost]=useState<HTMLDivElement|null>(null);
-const [detail,setDetail]=useState<'material'|'report'|'html'|null>(null);
+const [detail,setDetail]=useState<'material'|'report'|'html'|'hpedia'|null>(null);
 const [localHtml,setLocalHtml]=useState<{name:string;content:React.ReactNode}|null>(null);
 const htmlRequest=useRef(0);
 const [detailWidth,setDetailWidth]=useState(440);
@@ -110,7 +113,7 @@ const openHtml=async(file:File)=>{
   }
 };
 const navigation=[
-  ['knowledge','◇','知识库'],['themes','▤','命题'],['voyager','⌕','范围检索'],
+  ['knowledge','◇','知识库'],['hpedia','','百科'],['voyager','⌕','范围检索'],
   ['materials','▱','资料'],['schedules','◷','自动任务'],
 ];
 return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
@@ -124,7 +127,7 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
     <nav className="nav" aria-label="工作区">
       {navigation.map(([id,icon,label])=><button key={id} title={label} aria-label={label}
         aria-current={tab===id||undefined} onClick={()=>navigate(id)}>
-        <span aria-hidden="true">{icon}</span><span className="nav-label">{label}</span>
+        {id==='hpedia'?<span className="hpedia-icon" aria-hidden="true"/>:<span aria-hidden="true">{icon}</span>}<span className="nav-label">{label}</span>
       </button>)}
     </nav>
     <div className="section">工作区 <span>⌕</span></div>
@@ -155,9 +158,10 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'export_diagnostics'}))}>导出诊断</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'exit'}))}>退出Horizon</button>
 </div></aside><div className="workzone" ref={workzone}><main>{conversationOpen && <><header><strong>{chat?.title||'新会话'}</strong><span>研究助手</span></header><div className="tabs"><button className={tab==='chat'?'active':''} onClick={()=>navigate('chat')}>对话</button><button className={tab==='trace'?'active':''} onClick={()=>navigate('trace')}>轨迹</button></div></>}{notice&&<div className="notice" role="alert">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
-{state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card}
-  decide={choice=>send({action:'card_confirm',operation_id:card.operation_id,choice})}/>)}
-{tab==='feishu'?<FeishuSetup send={send} close={()=>setTab('chat')}/>:tab==='voyager'?<><SubscriptionPanel rows={state.subscriptions||[]} busy={state.subscription_busy||[]} send={send}/><VoyagerPanel editorFeedback={ownerFeedback?.owner==='voyager'?ownerFeedback:null} closeEditorFeedback={closeOwnerFeedback} requests={state.voyager_requests||[]} busy={state.voyager_busy||[]} selected={voyagerView} history={voyagerHistory} taskId={chat?.task_id} onPrepare={id=>{setText(current=>current||`请调用 delegate 工具，将检索 ${id} 交给 voyager 子会话，返回来源依据和限制。`);setTab('chat');}} onCommand={command=>{if(command.action==='materials_open')requestedMaterial.current=String(command.material_id);send(['voyager_create','materials_open'].includes(command.action)?{...command,task_id:chat?.task_id}:command);}}/></>:tab==='knowledge'||tab==='themes'?<KnowledgeWorkbench editorFeedback={ownerFeedback?.owner==='voyager'?null:ownerFeedback} closeEditorFeedback={closeOwnerFeedback} initialType={tab==='themes'?'theme':'all'} frontiers={state.frontiers||[]} cards={state.cards||[]} themes={state.themes||[]} materials={state.materials||[]} cardSelected={cardView} cardViewEvent={cardViewEvent} cardError={cardError} frontierSelected={frontierView} frontierViewEvent={frontierViewEvent} frontierError={frontierError} themeSelected={themeView} themeViewEvent={themeViewEvent} themeError={themeError} onPendingCount={count=>setKeeperCount(count)} openPendingNonce={openPendingNonce} onCommand={command=>{const value=command as {action?:string;operation_id?:string};if(value.action==='voyager_create'){createPending.current=value.operation_id||null;send(chat?.task_id?{...value,task_id:chat.task_id}:command);}else send(command);}}/>:tab==='materials'?null:tab==='schedules'?<SchedulePanel schedules={state.schedules||[]} limits={state.schedule_limits||{main:2,children:4}} onCommand={send}/>:tab==='trace'?<section aria-label="轨迹" />:<><div className="messages">{chat && <EditorReports key={chat.task_id} taskId={chat.task_id} detailHost={detail==='report'?detailHost:null} onOpenDetail={()=>{closeDetail();setDetail('report');}}
+{state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]}
+  decide={choice=>send({action:card.entity==='question'?'question_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
+{tab==='hpedia'?<HpediaPanel questions={state.questions||[]} terms={state.cards||[]} send={send}
+  detailHost={detail==='hpedia'?detailHost:null} openDetail={()=>{closeDetail();setDetail('hpedia');}}/>:tab==='feishu'?<FeishuSetup send={send} close={()=>setTab('chat')}/>:tab==='voyager'?<><SubscriptionPanel rows={state.subscriptions||[]} busy={state.subscription_busy||[]} send={send}/><VoyagerPanel editorFeedback={ownerFeedback?.owner==='voyager'?ownerFeedback:null} closeEditorFeedback={closeOwnerFeedback} requests={state.voyager_requests||[]} busy={state.voyager_busy||[]} selected={voyagerView} history={voyagerHistory} taskId={chat?.task_id} onPrepare={id=>{setText(current=>current||`请调用 delegate 工具，将检索 ${id} 交给 voyager 子会话，返回来源依据和限制。`);setTab('chat');}} onCommand={command=>{if(command.action==='materials_open')requestedMaterial.current=String(command.material_id);send(['voyager_create','materials_open'].includes(command.action)?{...command,task_id:chat?.task_id}:command);}}/></>:tab==='knowledge'||tab==='themes'?<KnowledgeWorkbench editorFeedback={ownerFeedback?.owner==='voyager'?null:ownerFeedback} closeEditorFeedback={closeOwnerFeedback} initialType={tab==='themes'?'theme':'all'} frontiers={state.frontiers||[]} cards={state.cards||[]} themes={state.themes||[]} materials={state.materials||[]} cardSelected={cardView} cardViewEvent={cardViewEvent} cardError={cardError} frontierSelected={frontierView} frontierViewEvent={frontierViewEvent} frontierError={frontierError} themeSelected={themeView} themeViewEvent={themeViewEvent} themeError={themeError} onPendingCount={count=>setKeeperCount(count)} openPendingNonce={openPendingNonce} onCommand={command=>{const value=command as {action?:string;operation_id?:string};if(value.action==='voyager_create'){createPending.current=value.operation_id||null;send(chat?.task_id?{...value,task_id:chat.task_id}:command);}else send(command);}}/>:tab==='materials'?null:tab==='schedules'?<SchedulePanel schedules={state.schedules||[]} limits={state.schedule_limits||{main:2,children:4}} onCommand={send}/>:tab==='trace'?<section aria-label="轨迹" />:<><div className="messages">{chat && <EditorReports key={chat.task_id} taskId={chat.task_id} detailHost={detail==='report'?detailHost:null} onOpenDetail={()=>{closeDetail();setDetail('report');}}
   materials={state.materials || []} children={state.children} disabled={state.busy || !state.configured}
   frontiers={state.frontiers || []} handoff={(draft:FeedbackHandoff)=>{
     setFeedbackHandoff(draft);

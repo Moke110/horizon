@@ -55,7 +55,9 @@ class AgentService:
         from hostrun.agent_scheduling import initialize as initialize_scheduling
         initialize_scheduling(db)
 
+        from hostrun.hpedia import migrate_legacy_themes
         db.execute('BEGIN IMMEDIATE')
+        migrate_legacy_themes(db)
         for task_id, encoded in db.execute('SELECT task_id,result FROM agent_tasks').fetchall():
             task = json.loads(encoded)
             if 'session_id' not in task:

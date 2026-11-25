@@ -14,6 +14,8 @@ class Librarian:
         self.library = Library(cards)
         self.clock = clock
         self.library.authorize(token)
+        with self.library.connect() as db:
+            self.library.initialize_questions(db)
 
     def list(self, *, token):
         return self.library.list(token=token)
@@ -105,24 +107,40 @@ class Librarian:
                               (origin,)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def list_questions(self, *, token):
+        return self.library.list_questions(token=token)
+
+    def view_question(self, question_id, *, token):
+        return self.library.view_question(question_id, token=token)
+
+    def request_question(self, action, command, *, token, origin):
+        if not isinstance(command, dict):
+            raise CommandError("invalid_command", "需要百科问题变更内容")
+        return self.request_batch(command.get("operation_id"), [(action, command)],
+                                  token=token, origin=origin, entity="question")
+
     def request(self, action, command, *, token, origin):
         if not isinstance(command, dict):
             raise CommandError("invalid_command", "需要术语变更内容")
         return self.request_batch(command.get("operation_id"), [(action, command)],
                                   token=token, origin=origin)
 
-    def request_batch(self, request_id, changes, *, token, origin):
+    def request_batch(self, request_id, changes, *, token, origin, entity="term"):
         self.library.authorize(token)
         if not isinstance(origin, str) or not origin or not isinstance(request_id, str) \
                 or not request_id.strip() or not isinstance(changes, (list, tuple)) \
                 or not 1 <= len(changes) <= 100:
             raise CommandError("invalid_command", "确认请求需要来源、标识和 1 至 100 项变更")
+        actions = ("create", "update", "delete") if entity == "question" else (
+            "create", "update", "archive", "delete")
         for change in changes:
             if not isinstance(change, (list, tuple)) or len(change) != 2 \
-                    or change[0] not in ("create", "update", "archive", "delete") \
+                    or change[0] not in actions \
                     or not isinstance(change[1], dict):
                 raise CommandError("invalid_command", "无效的术语变更")
-        encoded = json.dumps(changes, sort_keys=True)
+        normalized = [list(change) for change in changes]
+        encoded = json.dumps({"entity": entity, "changes": normalized} if entity == "question"
+                             else normalized, sort_keys=True)
         with self.library.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             now = self.clock()
@@ -137,16 +155,27 @@ class Librarian:
             db.execute("SAVEPOINT librarian_review")
             try:
                 for action, command in changes:
-                    term_id = command.get("card_id")
-                    if action != "create" and isinstance(term_id, str):
-                        term_ids.add(term_id)
-                    self.library.apply(db, action, command, token=token, now=now)
+                    if entity == "question":
+                        proposed = self.library.apply_question(db, action, command, now=now)
+                        if action != "create":
+                            term_ids.add("question:" + proposed["question_id"])
+                        if action != "delete":
+                            for term_id in proposed["term_ids"]:
+                                self.library.check_write_lock(db, term_id, now=now)
+                                term_ids.add(term_id)
+                    else:
+                        term_id = command.get("card_id")
+                        if action != "create" and isinstance(term_id, str):
+                            term_ids.add(term_id)
+                        self.library.apply(db, action, command, token=token, now=now)
             finally:
                 db.execute("ROLLBACK TO librarian_review")
                 db.execute("RELEASE librarian_review")
             card = {"operation_id": request_id, "status": "pending",
                     "expires_at": now + self.confirmation_lifetime,
-                    "changes": json.loads(encoded)}
+                    "changes": normalized}
+            if entity == "question":
+                card["entity"] = entity
             db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
                        (request_id, origin, encoded, card["expires_at"], json.dumps(card)))
             db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
@@ -173,10 +202,13 @@ class Librarian:
             results = []
             if choice == "confirm":
                 for action, command in card["changes"]:
-                    term, changed = self.library.apply(db, action, command, token=token, now=now)
-                    results.append(term)
-                    if changed:
-                        notifications.append(term)
+                    if card.get("entity") == "question":
+                        results.append(self.library.apply_question(db, action, command, now=now))
+                    else:
+                        term, changed = self.library.apply(db, action, command, token=token, now=now)
+                        results.append(term)
+                        if changed:
+                            notifications.append(term)
             card.update(status="confirmed" if choice == "confirm" else "rejected", results=results)
             db.execute("UPDATE librarian_term_requests SET result=? WHERE id=?",
                        (json.dumps(card), request_id))

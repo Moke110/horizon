@@ -537,6 +537,24 @@ def frontier_command(frontier, command, *, token):
     return "frontier_view", value
 
 
+def librarian_question_command(librarian, command, *, token, origin):
+    action = command["action"]
+    if action == "question_list":
+        return "question_list", librarian.list_questions(token=token)
+    if action == "question_open":
+        return "question_view", librarian.view_question(command.get("question_id"), token=token)
+    if action == "question_confirm":
+        card = librarian.decide(command.get("operation_id"), command.get("choice"),
+                                token=token, origin=origin)
+        return "question_confirmation", card
+    if action in ("question_create", "question_update", "question_delete"):
+        payload = {key: value for key, value in command.items() if key != "action"}
+        result = librarian.request_question(action.removeprefix("question_"), payload,
+                                            token=token, origin=origin)
+        return "question_confirmation", result
+    raise CommandError("invalid_command", "不支持的百科操作")
+
+
 def librarian_card_command(librarian, command, *, token, origin):
     action = command["action"]
     if action in ("card_create", "card_update", "card_archive"):
@@ -835,10 +853,12 @@ def _serve(resolved, executable, managed):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'themes':knowledge_themes.list(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
-                           'gui_term_confirmations':[card for card in librarian.confirmations(token=token,origin='gui') if card['status']=='pending'],
+                           'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
+                                for card in librarian.confirmations(token=token,origin=origin)
+                                if card['status']=='pending'],
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -1036,6 +1056,16 @@ def _serve(resolved, executable, managed):
                                 for term in data['results']:
                                     emit('card_view', term)
                             state()
+                    elif action in ('question_list','question_open','question_create',
+                                    'question_update','question_delete','question_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=librarian_question_command(librarian,cmd,token=token,origin='gui:hpedia')
+                        emit(kind,data)
+                        if kind == 'question_confirmation' and data['status'] == 'confirmed':
+                            for question in data['results']:
+                                emit('question_view', question)
+                        if kind == 'question_confirmation':
+                            state()
                     elif action == 'agent_term_confirm':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if not chats or cmd.get('task_id') != chats[current]['task_id']:
@@ -1043,8 +1073,9 @@ def _serve(resolved, executable, managed):
                         librarian.decide(cmd.get('operation_id'),cmd.get('choice'),
                                          token=token,origin='agent:'+chats[current]['task_id'])
                         state()
-                    elif action in ('theme_create','theme_update','theme_archive',
-                                    'theme_open','theme_list','theme_query','theme_source'):
+                    elif action in ('theme_create','theme_update','theme_archive'):
+                        raise CommandError('retired_theme', '请在百科中新增或编辑问题。')
+                    elif action in ('theme_open','theme_list','theme_query','theme_source'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=theme_command(knowledge_themes,cmd,token=token)
                         emit(kind,data)

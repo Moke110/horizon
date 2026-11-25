@@ -481,3 +481,22 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .local-html img { display: block; max-width: 100%; height: auto; }
 .html-picker { display: block; margin-block: 8px; }
 .html-picker input { width: auto; margin-left: 8px; }
+
+
+.hpedia-icon { position: relative; display: inline-block; width: 17px; height: 17px; }
+.hpedia-icon::before, .hpedia-icon::after {
+  content: ""; position: absolute; width: 8px; height: 11px;
+  border: 1px solid currentColor; border-radius: 1px;
+}
+.hpedia-icon::before { top: 1px; right: 1px; }
+.hpedia-icon::after { bottom: 1px; left: 1px; background: var(--sidebar-background); }
+.hpedia-panel { overflow: auto; padding: 24px 30px; }
+.hpedia-panel ul { list-style: none; padding: 0; }
+.hpedia-panel li + li { border-top: 1px solid #44444b; }
+.hpedia-panel li button { text-align: left; overflow-wrap: anywhere; }
+.hpedia-form { display: grid; gap: 12px; }
+.hpedia-form textarea { display: block; width: 100%; min-height: 100px; margin-top: 5px; }
+.hpedia-reference-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hpedia-reference-picker select { margin-left: 6px; max-width: 100%; }
+.hpedia-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.hpedia-term-link { color: #9db9ff; text-decoration: underline; padding: 0 2px; }
