@@ -94,7 +94,7 @@ def _haystack(kind, row):
     """Projected record text only; pinned source bytes are never searched."""
     if kind == "card":
         fields = [row.get("title", ""), row.get("content", ""),
-                  *row.get("aliases", []), *row.get("recall_terms", [])]
+                  *row.get("aliases", [])]
     elif kind == "theme":
         fields = [row.get("judgement", ""), *row.get("conditions", [])]
     else:

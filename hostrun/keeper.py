@@ -69,7 +69,7 @@ _REVISION_TERMINAL = ("approved", "rejected", "cancelled")
 _ID_PATTERN = re.compile(r"[A-Za-z0-9_.:-]+")
 _KINDS = ("card", "theme", "frontier")
 _ACTIONS = ("create", "update", "delete")
-_CARD_FIELDS = {"title", "content", "aliases", "recall_terms", "relations",
+_CARD_FIELDS = {"title", "content", "aliases", "relations",
                 "questionable"}
 _THEME_FIELDS = {"judgement", "conditions", "related_cards", "evidence"}
 _FRONTIER_FIELDS = {"question", "scope", "hard_constraints", "relations",
@@ -1794,7 +1794,6 @@ class KeeperService:
                 "title": fields["title"],
                 "content": fields["content"],
                 "aliases": fields.get("aliases", []),
-                "recall_terms": fields.get("recall_terms", []),
                 "sources": sources,
                 "relations": relations,
                 "provenance": provenance,

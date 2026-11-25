@@ -253,7 +253,7 @@ Open **知识库** to create a Frontier: a focus question, original research sco
 
 ### Knowledge Cards
 
-Open **知识库 → 知识卡片** and enter a title and content. Add aliases, recall terms or related cards as needed. To cite material, select a saved item, enter a locator and copy an excerpt from its text. Horizon records the source snapshot and version. A card without a verified citation from captured public web or academic material shows **用户陈述 · 来源待补充**. Mark uncertainty with **存疑**.
+Open **知识库 → 知识卡片** and enter a title and content. Add aliases or related cards as needed. To cite material, select a saved item, enter a locator and copy an excerpt from its text. Horizon records the source snapshot and version. A card without a verified citation from captured public web or academic material shows **用户陈述 · 来源待补充**. Mark uncertainty with **存疑**.
 
 **编辑（读取完整版本）** pins the draft to a committed version. If another edit was saved first, the panel keeps your draft and shows its differences from the latest version. Review the changes before reapplying the draft or discarding it. Archived cards stay readable and leave the active known set. Reopening Horizon restores committed cards and their versions. Reading and rating leave knowledge unchanged.
 

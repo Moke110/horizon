@@ -5,7 +5,7 @@ type UndoWork={operation_id:string;proposal_id:string;revision:number};
 const KIND_LABEL:Record<string,string>={card:'知识卡片',theme:'命题',frontier:'关注问题'};
 const ACTION_LABEL:Record<string,string>={restore:'恢复到批准前',archive:'撤销新建并归档',update:'恢复',delete:'删除'};
 const FIELD_LABEL:Record<string,string>={
-  title:'标题',content:'内容',aliases:'别名',recall_terms:'检索词',sources:'来源',
+  title:'标题',content:'内容',aliases:'别名',sources:'来源',
   relations:'关联',questionable:'存疑',provenance:'来源性质',status:'状态',known:'是否计入已知',
   judgement:'判断',conditions:'适用条件',related_cards:'关联知识卡片',evidence:'证据',
   evidence_sufficiency:'证据充分性',question:'关注问题',scope:'研究范围',

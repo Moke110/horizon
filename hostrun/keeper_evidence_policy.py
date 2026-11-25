@@ -41,7 +41,7 @@ NO_EFFECT = "no_effect"
 # IDs, versions, timestamps, generated evidence IDs and display labels are not
 # part of an intent.
 _EDITABLE_FIELDS = {
-    "card": {"title", "content", "aliases", "recall_terms", "relations",
+    "card": {"title", "content", "aliases", "relations",
              "questionable"},
     "theme": {"judgement", "conditions", "related_cards", "evidence"},
     "frontier": {"question", "scope", "hard_constraints", "relations",
