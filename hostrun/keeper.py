@@ -266,12 +266,12 @@ def _receipt_result(receipt):
 class KeeperService:
     """Persistent, authenticated Keeper requests, review and proposal reads."""
 
-    def __init__(self, agent, materials, cards, themes, frontiers, *, token):
+    def __init__(self, agent, materials, cards, themes, frontiers, *, token, clock=time.time):
         if not isinstance(token, str) or not token:
             raise ValueError("A launch token is required")
         self.agent = agent
         self.materials = materials
-        self.cards = Librarian(cards, token=token)
+        self.cards = Librarian(cards, token=token, clock=clock)
         self.themes = themes
         self.frontiers = frontiers
         self.home = Path(agent.home)
@@ -447,14 +447,23 @@ class KeeperService:
                 try:
                     self._check_pins(db, command)
                     plan = self._plan(db, command)
+                    if command.get("report_kind") == "editor":
+                        receipt["review_reason"] = outcome.get("reason", "")
+                    proposals = [self._proposal(receipt, command, group) for group in plan]
+                    db.execute("SAVEPOINT reserve_reviewed_terms")
+                    try:
+                        for proposal in proposals:
+                            self.cards.reserve_reviewed_terms(db, proposal)
+                    except CommandError:
+                        db.execute("ROLLBACK TO reserve_reviewed_terms")
+                        raise
+                    finally:
+                        db.execute("RELEASE reserve_reviewed_terms")
                 except (CommandError, _Returned) as error:
                     outcome = self._returned_outcome(error)
             if outcome["status"] == "reviewed":
                 proposal_ids = []
-                if command.get("report_kind") == "editor":
-                    receipt["review_reason"] = outcome.get("reason", "")
-                for group in plan:
-                    proposal = self._proposal(receipt, command, group)
+                for proposal in proposals:
                     proposal_ids.append(proposal["proposal_id"])
                     db.execute("INSERT INTO keeper_proposals VALUES(?,?,?)",
                                (proposal["proposal_id"], request_id, json.dumps(proposal)))
@@ -502,6 +511,13 @@ class KeeperService:
                                    "Keeper proposal revision changed")
             changes = proposal["changes"]
             check_expected_versions(command, changes)
+            if "term_expires_at" in proposal and "decision" in proposal:
+                return proposal["decision"]
+            if self.cards.reviewed_terms_expired(proposal):
+                self.cards.release_reviewed_terms(db, proposal)
+                return {"operation_id": command["operation_id"],
+                        "proposal_id": proposal["proposal_id"], "status": "expired",
+                        "revision": proposal["revision"], "applied": []}
             if proposal.get("status") == "revising" \
                     and command["decision"] == "approve":
                 # A concurrent window approved the same displayed revision while
@@ -516,6 +532,7 @@ class KeeperService:
             if proposal.get("status") != "pending":
                 raise CommandError("already_decided",
                                    "Keeper proposal has already been decided")
+            self.cards.release_reviewed_terms(db, proposal)
             applied = []
             if command["decision"] == "approve":
                 request, _ = self._load_request(db, proposal["request_id"])
@@ -642,6 +659,9 @@ class KeeperService:
                     or status not in ("pending", "revising", "returned"):
                 raise CommandError("already_decided",
                                    "Keeper proposal has already been decided")
+            if self.cards.reviewed_terms_expired(proposal):
+                raise CommandError("already_decided", "确认已过期")
+            self.cards.release_reviewed_terms(db, proposal)
             if command["decision"] == "cancel":
                 result = self._cancel_revision(db, proposal, command)
             else:
@@ -798,6 +818,16 @@ class KeeperService:
                     return result
                 result = self._revision_receipt(
                     job["request"], "returned", reason="snapshot_changed")
+                self._save_job(db, job, "returned", result)
+                self._persist_returned(db, proposal, job, result)
+                self._audit_revision(db, proposal["proposal_id"],
+                                     "keeper.revision_returned", result,
+                                     **self._revision_audit_details(job, result))
+                return result
+            try:
+                self.cards.reserve_reviewed_terms(db, revised)
+            except CommandError as error:
+                result = self._revision_failure(job["request"], error)
                 self._save_job(db, job, "returned", result)
                 self._persist_returned(db, proposal, job, result)
                 self._audit_revision(db, proposal["proposal_id"],
@@ -2229,6 +2259,20 @@ class KeeperService:
             **{field: command[field] for field in _RECONSIDERATION_FIELDS if field in command},
         }
 
+    def session_term_proposals(self, task_id, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT result FROM keeper_proposals WHERE json_extract(result,'$.task_id')=?
+                    AND json_extract(result,'$.term_expires_at') IS NOT NULL
+                ORDER BY rowid
+            """, (task_id,)).fetchall()
+        proposals = [json.loads(row[0]) for row in rows]
+        for proposal in proposals:
+            if self.cards.reviewed_terms_expired(proposal):
+                proposal["status"] = "expired"
+        return proposals
+
     def list(self, *, token, status="pending"):
         """List persisted proposals with a stable review status."""
         self._authorize(token)
@@ -2239,7 +2283,8 @@ class KeeperService:
             db.execute("BEGIN")
             rows = db.execute("SELECT result FROM keeper_proposals ORDER BY rowid").fetchall()
         proposals = [json.loads(row[0]) for row in rows]
-        return [proposal for proposal in proposals if proposal["status"] == status]
+        return [proposal for proposal in proposals if proposal["status"] == status
+                and not self.cards.reviewed_terms_expired(proposal)]
 
     def view(self, proposal_id, *, token):
         """Read one persisted proposal with its pinned changes."""
@@ -2251,7 +2296,10 @@ class KeeperService:
                              (proposal_id,)).fetchone()
         if row is None:
             raise CommandError("not_found", "Unknown Keeper proposal")
-        return json.loads(row[0])
+        proposal = json.loads(row[0])
+        if self.cards.reviewed_terms_expired(proposal):
+            proposal["status"] = "expired"
+        return proposal
 
     def receipt(self, request_id, *, token):
         """Read the current persistent request receipt."""

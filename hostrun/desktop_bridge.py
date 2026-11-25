@@ -806,8 +806,13 @@ def _serve(resolved, executable, managed):
             event[1]['state'] = lark_adapter.status()
         emit(*event)
 
+    def emit_keeper(kind, data):
+        emit(kind, data)
+        if kind in ("keeper_review", "keeper_revision"):
+            app.events.put(("term_confirmation_changed", None))
+
     keeper_commands = KeeperCommands(keeper_service_factory, keeper_runtime, token=token,
-                                     emit=emit)
+                                     emit=emit_keeper)
     def refresh_chats():
         nonlocal current
         with dispatch_lock:
@@ -832,6 +837,7 @@ def _serve(resolved, executable, managed):
             facts = embedded_agent.runtime(app.home, code=code)
             emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
+                            'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
                            'gui_term_confirmations':[card for card in librarian.confirmations(token=token,origin='gui') if card['status']=='pending'],
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
@@ -1089,6 +1095,8 @@ def _serve(resolved, executable, managed):
                         if result is not None:
                             emit(*result)
                             receipt = result[1]
+                            if action in ('keeper_decide', 'keeper_revise'):
+                                state()
                             if action in ('keeper_decide', 'keeper_revise') \
                                     and isinstance(receipt, dict) \
                                     and receipt.get('status') == 'revising':

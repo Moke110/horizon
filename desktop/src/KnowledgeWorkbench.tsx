@@ -523,6 +523,14 @@ export function KnowledgeWorkbench({
           }
           return;
         }
+        if(event.data?.status==='expired'){
+          decisionWork.current=null;
+          setDecisionPending(null);
+          setDecisionError('确认已过期。');
+          setPendingProposal(previous=>previous?.proposal_id===work.proposal_id
+            ?{...previous,status:'expired'}:previous);
+          return;
+        }
         const resultStatus=asKeeperStatus(event.data?.status);
         const accepted=resultStatus!==null&&(work.action==='keeper_decide'
           ?resultStatus===work.expectedStatus||resultStatus==='revising'

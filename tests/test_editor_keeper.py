@@ -1,9 +1,10 @@
 import copy
+import time
 
 import pytest
 
 from hostrun.editor_reports import ReportService, report_evidence
-from hostrun.keeper import KeeperPrincipal
+from hostrun.keeper import KeeperPrincipal, KeeperService
 from test_keeper_runtime import Owner, TOKEN
 
 
@@ -165,3 +166,57 @@ def test_keeper_child_recovers_terminal_outcome_before_request_commit(tmp_path, 
     assert len(calls) == 1 and completed["child_id"] != failure.value.child_id
     assert reopened.dispatch(retried) == completed
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("outcome", ["approve", "reject", "expire"])
+def test_editor_keeper_term_confirmation_shares_the_librarian_lock(tmp_path, outcome):
+    from hostrun.librarian import Librarian
+    from hostrun.agent_service import CommandError
+
+    owner = Owner(tmp_path)
+    clock = [time.time()]
+    keeper = KeeperService(owner.agent, owner.materials, owner.cards, owner.themes,
+                           owner.frontiers, token=TOKEN, clock=lambda: clock[0])
+    term = owner.cards.create({"schema_version": 1, "operation_id": "existing",
+                               "title": "辐射传感器", "content": "记录辐射。"}, token=TOKEN)
+    material = owner.material()
+    task = owner.task["task_id"]
+    reports = ReportService(tmp_path, token=TOKEN)
+    evidence = report_evidence(owner.materials, material["material_id"], task, token=TOKEN)
+    reports.save("editor", task, evidence, {"knowledge": [
+        {"kind": "card", "id": term["card_id"], "version": 1}]}, [
+        {"kind": "source", "text": "探测器每日记录辐射。",
+         "citations": [{"excerpt": evidence["locators"][1]["text"], "locator": "p2"}]}],
+        token=TOKEN, task_version=owner.task["version"], keeper_proposals=[
+            {"kind": "card", "id": term["card_id"], "claim_index": 0, "reason": "补充定义",
+             "fields": {"content": "探测器每日记录辐射。"}}])
+    command, = reports.pending_keeper_requests(token=TOKEN)
+    queued = keeper.request(command, token=TOKEN, principal=KeeperPrincipal("editor", False))
+    result = keeper.review(queued["request_id"], token=TOKEN,
+                                 dispatch=lambda _: {"status": "reviewed"})
+    proposal = keeper.view(result["proposal_ids"][0], token=TOKEN)
+    librarian = Librarian(owner.cards, token=TOKEN)
+    update = {"schema_version": 1, "operation_id": "gui-edit", "card_id": term["card_id"],
+              "expected_version": 1, "content": "另一个定义。"}
+    assert librarian.view(term["card_id"], token=TOKEN) == term
+    with pytest.raises(CommandError, match="确认"):
+        librarian.request("update", update, token=TOKEN, origin="gui")
+    assert keeper.session_term_proposals(task, token=TOKEN) == [proposal]
+    decision = {"schema_version": 1, "operation_id": "decision", "revision": 1,
+                "proposal_id": proposal["proposal_id"], "expected_versions": [1],
+                "decision": "reject" if outcome == "reject" else "approve"}
+    if outcome == "expire":
+        clock[0] += 72 * 3600
+        assert keeper.view(proposal["proposal_id"], token=TOKEN)["status"] == "expired"
+    explorer = KeeperPrincipal("explorer", False)
+    result = keeper.decide(decision, token=TOKEN, principal=explorer)
+    assert result["status"] == {"approve": "approved", "reject": "rejected", "expire": "expired"}[outcome]
+    assert keeper.decide(decision, token=TOKEN, principal=explorer) == result
+    if outcome == "approve":
+        assert librarian.view(term["card_id"], token=TOKEN)["content"] == "探测器每日记录辐射。"
+        update["expected_version"] = 2
+        assert keeper.decide({**decision, "operation_id": "another-click"},
+                             token=TOKEN, principal=explorer) == result
+    else:
+        assert librarian.view(term["card_id"], token=TOKEN) == term
+    assert librarian.request("update", update, token=TOKEN, origin="gui")["status"] == "pending"

@@ -213,8 +213,18 @@ class KnowledgeCardService:
     def history_undoable(record):
         return record.get("status") == "active"
 
+    def _check_term_lock(self, db, term_id, lock_clock=None):
+        now = self.clock() if lock_clock is None else lock_clock
+        locked = db.execute("""SELECT 1 FROM librarian_term_locks AS lock
+            JOIN librarian_term_requests AS request ON request.id=lock.request_id
+            WHERE lock.term_id=? AND request.expires_at>?""",
+                            (term_id, now)).fetchone()
+        if locked:
+            raise CommandError("term_locked", "术语正在等待确认")
+
     def apply_history_undo(self, db, record, fields):
         """Apply trusted historical editable fields, reusing pinned citations."""
+        self._check_term_lock(db, record["card_id"])
         updated = json.loads(json.dumps(record))
         for path, value in fields.items():
             set_path(updated, path, value)
@@ -343,13 +353,7 @@ class KnowledgeCardService:
                            "card_id": card_id, "operation_id": command["operation_id"]}, origin)))
             return card, True
         card = self._read(db, command.get("card_id"))
-        now = self.clock() if lock_clock is None else lock_clock
-        locked = db.execute("""SELECT 1 FROM librarian_term_locks AS lock
-            JOIN librarian_term_requests AS request ON request.id=lock.request_id
-            WHERE lock.term_id=? AND request.expires_at>?""",
-                            (card["card_id"], now)).fetchone()
-        if locked:
-            raise CommandError("term_locked", "术语正在等待确认")
+        self._check_term_lock(db, card["card_id"], lock_clock)
         if action == "update":
             fields = self._fields(command)
             if type(command.get("expected_version")) is not int \

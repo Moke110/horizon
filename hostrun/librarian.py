@@ -54,6 +54,35 @@ class Librarian:
             SELECT id FROM librarian_term_requests
             WHERE json_extract(result,'$.status')='expired')""")
 
+    def reserve_reviewed_terms(self, db, proposal):
+        """Enroll an evidence-reviewed Editor proposal in the shared lock ledger."""
+        changes = [change for change in proposal["changes"] if change["kind"] == "card"]
+        if proposal["provenance"] != "editor" or not changes:
+            return
+        now = self.clock()
+        self._expire(db, now)
+        request_id = "keeper:" + proposal["proposal_id"]
+        term_ids = {change["id"] for change in changes if change["action"] != "create"}
+        for term_id in term_ids:
+            if db.execute("SELECT 1 FROM librarian_term_locks WHERE term_id=?",
+                          (term_id,)).fetchone():
+                raise CommandError("term_locked", "术语正在等待确认")
+        proposal["term_expires_at"] = now + self.confirmation_lifetime
+        card = {"operation_id": request_id, "status": "pending"}
+        db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
+                   (request_id, "keeper", "[]", proposal["term_expires_at"], json.dumps(card)))
+        db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
+                       [(term_id, request_id) for term_id in term_ids])
+
+    def release_reviewed_terms(self, db, proposal):
+        request_id = "keeper:" + proposal["proposal_id"]
+        db.execute("DELETE FROM librarian_term_locks WHERE request_id=?", (request_id,))
+        db.execute("DELETE FROM librarian_term_requests WHERE id=?", (request_id,))
+
+    def reviewed_terms_expired(self, proposal):
+        expiry = proposal.get("term_expires_at")
+        return proposal["status"] == "pending" and expiry is not None and expiry <= self.clock()
+
     def confirmations(self, *, token, origin):
         self.library.authorize(token)
         with self.library.connect() as db:
