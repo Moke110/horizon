@@ -64,7 +64,7 @@ const CODE_LABEL:Record<string,string>={
 };
 const FIELD_LABEL:Record<string,string>={
   title:'标题',content:'内容',question:'关注问题',judgement:'判断',status:'状态',
-  aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关联',questionable:'存疑',
+  aliases:'别名',sources:'来源',relations:'关联',questionable:'存疑',
   provenance:'来源性质',source_pending:'来源待补充',known:'是否计入已知',
   conditions:'适用条件',related_cards:'关联知识卡片',evidence:'证据',evidence_sufficiency:'证据充分性',
   scope:'研究范围','scope.text':'研究范围',scope_text:'范围摘要',alternatives:'替代查询',

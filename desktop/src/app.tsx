@@ -35,7 +35,7 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
     return ()=>window.clearTimeout(timer);
   },[card.status,card.expires_at]);
   const status=elapsed&&card.status==='pending'?'expired':card.status;
-  const labels:Record<string,string>={aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关系',
+  const labels:Record<string,string>={aliases:'别名',sources:'来源',relations:'关系',
     questionable:'存疑',convergence:'收敛状态',reason:'修改理由',label:'来源说明',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
   const fieldText=(field:string,value:unknown)=>{
     if(typeof value==='object'&&value){

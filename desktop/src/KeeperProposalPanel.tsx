@@ -32,7 +32,7 @@ export type KeeperChange={
 export type KeeperKeepFields={change_index:number;fields:string[]};
 /** Owner-editable fields; only these can be kept at their current value. */
 export const KEEPER_EDITABLE_FIELDS:Record<KeeperKind,string[]>={
-  card:['title','content','aliases','recall_terms','relations','questionable'],
+  card:['title','content','aliases','relations','questionable'],
   theme:['judgement','conditions','related_cards','evidence'],
   frontier:['question','scope','hard_constraints','relations','status'],
 };
@@ -191,7 +191,7 @@ const STATUS_LABEL:Record<string,string>={
 };
 const FIELD_LABEL:Record<string,string>={
   title:'标题',content:'内容',question:'关注问题',judgement:'判断',status:'状态',
-  aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关联',questionable:'存疑',
+  aliases:'别名',sources:'来源',relations:'关联',questionable:'存疑',
   provenance:'来源性质',source_pending:'来源待补充',conditions:'适用条件',
   related_cards:'关联知识卡片',evidence:'证据',evidence_sufficiency:'证据充分性',
   scope:'研究范围',text:'范围文本',alternatives:'替代查询',
@@ -230,7 +230,7 @@ const inlineValue=(value:unknown):string=>{
   if(value===null||value===undefined)return '未记录';
   if(Array.isArray(value))return value.length?value.map(inlineValue).join('、'):'（空）';
   if(isRecord(value)){
-    const entries=Object.entries(value);
+    const entries=Object.entries(value).filter(([key])=>key!=='recall_terms');
     if(!entries.length)return '（空）';
     return entries.map(([key,item])=>`${fieldLabel(key)}：${inlineValue(item)}`).join('；');
   }
@@ -240,7 +240,7 @@ const valueText=(value:unknown):string=>{
   if(value===null||value===undefined)return '';
   if(typeof value==='string')return value.trim()?value:'';
   if(isRecord(value)){
-    const entries=Object.entries(value);
+    const entries=Object.entries(value).filter(([key])=>key!=='recall_terms');
     if(!entries.length)return '';
     return entries.map(([key,item])=>`${fieldLabel(key)}：${inlineValue(item)}`).join('\n');
   }

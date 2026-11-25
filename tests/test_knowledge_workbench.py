@@ -17,6 +17,7 @@ from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.knowledge_workbench import KnowledgeWorkbenchService
+from hostrun.managed_database import database_connection
 
 
 class Clock:
@@ -82,7 +83,14 @@ def test_short_chinese_mixed_language_and_normalized_queries_are_offline(tmp_pat
     optical = add_card(
         cards, "optical", "光学传感器标定",
         "每天测量接收到的辐射。",
-        aliases=["光学校准"], recall_terms=["sensor calibration"])
+        aliases=["光学校准", "sensor calibration"])
+    # Seed the same snapshot a release with the retired field would have saved.
+    legacy = json.dumps(optical | {"recall_terms": ["obsolete keyword"]})
+    with database_connection(tmp_path) as db:
+        db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?",
+                   (legacy, optical["card_id"]))
+        db.commit()
+    assert cards.view(optical["card_id"], token="s") == optical
     single = add_card(
         cards, "single-cell", "单细胞扰动预测",
         "扰动预测模型用表达谱推断未见基因扰动后的细胞响应。")
@@ -109,10 +117,11 @@ def test_short_chinese_mixed_language_and_normalized_queries_are_offline(tmp_pat
 
     # Mixed Chinese/English, with or without a separating space, and
     # normalization (full-width Latin letters and case) all locate the same
-    # card through title/alias/recall fields.
+    # card through title/alias fields.
     assert found(search(workbench, "光学 sensor")) == {optical_hit}
     assert found(search(workbench, "光学sensor")) == {optical_hit}
     assert found(search(workbench, "ＳＥＮＳＯＲ")) == {optical_hit}
+    assert found(search(workbench, "obsolete keyword")) == set()
     assert found(search(workbench, "  光学  ")) == {
         optical_hit, theme_hit, frontier_hit}
     assert found(search(workbench, "不存在")) == set()

@@ -93,6 +93,12 @@ def _bounded_sources(value):
     return list(citations.values())
 
 
+def _read_snapshot(encoded):
+    card = json.loads(encoded)
+    card.pop("recall_terms", None)
+    return card
+
+
 def _source_key(source):
     return tuple(source[field] for field in _SOURCE_FIELDS)
 
@@ -117,7 +123,7 @@ class KnowledgeCardService:
         "id_field": "card_id",
         "event_type": "knowledge_card.undo",
         "editable": (("title",), ("content",), ("aliases",),
-                     ("recall_terms",), ("sources",), ("relations",),
+                     ("sources",), ("relations",),
                      ("questionable",), ("convergence",)),
         "defaults": {("convergence",): current_convergence},
     }
@@ -183,7 +189,7 @@ class KnowledgeCardService:
         if row:
             if row[0] != encoded:
                 raise CommandError("operation_conflict", "operation_id conflicts")
-            return encoded, json.loads(row[1])
+            return encoded, _read_snapshot(row[1])
         return encoded, None
 
     def _notify(self, card):
@@ -210,6 +216,8 @@ class KnowledgeCardService:
 
     def history_project(self, card, removed):
         """Project a stored snapshot without reporting removed sources live."""
+        if "recall_terms" in card:
+            card = {field: value for field, value in card.items() if field != "recall_terms"}
         return self._project_sources(card, removed)
 
     @staticmethod
@@ -247,9 +255,8 @@ class KnowledgeCardService:
         if "content" in command:
             fields["content"] = _bounded_text(command["content"], name="content",
                                               byte_limit=_CONTENT_BYTES)
-        for name in ("aliases", "recall_terms"):
-            if name in command:
-                fields[name] = _bounded_strings(command[name], name=name,
+        if "aliases" in command:
+            fields["aliases"] = _bounded_strings(command["aliases"], name="aliases",
                                                 byte_limit=_ALIAS_BYTES, max_items=_MAX_ALIASES)
         if "sources" in command:
             fields["sources"] = _bounded_sources(command["sources"])
@@ -337,7 +344,6 @@ class KnowledgeCardService:
                 "title": fields["title"],
                 "content": fields["content"],
                 "aliases": fields.get("aliases", []),
-                "recall_terms": fields.get("recall_terms", []),
                 "sources": sources,
                 "relations": self._relations(db, card_id, fields.get("relations", [])),
                 "provenance": provenance,
@@ -418,7 +424,7 @@ class KnowledgeCardService:
     def query_all_in_transaction(cls, db):
         """Read every committed card, newest row first, on the caller's transaction."""
         rows = db.execute("SELECT result FROM knowledge_cards ORDER BY rowid DESC").fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [_read_snapshot(row[0]) for row in rows]
 
     def list(self, *, token):
         """List all committed cards, including archived ones with their status."""
@@ -487,7 +493,7 @@ class KnowledgeCardService:
                          (card_id,)).fetchone()
         if not row:
             raise CommandError("not_found", "Unknown Knowledge Card")
-        return json.loads(row[0])
+        return _read_snapshot(row[0])
 
     @classmethod
     def read_in_transaction(cls, db, card_id):
@@ -497,7 +503,7 @@ class KnowledgeCardService:
     def _conflict(self, command, card, fields):
         submitted = {}
         changed = []
-        for name in ("title", "content", "aliases", "recall_terms", "sources",
+        for name in ("title", "content", "aliases", "sources",
                      "relations", "questionable", "convergence"):
             if name not in fields:
                 continue
