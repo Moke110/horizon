@@ -1,4 +1,4 @@
-const {app} = require('electron');
+const {app, dialog} = require('electron');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
@@ -38,7 +38,17 @@ const libraryState = {
   children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}],
   providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
 };
+const pdfFileName = 'chooser-fixture.pdf';
+const pdfFixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), pdfFileName);
+fs.writeFileSync(pdfFixture, Buffer.from(blankPdf(), 'base64'));
+dialog.showOpenDialog = async () => ({canceled:false, filePaths:[pdfFixture]});
+let registeredPdf = false;
 const server = net.createServer(socket => socket.on('data', chunk => {
+  const pdfLine = chunk.toString().split('\n').find(line => line.includes('"action":"materials_pdf_register"'));
+  if (pdfLine) {
+    const command = JSON.parse(pdfLine);
+    registeredPdf = command.title === pdfFileName && command.pdf_base64 === blankPdf();
+  }
   const questionLine = chunk.toString().split('\n')
     .find(line => line.includes('"action":"question_create"') || line.includes('"action":"question_confirm"'));
   if (questionLine) {
@@ -208,6 +218,12 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
 
       const filePicker = document.querySelector('[aria-label="打开 HTML"]');
       if (!filePicker?.textContent.includes("未选择文件")) throw Error("HTML picker must display its empty file name");
+      const pdfPicker = document.querySelector('[aria-label="导入 PDF"]');
+      if (!pdfPicker?.textContent.includes('选择文件') || !pdfPicker.textContent.includes('未选择文件')) {
+        throw Error('PDF import must use the file chooser row');
+      }
+      pdfPicker.querySelector('button').click();
+      await wait(() => pdfPicker.querySelector('[title="chooser-fixture.pdf"]'));
       const checkbox = Array.from(document.querySelectorAll("label")).find(label => label.textContent.includes("使用浏览器渲染公开动态页"));
       checkbox.click();
       if (!checkbox.querySelector("input").checked) throw Error("Checkbox label did not toggle");
@@ -376,7 +392,8 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     if (process.env.HORIZON_SMOKE_SCREENSHOT) {
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
-    finish(result + '; saved HTML opened with formatting', 0);
+    if (!registeredPdf) throw Error('PDF chooser did not send the selected PDF through the bridge');
+    finish(result + '; PDF picker filename and registration, saved HTML opened with formatting', 0);
   } catch (error) {
     finish(String(error), 1);
   }

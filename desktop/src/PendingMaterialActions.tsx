@@ -1,5 +1,5 @@
 import {Collapsible} from './gui/elements/Collapsible';
-import {Checkbox} from './gui/elements/ChoiceElements';
+import {Checkbox, NativeFilePicker} from './gui/elements/ChoiceElements';
 import React,{useState} from 'react';
 import type {MaterialPackage} from './MaterialsPanel';
 
@@ -18,7 +18,10 @@ export function PendingMaterialActions({material,taskId,send}:{material:Material
  }
  return <section aria-label="处理待全文资料">
   <p>全文不可用。此资料暂不作为正式报道的正文证据。</p>
-  <button onClick={()=>send({...context,action:'choose_pending_pdf'})}>补充 PDF 全文</button>
+  <div>补充 PDF 全文
+   <NativeFilePicker key={material.material_id} label="补充 PDF 全文"
+    onBrowse={pickerId=>send({...context,action:'choose_pending_pdf',pickerId})}/>
+  </div>
   <button onClick={()=>resolve('abandon')}>放弃此资料</button>
   {origin&&(authorization?<Collapsible title="当前任务的摘要解读">
    <p>{authorization.limitation}</p><p>{authorization.abstract}</p></Collapsible>:<>

@@ -1,6 +1,6 @@
 import {TextInput, MultilineInput} from './gui/elements/FormElements';
 import {Collapsible} from './gui/elements/Collapsible';
-import {Checkbox, FilePicker} from './gui/elements/ChoiceElements';
+import {Checkbox, FilePicker, NativeFilePicker} from './gui/elements/ChoiceElements';
 import {createPortal} from 'react-dom';
 import {PdfReader,type PdfInfo} from './PdfReader';
 import React,{useState} from 'react';
@@ -38,7 +38,9 @@ export function MaterialsPanel({jobs,materials,selectedPackage,taskId,onCommand,
  <Checkbox checked={dynamic} onChange={e=>setDynamic(e.target.checked)}>使用浏览器渲染公开动态页</Checkbox>
  <button disabled={jobs.length>0}>获取网页正文</button></form>
  {jobs.map(id=><button key={id} onClick={()=>onCommand({action:'materials_web_cancel',operation_id:id})}>取消网页获取</button>)}
- <button onClick={()=>onCommand({action:"choose_pdf"})}>导入 PDF</button>
+ <div className="html-picker">导入 PDF
+  <NativeFilePicker label="导入 PDF" onBrowse={pickerId=>onCommand({action:'choose_pdf',pickerId})}/>
+ </div>
  <div className="html-picker">打开 HTML
   <FilePicker aria-label="打开 HTML" accept=".html,.htm,text/html" onChange={event=>{
    const file=event.currentTarget.files?.[0];
