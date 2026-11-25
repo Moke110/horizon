@@ -2,7 +2,7 @@
 
 ## Subdirectories
 
-- [workflows](workflows/AGENTS.md) — Release and native macOS verification workflows.
+- [workflows](workflows/AGENTS.md) — Native macOS verification workflows.
 
 ## Verification
 

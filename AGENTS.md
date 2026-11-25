@@ -26,17 +26,9 @@ All repository work, including planning documents, implementation and fixes, is 
 
 Do not force-push, reset away commits, or delete historical branches as routine cleanup. Explicit user instructions such as “documents only” or “do not push” constrain this workflow.
 
-## Release, tags and channels
+## Desktop GUI updates
 
-Distribution releases are built from tags; branches are not release units. Users install the distribution package; the source checkout stays the developer path (see `skills/horizon-run/references/installation.md`).
-
-- **Tag convention:** `vMAJOR.MINOR.PATCH` (for example `v1.2.3`) is the **stable** channel. `vMAJOR.MINOR.PATCH-<suffix>` (for example `-rc.N`, `v0.1.0-rc.1`, or `v0.2.0-preview.2`) is the **prerelease** channel. The `v` prefix is not part of the version or the artifact name: `v0.1.0-rc.1` publishes `horizon-0.1.0-rc.1-prerelease.zip`.
-- **Tag-triggered release:** pushing a `v*` tag runs `.github/workflows/release.yml` (windows-latest, `contents: write`). It derives version/channel from the tag, downloads the pinned embeddable CPython and wheels, assembles `runtime/`, builds the package twice to prove the artifact digest is reproducible, creates the GitHub Release with the zip, `.digest.json` and `manifest.json` (`--prerelease` only for prerelease tags), and updates `releases/index.json` with version, channel, artifact digest and compatibility. The workflow commits that index to `main` as `github-actions[bot]` and uploads it as a release asset; if branch protection rejects the push it retries once and then fails, leaving the index to be updated manually.
-- **Dry runs:** `workflow_dispatch` builds and verifies but creates no Release and commits nothing unless `dry_run` is explicitly false.
-- **Main first, then tag:** `main` must already contain the commit that will be tagged; the index job verifies the tagged commit is an ancestor of `origin/main` and refuses to commit the index otherwise. Merge the change into `main`, verify the suite there, then tag that commit.
-- **Do not push tags for test runs:** a tag creates a public GitHub Release and writes the release index. Rehearse with a manual `workflow_dispatch` dry run instead. Never push a tag without the maintainer's explicit intent to publish.
-
-The observable release contract is [`contracts/release.md`](contracts/release.md); the package wrapper/runtime layout is [`contracts/distribution-runtime.md`](contracts/distribution-runtime.md).
+Update the Windows GUI from the integrated source checkout. Run `npm --prefix desktop run build` and restart through `Horizon.cmd` using the existing workspace and data paths. GUI updates require no release tag, GitHub Release, or installation package.
 
 ## Agent skills
 
