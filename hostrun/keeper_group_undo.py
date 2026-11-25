@@ -430,18 +430,19 @@ class KeeperGroupUndo:
         return result
 
     @staticmethod
-    def _changes(target, editable, removed, project):
+    def _changes(target, meta, removed, project):
         approved = project(target["approved"], removed)
         current = project(target["current"], removed)
         inverse = project(target["projected"], removed)
-        paths = list(editable)
+        paths = list(meta['editable'])
+        defaults = meta.get('defaults')
         if ("status",) not in paths:
             paths.append(("status",))
         changes = []
         for path in paths:
-            approved_value = get_path(approved, path)
-            current_value = get_path(current, path)
-            inverse_value = get_path(inverse, path)
+            approved_value = get_path(approved, path, defaults)
+            current_value = get_path(current, path, defaults)
+            inverse_value = get_path(inverse, path, defaults)
             if approved_value == current_value == inverse_value:
                 continue
             changes.append({
@@ -457,7 +458,7 @@ class KeeperGroupUndo:
             service = self.services[target["kind"]]
             project = service.history_project
             target["changes"] = self._changes(
-                target, service.HISTORY["editable"],
+                target, service.HISTORY,
                 removed[target["kind"]], project)
             # The display honours removed material snapshots; the raw projected
             # snapshot keeps the historical citation that commit restores.
