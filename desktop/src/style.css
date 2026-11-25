@@ -482,6 +482,9 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .html-picker { display: block; margin-block: 8px; }
 .html-picker input { width: auto; margin-left: 8px; }
 
+.dictionary-workbench { grid-template-columns: minmax(0, 1fr); }
+.dictionary-workbench .workbench-list { border-right: 0; }
+.dictionary-detail .workbench-detail-head { padding-inline: 0; }
 
 .hpedia-icon { position: relative; display: inline-block; width: 17px; height: 17px; }
 .hpedia-icon::before, .hpedia-icon::after {

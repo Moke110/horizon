@@ -44,7 +44,7 @@ const isFullCard=(value:KnowledgeCard|null|undefined):value is KnowledgeCard=>!!
 type Pending={kind:'load';card_id:string;operation_id:string}|{kind:'save';operation_id:string;card_id?:string}|{kind:'conflict';card_id:string;operation_id:string};
 type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 
-export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted}:{cards:CardSummary[];materials:MaterialSummary[];selected:KnowledgeCard|null;viewEvent:CardViewEvent|null;commandError:CardCommandError|null;onCommand:(c:unknown)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;onCommitted?:(card_id:string,version:number)=>void}){
+export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted,termMode=false}:{cards:CardSummary[];materials:MaterialSummary[];selected:KnowledgeCard|null;viewEvent:CardViewEvent|null;commandError:CardCommandError|null;onCommand:(c:unknown)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;termMode?:boolean;onCommitted?:(card_id:string,version:number)=>void}){
   const [title,setTitle]=useState(''),[content,setContent]=useState(''),[aliases,setAliases]=useState(''),[recallTerms,setRecallTerms]=useState('');
   const [sources,setSources]=useState<SourceInput[]>([]),[relations,setRelations]=useState<string[]>([]),[questionable,setQuestionable]=useState(false);
   const [editing,setEditing]=useState<{card_id:string;version:number}|null>(null);
@@ -180,7 +180,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
 
   {!locked&&!staleDraft&&<form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
   <label>标题<input required disabled={loading} value={title} onChange={e=>setTitle(e.target.value)}/></label>
-  <label>内容<textarea required disabled={loading} value={content} onChange={e=>setContent(e.target.value)}/></label>
+  <label>{termMode?'释义':'内容'}<textarea required disabled={loading} value={content} onChange={e=>setContent(e.target.value)}/></label>
   <label>别名（每行一个）<textarea disabled={loading} value={aliases} onChange={e=>setAliases(e.target.value)}/></label>
   <label>检索词（每行一个）<textarea value={recallTerms} onChange={e=>setRecallTerms(e.target.value)}/></label>
   <fieldset><legend>来源</legend>
@@ -197,14 +197,14 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <button type="button" disabled={!materials.length||sources.length>=16} onClick={()=>setSources(current=>[...current,{material_id:'',locator:'',excerpt:''}])}>添加来源</button>
   {!materials.length&&!sources.length&&<p>可在「资料」保存来源，再到这里添加引用。</p>}
   </fieldset>
-  <label>关联知识卡片<select multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
+  <label>{termMode?'关联术语':'关联知识卡片'}<select multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
     {cards.filter(card=>card.card_id!==editing?.card_id).map(card=><option key={card.card_id} value={card.card_id}>{card.title}{card.status==='archived'?'（已归档）':''}</option>)}
   </select></label>
   <label><input type="checkbox" disabled={loading} checked={questionable} onChange={e=>setQuestionable(e.target.checked)}/> 标为存疑</label>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
   <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
-  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
+  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':termMode?'创建术语':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </fieldset></form>}
   {locked&&<p>已归档的知识卡片以只读方式显示；不会创建或覆盖任何记录。</p>}
   {message&&<p role="status">{message}</p>}
@@ -219,7 +219,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <p>别名：{selected.aliases.join('、')||'无'} · 检索词：{selected.recall_terms.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
   <p>{provenanceLabel(selected)}{selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}
-  {selected.status!=='archived'&&<div className="workbench-actions"><button type="button" disabled={loading||saving} onClick={()=>archive(selected)}>归档知识卡片</button></div>}
+  {selected.status!=='archived'&&<div className="workbench-actions"><button type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</button></div>}
   </section>}
   {showList&&<><h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
   {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{card.questionable?' · 存疑':''} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
