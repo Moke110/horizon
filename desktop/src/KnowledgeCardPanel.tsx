@@ -41,12 +41,6 @@ const cardDiff=(draft:CardDraft,committed:KnowledgeCard,materialName:(id:string)
 
 const isFullCard=(value:KnowledgeCard|null|undefined):value is KnowledgeCard=>!!value&&typeof value.card_id==='string'&&Array.isArray(value.recall_terms)&&Array.isArray(value.sources);
 
-type TermConfirmation={
-  operation_id:string;
-  status:'pending'|'confirmed'|'rejected'|'expired';
-  expires_at:number;
-  changes:[string,{title?:string;content?:string}][];
-};
 type Pending={kind:'load';card_id:string;operation_id:string}|{kind:'save';operation_id:string;card_id?:string}|{kind:'conflict';card_id:string;operation_id:string};
 type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 
@@ -56,7 +50,6 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const [editing,setEditing]=useState<{card_id:string;version:number}|null>(null);
   const [latest,setLatest]=useState<KnowledgeCard|null>(null);
   const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
-  const [confirmation,setConfirmation]=useState<TermConfirmation|null>(null);
   const [reason,setReason]=useState('');
   const pending=useRef<Pending|null>(null);
   const archivePending=useRef<{operation_id:string;card_id:string}|null>(null);
@@ -74,26 +67,14 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   };
   useEffect(()=>window.horizon.subscribe(event=>{
     if(event.kind!=='term_confirmation')return;
-    const card=event.data as TermConfirmation;
+    const card=event.data as {operation_id:string;status:string};
     if(card.operation_id!==pending.current?.operation_id&&card.operation_id!==archivePending.current?.operation_id)return;
-    setConfirmation(card);
     if(card.status!=='rejected'&&card.status!=='expired')return;
     pending.current=null;
     archivePending.current=null;
     setSaving(false);
     setMessage(card.status==='expired'?'确认已过期。':'已取消修改。');
   }),[]);
-  useEffect(()=>{
-    if(confirmation?.status!=='pending')return;
-    const timer=window.setTimeout(()=>{
-      setConfirmation({...confirmation,status:'expired'});
-      pending.current=null;
-      archivePending.current=null;
-      setSaving(false);
-      setMessage('确认已过期。');
-    },Math.max(0,confirmation.expires_at*1000-Date.now()+1000));
-    return ()=>window.clearTimeout(timer);
-  },[confirmation]);
   const openId=openRequest?.kind==='open'?openRequest.id:'';
   const creating=openRequest?.kind==='create';
   const staleDraft=!!openId&&editing?.card_id!==openId;
@@ -195,17 +176,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const changeSource=(index:number,fields:Partial<SourceInput>)=>setSources(current=>current.map((source,i)=>i===index?{...source,...fields}:source));
   const locked=!creating&&isFullCard(selected)&&selected.status==='archived'&&!editing;
   return <div className={`trace${embedded?' workbench-panel':''}`}>{!embedded&&<h2>知识卡片</h2>}
-    {confirmation&&<section aria-label="术语变更确认">
-      <h3>术语变更确认</h3>
-      {confirmation.changes.map(([action,change],index)=><div key={index}>
-        <strong>{({create:'新增',update:'修改',archive:'归档'} as Record<string,string>)[action]??action} {change.title??latest?.title??title}</strong>
-        {change.content&&<p>{change.content}</p>}
-      </div>)}
-      {confirmation.status==='pending'&&<>
-        <button type="button" onClick={()=>send(confirmation.operation_id,'card_confirm',{choice:'confirm'})}>确认</button>
-        <button type="button" onClick={()=>send(confirmation.operation_id,'card_confirm',{choice:'reject'})}>取消</button>
-      </>}
-    </section>}
+
 
   {!locked&&!staleDraft&&<form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
   <label>标题<input required disabled={loading} value={title} onChange={e=>setTitle(e.target.value)}/></label>

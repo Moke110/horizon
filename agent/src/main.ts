@@ -252,10 +252,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     } });
   const dictionary = defineTool({
     name: "dictionary", label: "Library dictionary",
-    description: "List or read terms, or propose one create, update or archive for Explorer confirmation in this session. For a create provide title and content in JSON fields. For update/archive provide card_id and expected_version, plus changed fields for update. A pending card has not changed the term.",
+    description: "List or read terms, or propose one create, update or archive for Explorer confirmation in this session. For a create provide title and content in JSON fields. For update/archive provide card_id and expected_version, plus changed fields for update. For an import or batch provide {\"changes\":[[\"create\",{\"title\":\"…\",\"content\":\"…\"}]]} in fields and action batch. A pending card has not changed the term.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("view"),
-        Type.Literal("create"), Type.Literal("update"), Type.Literal("archive")]),
+        Type.Literal("create"), Type.Literal("update"), Type.Literal("archive"), Type.Literal("batch")]),
       termId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
     }),

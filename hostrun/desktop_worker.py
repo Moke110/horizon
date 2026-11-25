@@ -26,14 +26,30 @@ class DesktopWorker:
             return librarian.list(token=token)
         if operation == "view":
             return librarian.view(event.get("termId"), token=token)
-        if operation not in ("create", "update", "archive"):
-            raise CommandError("invalid_command", "不支持的术语操作")
         payload = event.get("fields")
         if not isinstance(payload, dict):
             raise CommandError("invalid_command", "需要术语变更内容")
-        command = {**payload, "operation_id": event["requestId"], "schema_version": 1}
-        card = librarian.request(operation, command, token=token,
-                                 origin="agent:" + self.task_id)
+        request_id = event.get("requestId")
+        if not isinstance(request_id, str) or not request_id or len(request_id) > 256:
+            raise CommandError("invalid_command", "无效的术语请求标识")
+        origin = "agent:" + self.task_id
+        if operation == "batch":
+            changes = payload.get("changes")
+            if not isinstance(changes, list) or not 1 <= len(changes) <= 100:
+                raise CommandError("invalid_command", "批量写入需要 1 至 100 项变更")
+            commands = []
+            for index, item in enumerate(changes):
+                if not isinstance(item, list) or len(item) != 2 or not isinstance(item[1], dict):
+                    raise CommandError("invalid_command", "无效的术语变更")
+                action, fields = item
+                commands.append((action, {**fields, "operation_id": f"{request_id}:{index}",
+                                          "schema_version": 1}))
+            card = librarian.request_batch(request_id, commands, token=token, origin=origin)
+        elif operation in ("create", "update", "archive"):
+            command = {**payload, "operation_id": request_id, "schema_version": 1}
+            card = librarian.request(operation, command, token=token, origin=origin)
+        else:
+            raise CommandError("invalid_command", "不支持的术语操作")
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
