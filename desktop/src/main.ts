@@ -50,6 +50,9 @@ ipcMain.on('command',async(event,value)=>{
     let read=0;
     while(read<data.length){const result=await file.read(data,read,data.length-read,read);if(!result.bytesRead)throw Error();read+=result.bytesRead;}
     const title=basename(choice.filePaths[0]);
+    if (typeof value.pickerId === 'string') {
+      send({kind:'desktop_pdf_selected',data:{pickerId:value.pickerId,fileName:title}});
+    }
     value=value.action==='choose_pending_pdf'
     ? {action:'materials_pending_resolve',decision:'supplement',operation_id:randomUUID(),schema_version:1,
        material_id:value.material_id,expected_version:value.expected_version,pdf_base64:data.toString('base64')}
