@@ -22,7 +22,9 @@ Tool policies:
 |---|---|
 | `intent_judgement` | none; JSON classification only |
 | `kb_read` | `read_file`; extracted source text only, no mutations |
-| other business runs | `read_file`, `write_file`, `horizon_cli` |
+| Legacy business runs without a persisted desktop turn ID | `read_file`, `write_file`, `horizon_cli`, `delegate` |
+| Persisted desktop Explorer turn | `read_file`, `delegate`, `dictionary`, `hpedia_question`, `archive_source`, `frontier_tracking`, `library_test_cleanup` |
+| Editor, Voyager and Keeper children | Only their own read-only context tool |
 
 `horizon_cli` spawns an allowlisted business module with argv, without a shell.
 The Python validators and user-review gates remain authoritative. File tools
@@ -35,6 +37,8 @@ identities before writing. Unknown or replaced entries are refused. Existing
 owned writes are in-place and may be partial on failure; success requires a full
 write and flush. Ordinary homes retain their existing writer. See the
 [cleanup contract](windows-test-cleanup.md) for identity and report boundaries.
+
+The Library tools use the owning Python desktop session and stable request IDs. Reads return committed records. Write tools return a review card in the current Explorer conversation and do not apply changes before confirmation. A settle operation can return a stable failure receipt when a reviewed change no longer applies. The Agent may not confirm its own cards. Use `testData: true` when creating development test content, and use `library_test_cleanup` to preview marked records and request a confirmed cleanup.
 
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,

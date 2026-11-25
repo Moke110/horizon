@@ -515,9 +515,15 @@ class KeeperService:
                 return proposal["decision"]
             if self.cards.reviewed_terms_expired(proposal):
                 self.cards.release_reviewed_terms(db, proposal)
-                return {"operation_id": command["operation_id"],
-                        "proposal_id": proposal["proposal_id"], "status": "expired",
-                        "revision": proposal["revision"], "applied": []}
+                result = {"operation_id": command["operation_id"],
+                          "proposal_id": proposal["proposal_id"], "status": "expired",
+                          "revision": proposal["revision"], "decision": command["decision"], "applied": []}
+                proposal.update(status="expired", decision=result)
+                db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                           (json.dumps(proposal), proposal["proposal_id"]))
+                db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                           (command["operation_id"], encoded, json.dumps(result)))
+                return result
             if proposal.get("status") == "revising" \
                     and command["decision"] == "approve":
                 # A concurrent window approved the same displayed revision while

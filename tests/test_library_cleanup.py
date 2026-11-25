@@ -83,3 +83,42 @@ def test_test_selection_never_accepts_an_untagged_record_or_tags_an_existing_rec
             "frontier_id": real["frontier_id"], "expected_version": real["version"], "test_data": True},
             token=TOKEN, origin=AGENT)
     assert librarian.view_frontier(real["frontier_id"], token=TOKEN) == real
+
+
+def test_confirmation_revalidation_returns_durable_failure_and_releases_term_lock(tmp_path):
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=TOKEN), token=TOKEN)
+    target = create(librarian, "term", "test-term", testing=True, title="未清理术语", content="说明")
+    card = librarian.request_test_cleanup("clean", token=TOKEN, origin=GUI)
+    assert card["status"] == "pending"
+    create(librarian, "term", "real-term", title="真实术语", content="定义", relations=[target["card_id"]])
+    failure = librarian.decide("clean", "confirm", token=TOKEN, origin=GUI)
+    assert failure["status"] == "returned"
+    assert failure["error"]["code"] == "test_cleanup_changed"
+    assert failure["results"] == []
+    assert librarian.decide("clean", "confirm", token=TOKEN, origin=GUI) == failure
+    assert librarian.view(target["card_id"], token=TOKEN) == target
+    update = {"schema_version": 1, "operation_id": "edit-still-present", "card_id": target["card_id"],
+              "expected_version": 1, "content": "可继续编辑"}
+    assert librarian.request("update", update, token=TOKEN, origin=GUI)["status"] == "pending"
+
+
+def test_failed_confirmation_rolls_back_an_earlier_change_in_the_same_batch(tmp_path):
+    cards = KnowledgeCardService(tmp_path, token=TOKEN)
+    librarian = Librarian(cards, token=TOKEN)
+    material = cards.materials.register_text({"schema_version": 1, "operation_id": "material-for-review",
+        "title": "原文", "text": "可溯源原文", "source_label": "原始来源"}, token=TOKEN)
+    material_id = material["material_id"]
+    changes = [
+        ("create", {"schema_version": 1, "operation_id": "first", "title": "第一条", "content": "释义"}),
+        ("create", {"schema_version": 1, "operation_id": "second", "title": "第二条", "content": "释义",
+                    "sources": [{"material_id": material_id, "locator": "p1", "excerpt": "可溯源原文"}]}),
+    ]
+    assert librarian.request_batch("batch", changes, token=TOKEN, origin=GUI)["status"] == "pending"
+    cards.materials.archive_material(material_id, token=TOKEN)
+    impact = cards.materials.deletion_impact(material_id, token=TOKEN)
+    cards.materials.delete_material(material_id, impact["confirmation"], token=TOKEN)
+    result = librarian.decide("batch", "confirm", token=TOKEN, origin=GUI)
+    assert result["status"] == "returned"
+    assert result["results"] == []
+    assert librarian.list(token=TOKEN) == []
+    assert librarian.decide("batch", "confirm", token=TOKEN, origin=GUI) == result

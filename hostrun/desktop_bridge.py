@@ -244,12 +244,13 @@ class KeeperCommands:
                 payload['reason'] = reason
         return payload
 
-    def decide(self, command):
+    def decide(self, command, *, origin_task=None):
         """Apply one whole-group Explorer decision under a trusted Explorer principal."""
         payload = self._decide_command(command)
         from hostrun.keeper import KeeperPrincipal
+        service = self._service()
         try:
-            result = self._service().decide(
+            result = service.decide(
                 payload, token=self.token,
                 principal=KeeperPrincipal('explorer', False))
         except CommandError:
@@ -262,17 +263,21 @@ class KeeperCommands:
                                'Keeper decision could not be completed') from error
         if not isinstance(result, dict):
             raise CommandError('invalid_response', 'Keeper decision returned no receipt')
-        for field in ('operation_id', 'proposal_id', 'revision', 'decision'):
-            if result.get(field) != payload[field]:
-                raise CommandError('invalid_response',
-                                   'Keeper decision receipt does not match the request')
-        expected_status = 'approved' if payload['decision'] == 'approve' else 'rejected'
+        if any(result.get(field) != payload[field] for field in ('proposal_id', 'revision')):
+            raise CommandError('invalid_response', 'Keeper decision receipt does not match the request')
+        if any(result.get(field) != payload[field] for field in ('operation_id', 'decision')):
+            proposal = service.view(payload['proposal_id'], token=self.token) if origin_task is not None else {}
+            if not proposal.get('term_expires_at') or proposal.get('task_id') != origin_task or proposal.get('decision') != result:
+                raise CommandError('invalid_response', 'Keeper decision receipt does not match the request')
+        expected_status = 'approved' if result['decision'] == 'approve' else 'rejected'
         if result.get('status') == 'revising':
             review_id = result.get('review_id')
             if payload['decision'] != 'approve' or not isinstance(review_id, str) \
                     or not review_id.strip() or result.get('applied') != []:
                 raise CommandError('invalid_response',
                                    'Keeper decision receipt has an unexpected status')
+        elif result.get('status') == 'expired' and result.get('applied') == []:
+            pass
         elif result.get('status') != expected_status:
             raise CommandError('invalid_response',
                                'Keeper decision receipt has an unexpected status')
@@ -868,6 +873,10 @@ def _serve(resolved, executable, managed):
                                 'task_id': chats[current]['task_id'], 'expected_version': previous_version if expected_version is None else expected_version, 'role': role, 'text': text}, token=token)
         refresh_chats()
         return result['version'] > previous_version
+    def show_librarian_return(card):
+        if card.get('status') == 'returned' and card.get('error'):
+            emit('command_error', {"operation_id": card['operation_id'], **card['error']})
+
     def invalidate_cleaned_progress(card):
         if card.get('entity') == 'test_cleanup' and card['status'] == 'confirmed':
             frontier_ids = sorted({item['record']['frontier_id'] for item in card['results']
@@ -1081,6 +1090,7 @@ def _serve(resolved, executable, managed):
                         kind, data = frontier_command(librarian, cmd, token=token)
                         emit(kind, data)
                         if kind == 'frontier_confirmation':
+                            show_librarian_return(data)
                             if data['status'] == 'confirmed':
                                 for result in data['results']:
                                     if data['entity'] == 'frontier':
@@ -1097,6 +1107,7 @@ def _serve(resolved, executable, managed):
                         kind,data=librarian_card_command(librarian,cmd,token=token,origin='gui')
                         emit(kind,data)
                         if kind == 'term_confirmation':
+                            show_librarian_return(data)
                             if data['status'] == 'confirmed':
                                 for term in data['results']:
                                     emit('card_view', term)
@@ -1113,12 +1124,14 @@ def _serve(resolved, executable, managed):
                             for question in data['results']:
                                 emit('question_view', question)
                         if kind == 'question_confirmation':
+                            show_librarian_return(data)
                             state()
                     elif action in ('source_create', 'source_update', 'source_delete', 'source_confirm'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if action == 'source_confirm':
-                            librarian.decide(cmd.get('operation_id'), cmd.get('choice'),
-                                             token=token, origin='gui', expected_entity='source')
+                            receipt = librarian.decide(cmd.get('operation_id'), cmd.get('choice'),
+                                                       token=token, origin='gui', expected_entity='source')
+                            show_librarian_return(receipt)
                         else:
                             librarian.request_source(action.removeprefix('source_'),
                                                      {k:v for k,v in cmd.items() if k!='action'},
@@ -1146,6 +1159,7 @@ def _serve(resolved, executable, managed):
                         elif action == 'test_cleanup_confirm':
                             card = librarian.decide(cmd.get('operation_id'), cmd.get('choice'), token=token,
                                                     origin='gui', expected_entity='test_cleanup')
+                            show_librarian_return(card)
                             invalidate_cleaned_progress(card)
                             state()
                         emit('test_cleanup_preview', librarian.preview_test_cleanup(token=token))
@@ -1155,8 +1169,23 @@ def _serve(resolved, executable, managed):
                             raise CommandError('not_found', '本会话没有该确认请求')
                         card = librarian.decide(cmd.get('operation_id'),cmd.get('choice'),
                                                 token=token,origin='agent:'+chats[current]['task_id'])
+                        show_librarian_return(card)
                         invalidate_cleaned_progress(card)
                         state()
+                    elif action == 'editor_library_confirm':
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        task_id = cmd.get('task_id')
+                        if not chats or task_id != chats[current]['task_id']:
+                            raise CommandError('not_found', '本会话没有该确认请求')
+                        proposal = keeper_service_factory().view(cmd.get('proposal_id'), token=token)
+                        if proposal.get('task_id') != task_id or not proposal.get('term_expires_at'):
+                            raise CommandError('not_found', '本会话没有该确认请求')
+                        payload = {k:v for k,v in cmd.items() if k!='task_id'}
+                        kind, receipt = keeper_commands.decide({**payload, 'action':'keeper_decide'}, origin_task=task_id)
+                        emit(kind, receipt)
+                        state()
+                        if receipt['status'] == 'revising':
+                            keeper_commands.queue_revision(receipt.get('review_id'))
                     elif action in ('theme_create','theme_update','theme_archive'):
                         raise CommandError('retired_theme', '请在百科中新增或编辑问题。')
                     elif action in ('theme_open','theme_list','theme_query','theme_source'):

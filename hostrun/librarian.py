@@ -137,23 +137,29 @@ class Librarian:
 
     def reserve_reviewed_terms(self, db, proposal):
         """Enroll an evidence-reviewed Editor proposal in the shared lock ledger."""
-        changes = [change for change in proposal["changes"] if change["kind"] == "card"]
+        changes = [change for change in proposal["changes"] if change["kind"] in ("card", "frontier")]
         if proposal["provenance"] != "editor" or not changes:
             return
         now = self.clock()
         self._expire(db, now)
         request_id = "keeper:" + proposal["proposal_id"]
-        term_ids = {change["id"] for change in changes if change["action"] != "create"}
-        for term_id in term_ids:
-            if db.execute("SELECT 1 FROM librarian_term_locks WHERE term_id=?",
-                          (term_id,)).fetchone():
-                raise CommandError("term_locked", "术语正在等待确认")
+        lock_keys = set()
+        for change in changes:
+            if change["action"] == "create":
+                continue
+            identity = change["id"]
+            if change["kind"] == "frontier":
+                self.library.check_frontier_lock(db, identity, now=now)
+                lock_keys.add("frontier:" + identity)
+            else:
+                self.library.check_write_lock(db, identity, now=now)
+                lock_keys.add(identity)
         proposal["term_expires_at"] = now + self.confirmation_lifetime
         card = {"operation_id": request_id, "status": "pending"}
         db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
                    (request_id, "keeper", "[]", proposal["term_expires_at"], json.dumps(card)))
         db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
-                       [(term_id, request_id) for term_id in term_ids])
+                       [(key, request_id) for key in sorted(lock_keys)])
 
     def release_reviewed_terms(self, db, proposal):
         request_id = "keeper:" + proposal["proposal_id"]
@@ -366,29 +372,45 @@ class Librarian:
                 return card
             db.execute("DELETE FROM librarian_term_locks WHERE request_id=?", (request_id,))
             results = []
+            status = "rejected"
             if choice == "confirm":
-                if card.get("entity") == "test_cleanup":
-                    results = self._clean_test_records(db, card, token=token, now=now)
-                    notifications.extend(item["record"] for item in results if item["kind"] == "term")
-                    frontier_notifications.extend(item["record"] for item in results if item["kind"] == "frontier")
-                for action, command in card["changes"]:
-                    if card.get("entity") == "question":
-                        results.append(self.library.apply_question(db, action, command, now=now))
-                    elif card.get("entity") == "source":
-                        results.append(self.library.archive.apply(db, action, command))
-                    elif card.get("entity") == "frontier":
-                        frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
-                        results.append(frontier)
-                        if changed:
-                            frontier_notifications.append(frontier)
-                    elif card.get("entity") == "progress":
-                        results.append(self.library.apply_progress(db, action, command, now=now))
-                    else:
-                        term, changed = self.library.apply(db, action, command, token=token, now=now)
-                        results.append(term)
-                        if changed:
-                            notifications.append(term)
-            card.update(status="confirmed" if choice == "confirm" else "rejected", results=results)
+                db.execute("SAVEPOINT librarian_apply")
+                try:
+                    if card.get("entity") == "test_cleanup":
+                        results = self._clean_test_records(db, card, token=token, now=now)
+                        notifications.extend(item["record"] for item in results if item["kind"] == "term")
+                        frontier_notifications.extend(item["record"] for item in results if item["kind"] == "frontier")
+                    for action, command in card["changes"]:
+                        if card.get("entity") == "question":
+                            results.append(self.library.apply_question(db, action, command, now=now))
+                        elif card.get("entity") == "source":
+                            results.append(self.library.archive.apply(db, action, command))
+                        elif card.get("entity") == "frontier":
+                            frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
+                            results.append(frontier)
+                            if changed:
+                                frontier_notifications.append(frontier)
+                        elif card.get("entity") == "progress":
+                            results.append(self.library.apply_progress(db, action, command, now=now))
+                        else:
+                            term, changed = self.library.apply(db, action, command, token=token, now=now)
+                            results.append(term)
+                            if changed:
+                                notifications.append(term)
+                except CommandError as error:
+                    db.execute("ROLLBACK TO librarian_apply")
+                    results.clear()
+                    notifications.clear()
+                    frontier_notifications.clear()
+                    status = "returned"
+                    card["error"] = {"code": error.code, "message": str(error)}
+                    if isinstance(getattr(error, "details", None), dict):
+                        card["error"]["details"] = error.details
+                else:
+                    status = "confirmed"
+                finally:
+                    db.execute("RELEASE librarian_apply")
+            card.update(status=status, results=results)
             db.execute("UPDATE librarian_term_requests SET result=? WHERE id=?",
                        (json.dumps(card), request_id))
         for term in notifications:

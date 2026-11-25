@@ -52,16 +52,25 @@ class ArchiveSources:
             self._ensure_initialized(db)
             return self.read_in_transaction(db, source_id)
 
-    def open(self, source_id, *, token, task_id=None):
+    def _original(self, source_id, *, token, task_id, include_pdf):
         reference = self.view(source_id)
-        if reference["material_id"]:
-            return self._materials.get_package(reference["material_id"], token=token, task_id=task_id)
-        return {"source_url": reference["url"]}
+        material_id = reference["material_id"]
+        if material_id:
+            try:
+                package = self._materials.get_package(material_id, token=token, task_id=task_id)
+                pdf = self._materials.pdf_original(material_id, token=token) if include_pdf and package.get("pdf") else None
+                return package, pdf
+            except CommandError as error:
+                if error.code != "not_found" or not reference["url"]:
+                    raise
+        return {"source_url": reference["url"]}, None
+
+    def open(self, source_id, *, token, task_id=None):
+        package, _ = self._original(source_id, token=token, task_id=task_id, include_pdf=False)
+        return package
 
     def original(self, source_id, *, token, task_id=None):
-        package = self.open(source_id, token=token, task_id=task_id)
-        pdf = self._materials.pdf_original(package["material_id"], token=token) if package.get("pdf") else None
-        return package, pdf
+        return self._original(source_id, token=token, task_id=task_id, include_pdf=True)
 
     def pdf(self, source_id, *, token):
         reference = self.view(source_id)

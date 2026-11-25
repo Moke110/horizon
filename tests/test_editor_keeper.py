@@ -57,7 +57,10 @@ def test_production_keeper_only_accepts_a_committed_editor_evidence_request(tmp_
     assert len(owner.cards.query(token=TOKEN)) == 1
 
 
-def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path):
+@pytest.mark.parametrize("outcome", ["approve", "reject", "expire"])
+def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path, outcome):
+    from hostrun.agent_service import CommandError
+    from hostrun.librarian import Librarian
     owner = Owner(tmp_path)
     material = owner.material()
     task = owner.task["task_id"]
@@ -81,16 +84,36 @@ def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path)
     reports.save("scoped", task, evidence, {**versions, "writing_frontier_id": frontier_id}, claims,
                  token=TOKEN, task_version=owner.task["version"], keeper_proposals=[proposed])
     request, = reports.pending_keeper_requests(token=TOKEN)
-    keeper = owner.keeper
+    clock = [time.time()]
+    keeper = KeeperService(owner.agent, owner.materials, owner.cards, owner.themes,
+                           owner.frontiers, token=TOKEN, clock=lambda: clock[0])
     queued = keeper.request(request, token=TOKEN, principal=KeeperPrincipal("editor", False))
     reviewed = keeper.review(queued["request_id"], token=TOKEN, dispatch=lambda _: {"status": "reviewed"})
     assert owner.frontiers.view(frontier_id, token=TOKEN) == frontier
     proposal = keeper.view(reviewed["proposal_ids"][0], token=TOKEN)
-    decision = keeper.decide({"schema_version": 1, "operation_id": "approve-frontier", "decision": "approve",
-        "proposal_id": proposal["proposal_id"], "revision": 1, "expected_versions": [frontier["version"]]},
-        token=TOKEN, principal=KeeperPrincipal("explorer", False))
-    assert decision["status"] == "approved"
-    assert owner.frontiers.view(frontier_id, token=TOKEN)["question"] == proposed["fields"]["question"]
+    librarian = Librarian(owner.cards, token=TOKEN, clock=lambda: clock[0])
+    edit = {"schema_version": 1, "operation_id": "pause-editor-frontier", "frontier_id": frontier_id,
+            "expected_version": 1, "status": "paused"}
+    with pytest.raises(CommandError, match="确认"):
+        librarian.request_frontier("update", edit, token=TOKEN, origin="gui")
+    assert keeper.session_term_proposals(task, token=TOKEN) == [proposal]
+    assert keeper.session_term_proposals("different-session", token=TOKEN) == []
+    if outcome == "expire":
+        clock[0] += 72 * 60 * 60
+        assert keeper.view(proposal["proposal_id"], token=TOKEN)["status"] == "expired"
+    command = {"schema_version": 1, "operation_id": "approve-frontier",
+        "decision": "reject" if outcome == "reject" else "approve",
+        "proposal_id": proposal["proposal_id"], "revision": 1, "expected_versions": [1]}
+    explorer = KeeperPrincipal("explorer", False)
+    decision = keeper.decide(command, token=TOKEN, principal=explorer)
+    assert decision["status"] == {"approve": "approved", "reject": "rejected", "expire": "expired"}[outcome]
+    assert keeper.decide({**command, "operation_id": "repeat-frontier"}, token=TOKEN, principal=explorer) == decision
+    current = owner.frontiers.view(frontier_id, token=TOKEN)
+    assert current["scope"] == frontier["scope"]
+    assert current["hard_constraints"] == frontier["hard_constraints"]
+    assert current["question"] == (proposed["fields"]["question"] if outcome == "approve" else frontier["question"])
+    assert librarian.request_frontier("update", {**edit, "expected_version": current["version"]},
+                                     token=TOKEN, origin="gui")["status"] == "pending"
 
 
 def test_transient_production_review_waits_for_explicit_retry_and_keeps_request(tmp_path):

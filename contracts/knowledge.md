@@ -1,8 +1,14 @@
-# Knowledge Frontier and Knowledge Card service
+# Library and Librarian
 
-`hostrun.frontier.FrontierService` owns local Frontiers (关注问题) in the stable data home's `horizon.sqlite3`, beside Voyager and AgentService. A Frontier is the Explorer's focus question with an explicit research scope, hard constraints and a following/paused/resolved/deleted status. K1 stores no Frontier relations: an empty `relations` list is valid and expected. The service is the public application seam the desktop drives; it is not a retrieval scheduler and it does not import Keeper approval.
+`hostrun.librarian.Librarian` is the authenticated business boundary for the Library in the stable data home. The Dictionary preserves committed Knowledge Card IDs and versions as terms. Hpedia questions have a prompt and answer containing at least one explicit `[[term:ID]]` link to an active term. The Bulletin Board derives links from unresolved terms and questions and also displays tracked frontiers. The Archive stores source metadata and references to existing original files, including PDFs. Editor HTML remains Editor output.
 
-K2 adds manually edited Knowledge Cards with versioned source citations and related card IDs in the same data home.
+Library reads return committed content immediately. A write request is validated on a reversible transaction and returns a persisted pending card in its originating Agent conversation or the desktop. Existing entities involved in a pending card remain readable and are locked against competing writes until feedback or 72 hours after review. Confirmation applies the reviewed fields atomically. A domain error during confirmation rolls back the entire write, releases its locks and records a terminal `returned` receipt with an error code and message. Rejection and expiration release locks without writing. Replaying a decision returns the original receipt.
+
+Production Editor term and Frontier proposals use the same lock ledger after evidence review. Their confirmation appears in the originating conversation and displays the proposed question, scope and hard constraints when applicable. The desktop validates conversation ownership before applying an Editor conversation decision. Older Keeper review and history surfaces remain available for their supported records. Group undo cannot write a locked term or Frontier.
+
+The Archive can open the original for a source, or its recorded HTTP(S) URL when the source has no file or a referenced file was permanently removed. Removing a source record does not remove its original file. Progress can reference multiple Archive source IDs. Removing the last progress record does not close its Frontier or remove Voyager history.
+
+Agent-created development records explicitly flagged as tests carry the `测试` label. Cleanup previews the marked records, derived links and retained references. Genuine inbound references block removal of the item they still use. A cleanup confirmation revalidates its preview and never includes unmarked records.
 
 ## Local knowledge workbench search
 
@@ -78,7 +84,7 @@ A committed Frontier carries `schema_version: 1`, the `operation_id` that produc
 
 Every mutation requires `schema_version: 1` and a nonempty `operation_id`; after creation it also requires `frontier_id` and integer `expected_version`.
 
-- `frontier_create` takes question, status, scope, hard constraints and relations and commits version 1.
+- `frontier_create` accepts a question alone. The default is following, with a query derived from the title and arXiv as the initial source. A caller may also supply status, scope, hard constraints and relations. Confirmation commits version 1.
 - `frontier_open` reads the full committed Frontier. The list projection truncates `scope_text` for display; it is never an edit source.
 - `frontier_list` returns bounded summaries: id, version, question, status, truncated scope text and update time.
 - `frontier_update` changes supplied fields, increments `version` exactly once and rejects stale `expected_version` with `version_conflict`. A deleted Frontier rejects edits with `invalid_transition`.
@@ -86,7 +92,7 @@ Every mutation requires `schema_version: 1` and a nonempty `operation_id`; after
 
 An identical operation replay returns its original committed result before version checks. Reusing an operation ID with different content fails with `operation_conflict`. Other stable errors include `invalid_scope`, `invalid_status` and `not_found`. Mutations commit the Frontier, its operation receipt and its event together.
 
-The desktop bridge exposes `frontier_create`, `frontier_open`, `frontier_list`, `frontier_update` and `frontier_delete`. It emits `frontier_view` with the full committed view after a mutation or open, and `frontier_list` for listings.
+The desktop bridge exposes `frontier_create`, `frontier_open`, `frontier_list`, `frontier_update`, `frontier_delete` and `frontier_confirm`. Writes return `frontier_confirmation`; a confirmed write or open also returns the committed `frontier_view`. `frontier_tracking` includes progress and the recent Voyager requests for that Frontier.
 
 For a Frontier command error, the bridge's `command_error` carries the failed `operation_id` together with its `code` and `message`. It includes no committed view; an error is never a successful save and must not clear an edit draft.
 
@@ -97,7 +103,7 @@ For a Frontier command error, the bridge's `command_error` carries the failed `o
 - A draft is cleared only after a successful `frontier_view` whose `operation_id` matches the save operation. Errors keep the draft.
 - Status can be chosen while creating or editing among following, paused and resolved. Explicit pause, resolve, re-follow and delete controls remain available from the list.
 - Deleted Frontiers show no edit action. Deleting while an edit is open exits the edit and keeps the history message.
-- Saves commit directly. Keeper approval, relation editing and scheduling are out of scope for K1.
+- Frontier and progress saves go through a Librarian confirmation. Voyager scheduling and execution retain their own boundaries.
 
 ## Knowledge Cards
 
@@ -109,9 +115,9 @@ At least one verified citation from captured public web or academic material yie
 
 ### Commands and queries
 
-- `card_create` commits version 1. `card_update` changes supplied editable fields. `card_archive` makes a card read-only and increments its version. Mutations require schema version 1 and an operation ID. Update and archive also require the card ID and integer expected version.
+- Following confirmation, `card_create` commits version 1, `card_update` changes supplied editable fields and `card_archive` makes a term read-only and increments its version. Mutations require schema version 1 and an operation ID. Update and archive also require the card ID and integer expected version.
 - `card_open` reads the full committed card. It echoes a supplied read operation as `read_operation_id`. `card_list` and desktop state `cards` contain active and archived summaries.
-- `card_query` calls authenticated `KnowledgeCardService.query`, the public read boundary for Voyager and the Editor. It returns active known cards with committed versions by default. Callers may pass a bounded `card_ids` selection or opt in to archived records with `include_archived`.
+- `card_query` calls authenticated the authenticated Librarian Dictionary query. It returns active known cards with committed versions by default. Callers may pass a bounded `card_ids` selection or opt in to archived records with `include_archived`.
 
 A card mutation, its receipt, new material bindings and its event commit together. An identical replay returns the original committed result. Reusing its operation ID for a different command fails.
 

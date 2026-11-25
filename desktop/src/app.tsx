@@ -22,8 +22,8 @@ import {CleanupEntries,TestCleanupPanel,TestTag,type CleanupPlan} from './TestCl
 import {FeishuSetup} from './FeishuSetup';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
 type Child={child_id:string;session_id:string;parent_session_id:string;role:string;input_version:number;status:string;artifact_ref:string;result?:string;error?:string};
-type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;changes:{action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
-type TermConfirmation={entity?:'question'|'source'|'frontier'|'progress'|'test_cleanup';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][];summaries?:string[];cleanup?:CleanupPlan};
+type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;changes:{kind:string;action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
+type TermConfirmation={entity?:'question'|'source'|'frontier'|'progress'|'test_cleanup';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][];summaries?:string[];cleanup?:CleanupPlan;error?:{code:string;message:string}};
 
 function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfirmation;terms?:CardSummary[];sources?:ArchiveSource[];decide:(choice:'confirm'|'reject')=>void}){
   const [elapsed,setElapsed]=useState(false);
@@ -36,7 +36,21 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
   },[card.status,card.expires_at]);
   const status=elapsed&&card.status==='pending'?'expired':card.status;
   const labels:Record<string,string>={aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关系',
-    questionable:'存疑',convergence:'收敛状态',reason:'修改理由',label:'来源说明',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态'};
+    questionable:'存疑',convergence:'收敛状态',reason:'修改理由',label:'来源说明',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
+  const fieldText=(field:string,value:unknown)=>{
+    if(typeof value==='object'&&value){
+      const row=value as Record<string,unknown>;
+      if(field==='scope')return [
+        row.text,Array.isArray(row.alternatives)&&row.alternatives.length?`替代查询 ${row.alternatives.join('、')}`:null,
+        Array.isArray(row.sources)?`来源 ${row.sources.join('、')}`:null,
+      ].filter(Boolean).join(' · ');
+      if(field==='hard_constraints')return [
+        `必须包含 ${Array.isArray(row.must_include)&&row.must_include.length?row.must_include.join('、'):'无'}`,
+        `排除 ${Array.isArray(row.exclude)&&row.exclude.length?row.exclude.join('、'):'无'}`,
+      ].join(' · ');
+    }
+    return typeof value==='string'?value:JSON.stringify(value);
+  };
   const previewText=(value:unknown)=>typeof value==='string'?value.replace(
     /\[\[term:([^\[\]\s]+)\]\]/g,(_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语'):'';
   return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':card.entity==='source'?'来源变更确认':card.entity==='frontier'?'前沿变更确认':card.entity==='progress'?'进展变更确认':card.entity==='test_cleanup'?'测试内容清理确认':'术语变更确认'}>
@@ -46,9 +60,10 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
       <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
       {card.entity!=='progress'&&previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
       <dl>{Object.entries(change).filter(([field])=>field in labels).map(([field,value])=><React.Fragment key={field}>
-        <dt>{labels[field]}</dt><dd>{field==='convergence'?convergenceLabel(value as Convergence,card.entity==='question'?'question':'term'):typeof value==='string'?value:JSON.stringify(value)}</dd>
+        <dt>{labels[field]}</dt><dd>{field==='convergence'?convergenceLabel(value as Convergence,card.entity==='question'?'question':'term'):fieldText(field,value)}</dd>
       </React.Fragment>)}</dl>
     </div>)}
+    {card.error&&<p role="alert">{card.error.message}</p>}
     {status==='pending'?<>
       <button onClick={()=>decide('confirm')}>确认</button>
       <button onClick={()=>decide('reject')}>取消</button>
@@ -200,13 +215,16 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   prepareRewrite={(report_id,base_version,question,options)=>setText(`请调用 delegate，将此 JSON 原样交给 editor 子会话核对来源并生成新版本。 ${JSON.stringify({report_id,base_version,question,...options})}`)}
   prepareSynthesis={command=>setText(`请调用 delegate，将以下 JSON 原样交给 editor 子会话生成综合报道。
 ${JSON.stringify(command)}`)}/>}
-{!chat?.messages.length&&!state.busy?<div className="welcome"><div className="hero">◈</div><h1>从一个问题，开始研究</h1><p>与 Horizon 一起阅读文献、整理知识、探索新的发现。</p><div className="suggestions">{['总结当前知识库的研究进展','帮我梳理一个研究问题','查看可用的研究工作流'].map(t=><button key={t} onClick={()=>setText(t)}>{t} ↗</button>)}</div></div>:chat?.messages.map((m,i)=><article key={i} className={m.role==='You'?'user':'assistant'}><div className="author">{m.role==='You'?'探索者':'◈ Horizon'}</div><Markdown>{m.text}</Markdown></article>)}{chat&&state.term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card}
+{!chat?.messages.length&&!state.busy?<div className="welcome"><div className="hero">◈</div><h1>从一个问题，开始研究</h1><p>与 Horizon 一起阅读文献、整理知识、探索新的发现。</p><div className="suggestions">{['总结当前知识库的研究进展','帮我梳理一个研究问题','查看可用的研究工作流'].map(t=><button key={t} onClick={()=>setText(t)}>{t} ↗</button>)}</div></div>:chat?.messages.map((m,i)=><article key={i} className={m.role==='You'?'user':'assistant'}><div className="author">{m.role==='You'?'探索者':'◈ Horizon'}</div><Markdown>{m.text}</Markdown></article>)}{chat&&state.term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
   decide={choice=>send({action:'agent_term_confirm',task_id:chat.task_id,operation_id:card.operation_id,choice})}/>)}{chat&&state.editor_term_proposals?.map(proposal=>{
   const card:TermConfirmation={operation_id:proposal.proposal_id,expires_at:proposal.term_expires_at,
+    entity:proposal.changes.some(change=>change.kind==='frontier')?'frontier':undefined,
     status:proposal.status==='approved'?'confirmed':proposal.status,
-    changes:proposal.changes.map(change=>[change.action,{card_id:change.id,...change.after,reason:change.reason}])};
+    changes:proposal.changes.map(change=>[change.action,{
+      ...(change.kind==='frontier'?{frontier_id:change.id}:{card_id:change.id}),...change.after,reason:change.reason,
+    }])};
   return <TermConfirmationCard key={proposal.proposal_id+':'+proposal.revision} card={card}
-    decide={choice=>send({action:'keeper_decide',schema_version:1,operation_id:crypto.randomUUID(),
+    decide={choice=>send({action:'editor_library_confirm',task_id:chat.task_id,schema_version:1,operation_id:crypto.randomUUID(),
       proposal_id:proposal.proposal_id,revision:proposal.revision,
       expected_versions:proposal.changes.map(change=>change.expected_version??null),
       decision:choice==='confirm'?'approve':'reject'})}/>;

@@ -89,6 +89,9 @@ class Library:
             frontier_progress.initialize(db)
             return frontier_progress.list_for_frontier(db, frontier_id)
 
+    def check_frontier_lock(self, db, frontier_id, *, now=None):
+        self._frontiers.check_write_lock(db, frontier_id, now=now)
+
     def apply_frontier(self, db, action, command, *, token, now, origin="manual"):
         if action == "create":
             command = {"schema_version": 1, "hard_constraints": {},

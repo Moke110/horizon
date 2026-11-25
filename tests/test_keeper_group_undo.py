@@ -517,6 +517,14 @@ def test_frontier_group_undo_deletes_created_and_restores_deleted(tmp_path):
         token=TOKEN, principal=EXPLORER)
     assert preview["targets"][0]["action"] == "archive"
     assert preview["targets"][0]["projected"]["status"] == "deleted"
+    from hostrun.librarian import Librarian
+    librarian = Librarian(owner.cards, token=TOKEN)
+    librarian.request_frontier("update", {"schema_version": 1, "operation_id": "locked-frontier",
+        "frontier_id": created["frontier_id"], "expected_version": created["version"], "status": "paused"},
+        token=TOKEN, origin="gui")
+    with pytest.raises(CommandError, match="确认"):
+        undo.commit(commit_command(identifier, proposal["revision"], preview), token=TOKEN, principal=EXPLORER)
+    librarian.decide("locked-frontier", "reject", token=TOKEN, origin="gui")
     undo.commit(commit_command(identifier, proposal["revision"], preview),
                 token=TOKEN, principal=EXPLORER)
     deleted = owner.frontiers.view(created["frontier_id"], token=TOKEN)

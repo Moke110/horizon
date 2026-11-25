@@ -78,3 +78,23 @@ def test_source_update_and_deletion_wait_for_confirmation(tmp_path):
     assert librarian.list_sources(token=token) == [updated]
     librarian.decide("delete", "confirm", token=token, origin="gui")
     assert librarian.list_sources(token=token) == []
+
+
+def test_removed_archive_original_falls_back_to_source_url(tmp_path):
+    token = "desktop"
+    materials = MaterialsService(tmp_path, token=token)
+    material = materials.register_text({"schema_version": 1, "operation_id": "original",
+        "title": "原文件", "text": "原文", "source_label": "来源"}, token=token)
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=token, materials=materials), token=token)
+    material_id = material["material_id"]
+    librarian.request_source("create", {"operation_id": "write", "title": "来源", "label": "网络来源",
+        "material_id": material_id, "url": "https://example.com/original"}, token=token, origin="gui")
+    source = librarian.decide("write", "confirm", token=token, origin="gui")["results"][0]
+    assert librarian.open_source(source["source_id"], token=token)["original_text"] == "原文"
+    materials.archive_material(material_id, token=token)
+    impact = materials.deletion_impact(material_id, token=token)
+    materials.delete_material(material_id, impact["confirmation"], token=token)
+    fallback = {"source_url": source["url"]}
+    assert librarian.open_source(source["source_id"], token=token) == fallback
+    assert librarian.source_original(source["source_id"], token=token) == (fallback, None)
+    assert librarian.view_source(source["source_id"], token=token) == source

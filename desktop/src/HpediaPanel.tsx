@@ -99,7 +99,9 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
       }
       operation.current='';
       setWaiting(false);
-      if(event.data.status==='rejected'||event.data.status==='expired'){
+      if(event.data.status==='returned'){
+        setError(event.data.error?.message||'修改未提交，请重新审核。');
+      }else if(event.data.status==='rejected'||event.data.status==='expired'){
         setError(event.data.status==='expired'?'确认已过期。':'已取消修改。');
       }
     }

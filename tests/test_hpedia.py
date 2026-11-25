@@ -68,3 +68,30 @@ def test_cutover_preserves_terms_and_sources_and_confirms_the_first_question(tmp
     bridge("question_confirm", operation_id="delete", choice="confirm")
     assert bridge("question_list") == ("question_list", [])
     assert librarian.request("archive", term_archive, token=TOKEN, origin="gui")["status"] == "pending"
+
+
+def test_agent_hpedia_question_is_confirmed_in_its_own_conversation(tmp_path):
+    import queue
+
+    from hostrun.desktop_worker import DesktopWorker
+    from hostrun.knowledge_cards import KnowledgeCardService
+    from hostrun.librarian import Librarian
+
+    token = "desktop"
+    cards = KnowledgeCardService(tmp_path, token=token)
+    term = cards.create({"schema_version": 1, "operation_id": "term",
+                         "title": "光谱", "content": "光的频率成分。"}, token=token)
+    worker = DesktopWorker()
+    worker.home = tmp_path
+    worker.service_token = token
+    worker.task_id = "question-origin"
+    worker.events = queue.Queue()
+    receipt = worker._term_request({"type": "question_request", "action": "create", "requestId": "question",
+        "testData": True, "fields": {"prompt": "解释 [[term:" + term["card_id"] + "]]", "answer": "测试回答"}})
+    assert (receipt["entity"], receipt["status"]) == ("question", "pending")
+    librarian = Librarian(cards, token=token)
+    assert librarian.list_questions(token=token) == []
+    assert librarian.confirmations(token=token, origin="agent:question-origin") == [receipt]
+    result = librarian.decide("question", "confirm", token=token, origin="agent:question-origin")
+    assert result["results"][0]["tags"] == ["测试"]
+    assert librarian.list_questions(token=token) == result["results"]

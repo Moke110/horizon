@@ -206,7 +206,7 @@ class KeeperGroupUndo:
                      command):
         kind, identifier = entry["kind"], entry["id"]
         service = self.services[kind]
-        if kind == "card":
+        if kind in ("card", "frontier"):
             service.check_write_lock(db, identifier)
         meta = service.HISTORY
         operation_id = owner_operation_id(
