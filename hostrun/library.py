@@ -4,7 +4,7 @@ from functools import cached_property
 
 from hostrun.archive_sources import ArchiveSources
 
-from hostrun import hpedia
+from hostrun import convergence, hpedia
 from hostrun.agent_service import CommandError
 
 
@@ -63,6 +63,22 @@ class Library:
     @staticmethod
     def initialize_questions(db):
         hpedia.initialize_database(db)
+
+    def bulletin_links(self, *, token):
+        self.authorize(token)
+        with self.connect() as db:
+            db.execute("BEGIN")
+            terms = self.query_all_in_transaction(db)
+            questions = hpedia.list_questions(db)
+        return [
+            {"kind": kind, "id": row[id_field], "title": row[title_field],
+             "convergence": convergence.current(row)}
+            for kind, records, id_field, title_field in (
+                ("term", terms, "card_id", "title"),
+                ("question", questions, "question_id", "prompt"))
+            for row in records
+            if row.get("status", "active") == "active" and convergence.current(row) != "resolved"
+        ]
 
     def list_questions(self, *, token):
         self.authorize(token)

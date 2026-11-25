@@ -2,6 +2,8 @@ import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import type {CardSummary, KnowledgeCard} from './KnowledgeCardPanel';
 
+import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
+
 export type Question = {
   question_id:string;
   version:number;
@@ -9,6 +11,7 @@ export type Question = {
   answer:string;
   term_ids:string[];
   status?:'deleted';
+  convergence?:Convergence;
 };
 
 function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>void) {
@@ -19,6 +22,28 @@ function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>
     return <button key={index} type="button" className="hpedia-term-link"
       onClick={()=>openTerm(id)}>{term?.title??'词典术语'}</button>;
   });
+}
+
+export function termLinkLabels(text:string,terms:CardSummary[]){
+  return text.replace(/\[\[term:([^\[\]\s]+)\]\]/g,
+    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语');
+}
+
+export function QuestionContents({question,terms,openTerm}:{question:Question;terms:CardSummary[];openTerm:(id:string)=>void}) {
+  return <>
+    <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)}</h2>
+    <p className="hpedia-text">{referencedText(question.answer,terms,openTerm)}</p>
+    <p>{convergenceLabel(question.convergence??'resolved','question')}</p>
+  </>;
+}
+
+export function TermContents({term}:{term:KnowledgeCard}) {
+  return <>
+    <h2>{term.title}</h2>
+    <p className="hpedia-text">{term.content}</p>
+    <p>{convergenceLabel(term.convergence??(term.questionable?'unresolved':'resolved'),'term')}</p>
+    {!!term.aliases.length&&<p>别名 {term.aliases.join('、')}</p>}
+  </>;
 }
 
 export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
@@ -32,6 +57,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
   const [editing,setEditing]=useState(false);
   const [prompt,setPrompt]=useState('');
   const [answer,setAnswer]=useState('');
+  const [convergence,setConvergence]=useState<Convergence>('resolved');
   const [termChoice,setTermChoice]=useState('');
   const [selectedTerm,setSelectedTerm]=useState<KnowledgeCard|null>(null);
   const [waiting,setWaiting]=useState(false);
@@ -88,6 +114,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     setQuestion(selected);
     setPrompt(selected?.prompt??'');
     setAnswer(selected?.answer??'');
+    setConvergence(selected?.convergence??'resolved');
     setSelectedTerm(null);
     setError('');
     setEditing(true);
@@ -110,7 +137,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     setError('');
     send({action,schema_version:1,operation_id:operation.current,
       ...(question?{question_id:question.question_id,expected_version:question.version}:{}),
-      ...(action!=='question_delete'?{prompt,answer}:{})});
+      ...(action!=='question_delete'?{prompt,answer,convergence}:{})});
   };
 
   const insertReference=(field:'prompt'|'answer')=>{
@@ -135,9 +162,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
   const activeTerms=terms.filter(term=>term.status==='active');
   const detail=selectedTerm?<article aria-label="词典术语">
     <button type="button" onClick={()=>setSelectedTerm(null)}>返回问题</button>
-    <h2>{selectedTerm.title}</h2>
-    <p className="hpedia-text">{selectedTerm.content}</p>
-    {!!selectedTerm.aliases.length&&<p>别名 {selectedTerm.aliases.join('、')}</p>}
+    <TermContents term={selectedTerm}/>
   </article>:editing?<form className="hpedia-form" onSubmit={event=>{
     event.preventDefault();
     sendChange(question?'question_update':'question_create');
@@ -145,6 +170,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <h2>{question?'编辑问题':'新增问题'}</h2>
     <label>题干<textarea ref={promptInput} value={prompt} required onChange={event=>setPrompt(event.target.value)}/></label>
     <label>解答<textarea ref={answerInput} value={answer} required onChange={event=>setAnswer(event.target.value)}/></label>
+    <ConvergenceSelect kind="question" value={convergence} onChange={setConvergence}/>
     <div className="hpedia-reference-picker">
       <label>引用术语<select value={termChoice} onChange={event=>setTermChoice(event.target.value)}>
         <option value="">选择有效术语</option>
@@ -156,8 +182,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <button type="submit" disabled={waiting}>提交审核</button>
     {question&&<button type="button" disabled={waiting} onClick={()=>setEditing(false)}>返回详情</button>}
   </form>:question?<article aria-label="百科问题">
-    <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)}</h2>
-    <p className="hpedia-text">{referencedText(question.answer,terms,openTerm)}</p>
+    <QuestionContents question={question} terms={terms} openTerm={openTerm}/>
     <button type="button" disabled={waiting} onClick={()=>start(question)}>编辑问题</button>
     <button type="button" disabled={waiting} onClick={()=>sendChange('question_delete')}>删除问题</button>
   </article>:null;
@@ -166,8 +191,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <h1>百科</h1>
     <button type="button" disabled={waiting} onClick={()=>start(null)}>新增问题</button>
     {questions.length?<ul>{questions.map(row=><li key={row.question_id}>
-      <button type="button" onClick={()=>show(row.question_id)}>{row.prompt.replace(
-        /\[\[term:([^\[\]\s]+)\]\]/g,(_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语')}</button>
+      <button type="button" onClick={()=>show(row.question_id)}>{termLinkLabels(row.prompt,terms)}</button>
     </li>)}</ul>:<p>暂无百科问题。</p>}
     {detailHost&&createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost)}
   </section>;

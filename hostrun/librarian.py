@@ -133,6 +133,9 @@ class Librarian:
                               (origin,)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def bulletin_links(self, *, token):
+        return self.library.bulletin_links(token=token)
+
     def list_questions(self, *, token):
         return self.library.list_questions(token=token)
 

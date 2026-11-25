@@ -508,3 +508,12 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .archive-sources li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .archive-sources form { display: grid; gap: 8px; max-width: 620px; }
 .archive-sources, .materials-file-list { flex: 0 0 auto; }
+
+.bulletin-icon { position: relative; display: inline-block; width: 18px; height: 16px; }
+.bulletin-icon::before { content: ""; position: absolute; inset: 5px 2px 2px 1px; border: 1px solid currentColor; border-radius: 1px; }
+.bulletin-icon::after { content: ""; position: absolute; width: 12px; height: 2px; top: 6px; right: -1px; background: currentColor; transform: rotate(-45deg); }
+.bulletin-panel { padding: 24px 30px; overflow: auto; }
+.bulletin-panel ul { list-style: none; padding: 0; }
+.bulletin-panel li + li { border-top: 1px solid #44444b; }
+.bulletin-panel button { text-align: left; overflow-wrap: anywhere; }
+.bulletin-panel small { color: #a3a5ae; margin-left: 8px; }
