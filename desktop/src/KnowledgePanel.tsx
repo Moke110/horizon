@@ -1,3 +1,6 @@
+import {TextInput, MultilineInput} from './gui/elements/FormElements';
+import {Collapsible} from './gui/elements/Collapsible';
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
 
@@ -161,24 +164,24 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   const locked=!isCreateDraft&&isFullView(selected)&&selected.status==='deleted';
   return <div className={`trace${embedded?' workbench-panel':''}`}>{!embedded&&<h2>知识库</h2>}
   {isCreateDraft&&titleOnly?<form onSubmit={e=>{e.preventDefault();save();}}>
-    <label>前沿题目<input required maxLength={1000} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
+    <label>前沿题目<TextInput required maxLength={1000} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
     <button type="submit" disabled={saving}>提交前沿审核</button>
-  </form>:!locked&&!staleDraft&&<><details><summary>检索窗口（创建检索计划前设置）</summary>
-  <label>方式<select value={mode} onChange={e=>setMode(e.target.value)}><option value="initial">首次：基础与近期</option><option value="incremental">增量：含重叠窗口</option></select></label>
-  <label>时间依据<select value={basis} onChange={e=>setBasis(e.target.value)}><option value="published">发表时间</option><option value="discovered">发现时间</option></select></label>
-  <label>开始（本地时间）<input type="datetime-local" value={from} onChange={e=>setFrom(e.target.value)}/></label>
-  <label>结束（不含，本地时间）<input type="datetime-local" value={until} onChange={e=>setUntil(e.target.value)}/></label>
-  <label>增量重叠秒数<input type="number" min="0" value={overlap} onChange={e=>setOverlap(Number(e.target.value))}/></label>
-  </details>
+  </form>:!locked&&!staleDraft&&<><Collapsible title="检索窗口（创建检索计划前设置）">
+  <label>方式<FixedSelect value={mode} onChange={e=>setMode(e.target.value)}><option value="initial">首次：基础与近期</option><option value="incremental">增量：含重叠窗口</option></FixedSelect></label>
+  <label>时间依据<FixedSelect value={basis} onChange={e=>setBasis(e.target.value)}><option value="published">发表时间</option><option value="discovered">发现时间</option></FixedSelect></label>
+  <label>开始（本地时间）<TextInput type="datetime-local" value={from} onChange={e=>setFrom(e.target.value)}/></label>
+  <label>结束（不含，本地时间）<TextInput type="datetime-local" value={until} onChange={e=>setUntil(e.target.value)}/></label>
+  <label>增量重叠秒数<TextInput type="number" min="0" value={overlap} onChange={e=>setOverlap(Number(e.target.value))}/></label>
+  </Collapsible>
   <form onSubmit={e=>{e.preventDefault();save();}}>
-  <label>关注问题<input required maxLength={1000} disabled={loading} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
-  <label>关注状态<select disabled={loading} value={status} onChange={e=>setStatus(e.target.value)}>{statusOptions.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
-  <label>原始研究范围<textarea required maxLength={1000} disabled={loading} value={scope} onChange={e=>setScope(e.target.value)}/></label>
-  <label>中英文替代查询（每行一个）<textarea disabled={loading} value={alternatives} onChange={e=>setAlternatives(e.target.value)}/></label>
-  <label>必须包含（每行一个）<textarea disabled={loading} value={must} onChange={e=>setMust(e.target.value)}/></label>
-  <label>排除词（每行一个）<textarea disabled={loading} value={exclude} onChange={e=>setExclude(e.target.value)}/></label>
-  <label>来源标识（逗号分隔）<input required disabled={loading} value={sources} onChange={e=>setSources(e.target.value)}/></label>
-  <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：调整研究范围"/></label>
+  <label>关注问题<TextInput required maxLength={1000} disabled={loading} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
+  <label>关注状态<FixedSelect disabled={loading} value={status} onChange={e=>setStatus(e.target.value)}>{statusOptions.map(([value,label])=><option key={value} value={value}>{label}</option>)}</FixedSelect></label>
+  <label>原始研究范围<MultilineInput required maxLength={1000} disabled={loading} value={scope} onChange={e=>setScope(e.target.value)}/></label>
+  <label>中英文替代查询（每行一个）<MultilineInput disabled={loading} value={alternatives} onChange={e=>setAlternatives(e.target.value)}/></label>
+  <label>必须包含（每行一个）<MultilineInput disabled={loading} value={must} onChange={e=>setMust(e.target.value)}/></label>
+  <label>排除词（每行一个）<MultilineInput disabled={loading} value={exclude} onChange={e=>setExclude(e.target.value)}/></label>
+  <label>来源标识（逗号分隔）<TextInput required disabled={loading} value={sources} onChange={e=>setSources(e.target.value)}/></label>
+  <label>本次保存理由（可选）<TextInput maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：调整研究范围"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
   <button type="submit" disabled={loading||saving}>{editing?'保存修改':'创建 Frontier'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </form></>}

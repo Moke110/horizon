@@ -1,3 +1,5 @@
+import {TextInput} from './gui/elements/FormElements';
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import {createPortal} from 'react-dom';
 import React,{useEffect,useMemo,useRef,useState} from 'react';
@@ -1158,25 +1160,25 @@ export function KnowledgeWorkbench({
       </EditorFeedbackPreview>}
       <KeeperReviewRetry/>
       <form className="workbench-filters" role="search" onSubmit={event=>{event.preventDefault();submit();}}>
-        <label>搜索<input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder={dictionary?'搜索术语和释义':'标题、判断、问题或范围'}/></label>
+        <label>搜索<TextInput type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder={dictionary?'搜索术语和释义':'标题、判断、问题或范围'}/></label>
         <div className="workbench-filter-row">
-          {!dictionary&&<label>类型<select value={type} onChange={event=>changeType(event.target.value as TypeFilter)}>
+          {!dictionary&&<label>类型<FixedSelect value={type} onChange={event=>changeType(event.target.value as TypeFilter)}>
             <option value="all">全部</option>
             <option value="card">知识卡片</option>
             <option value="theme">命题</option>
             <option value="frontier">关注问题</option>
-          </select></label>}
-          <label>范围<select value={scope} onChange={event=>changeScope(event.target.value as ScopeFilter)}>
+          </FixedSelect></label>}
+          <label>范围<FixedSelect value={scope} onChange={event=>changeScope(event.target.value as ScopeFilter)}>
             <option value="active">当前有效</option>
             <option value="inactive">归档与停用</option>
             <option value="pending">待确认</option>
-          </select></label>
+          </FixedSelect></label>
         </div>
-        <label>关联记录<select value={relationTarget} onChange={event=>changeRelation(event.target.value)} disabled={scope==='pending'||(!cards.length&&!themes.length)}>
+        <label>关联记录<FixedSelect value={relationTarget} onChange={event=>changeRelation(event.target.value)} disabled={scope==='pending'||(!cards.length&&!themes.length)}>
           <option value="">全部关联</option>
           {cards.length>0&&<optgroup label={dictionary?'术语':'知识卡片'}>{cards.map(card=><option key={card.card_id} value={`card:${card.card_id}`}>{truncate(card.title)}{card.status==='archived'?'（已归档）':''} · v{card.version}</option>)}</optgroup>}
           {!dictionary&&themes.length>0&&<optgroup label="命题">{themes.map(theme=><option key={theme.theme_id} value={`theme:${theme.theme_id}`}>{truncate(theme.judgement)}{theme.status==='archived'?'（已归档）':''} · v{theme.version}</option>)}</optgroup>}
-        </select></label>
+        </FixedSelect></label>
         <div className="workbench-filter-actions"><span>{scope==='pending'?'待确认按 Keeper 持久状态筛选；在右侧批准、拒绝、要求调整或取消提议':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</button></div>
       </form>
       <div className="workbench-create" role="group" aria-label={dictionary?'新建术语':'新建知识库记录'}>

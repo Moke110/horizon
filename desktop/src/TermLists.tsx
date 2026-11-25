@@ -1,3 +1,4 @@
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import React, {useState} from 'react';
 import {MainPanelDialog, MultilineInput, TextInput, VariableList} from './gui/elements/FormElements';
 
@@ -66,7 +67,7 @@ export function TermLists({aliases, sources, relations, materials, terms, materi
       onSources(replace(sources, dialog.index, material_id ? dialog.value : null));
       setDialog(null);
     }}>
-      <label>已保存的资料<select value={dialog.value.material_id} onChange={event => {
+      <label>已保存的资料<FixedSelect value={dialog.value.material_id} onChange={event => {
         setDialog({...dialog, value: {...dialog.value, material_id: event.target.value}});
         setError('');
       }}>
@@ -74,7 +75,7 @@ export function TermLists({aliases, sources, relations, materials, terms, materi
         {dialog.value.material_id && !materials.some(material => material.material_id === dialog.value.material_id)
           && <option value={dialog.value.material_id}>{materialName(dialog.value.material_id)}</option>}
         {materials.map(material => <option key={material.material_id} value={material.material_id}>{material.title}</option>)}
-      </select></label>
+      </FixedSelect></label>
       <label>定位<TextInput value={dialog.value.locator} onChange={event => setDialog({...dialog, value: {...dialog.value, locator: event.target.value}})}/></label>
       <label>原文摘录<MultilineInput value={dialog.value.excerpt} onChange={event => setDialog({...dialog, value: {...dialog.value, excerpt: event.target.value}})}/></label>
       {error && <p role="alert">{error}</p>}
@@ -83,13 +84,13 @@ export function TermLists({aliases, sources, relations, materials, terms, materi
       onRelations(replace(relations, dialog.index, dialog.value || null));
       setDialog(null);
     }}>
-      <label>关联术语<select value={dialog.value} onChange={event => setDialog({...dialog, value: event.target.value})}>
+      <label>关联术语<FixedSelect value={dialog.value} onChange={event => setDialog({...dialog, value: event.target.value})}>
         <option value="">选择术语</option>
         {dialog.value && !terms.some(term => term.card_id === dialog.value)
           && <option value={dialog.value}>{termName(dialog.value)}</option>}
         {terms.filter(term => term.card_id === dialog.value || !relations.includes(term.card_id))
           .map(term => <option key={term.card_id} value={term.card_id}>{term.title}{term.status === 'archived' ? '（已归档）' : ''}</option>)}
-      </select></label>
+      </FixedSelect></label>
     </MainPanelDialog>}
   </>;
 }
