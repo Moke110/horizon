@@ -1,3 +1,5 @@
+import {MultilineInput} from './gui/elements/FormElements';
+import {Checkbox} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
@@ -76,12 +78,11 @@ export function FrontierTracking({frontiers,sources,frontier,viewEvent,error,det
             content:fields.get('content'),source_ids:fields.getAll('source_ids')});
           setDraft(null);
         }}>
-          <label>进展内容<textarea name="content" required maxLength={12000} defaultValue={draft==='new'?'':draft.content}/></label>
-          <fieldset><legend>资料库来源</legend>{sources.map(source=><label key={source.source_id}>
-            <input type="checkbox" name="source_ids" value={source.source_id}
-              defaultChecked={draft!=='new'&&draft.source_ids.includes(source.source_id)}/>
+          <label>进展内容<MultilineInput name="content" required maxLength={12000} defaultValue={draft==='new'?'':draft.content}/></label>
+          <fieldset><legend>资料库来源</legend>{sources.map(source=><Checkbox key={source.source_id} name="source_ids" value={source.source_id}
+              defaultChecked={draft!=='new'&&draft.source_ids.includes(source.source_id)}>
             {source.title}
-          </label>)}</fieldset>
+          </Checkbox>)}</fieldset>
           <button type="submit">提交进展审核</button>
           <button type="button" onClick={()=>setDraft(null)}>取消</button>
         </form>}

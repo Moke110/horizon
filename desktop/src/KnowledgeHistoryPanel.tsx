@@ -1,3 +1,6 @@
+import {TextInput} from './gui/elements/FormElements';
+import {DataTable} from './gui/elements/DataTable';
+import {Collapsible} from './gui/elements/Collapsible';
 import React,{useEffect,useRef,useState} from 'react';
 
 export type HistoryKind='card'|'theme'|'frontier';
@@ -351,13 +354,12 @@ export function KnowledgeHistoryPanel({
           </header>
           <p className="knowledge-history-reason">理由：{reasonLabel(entry.reason)}</p>
           {typeof entry.target_version==='number'&&<p className="knowledge-history-note">已撤销版本 v{entry.target_version} 的变更</p>}
-          <details>
-            <summary>查看变更前后</summary>
+          <Collapsible title="查看变更前后">
             <div className="knowledge-history-snapshots">
               <Snapshot title="变更前" value={entry.before}/>
               <Snapshot title="变更后" value={entry.after}/>
             </div>
-          </details>
+          </Collapsible>
           {entry.can_preview
             ?<div className="knowledge-history-actions"><button type="button" disabled={previewing||undoing} onClick={()=>requestPreview(entry)}>{previewing?'正在预览…':`预览撤销版本 v${entry.version} 的变更`}</button></div>
             :<p className="knowledge-history-note">该历史记录当前不可预览撤销，只能查看完整内容。</p>}
@@ -375,7 +377,7 @@ export function KnowledgeHistoryPanel({
       {preview.can_undo!==true&&!preview.code&&<p className="knowledge-history-warning" role="alert">当前记录不能自动撤销。</p>}
       {hasConflict&&<p className="knowledge-history-warning" role="alert">有字段在此后已被修改，已标记为冲突；不会帮助覆盖这些修改，请重新读取并重新预览。</p>}
       {changes.length?<div className="knowledge-history-diff-wrap">
-        <table className="knowledge-history-diff">
+        <DataTable className="knowledge-history-diff">
           <thead><tr><th>字段</th><th>该历史变更前</th><th>该历史变更后</th><th>当前值</th><th>撤销后</th><th>冲突</th></tr></thead>
           <tbody>{changes.map((change,index)=><tr key={`${change.field}:${index}`} className={change.conflict?'conflict':''}>
             <th scope="row">{fieldLabel(change.field)}</th>
@@ -385,11 +387,11 @@ export function KnowledgeHistoryPanel({
             <DiffCell field={change.field} value={change.proposed}/>
             <td className={change.conflict?'conflict-flag':''}>{change.conflict?'冲突：此后已修改':'—'}</td>
           </tr>)}</tbody>
-        </table>
+        </DataTable>
       </div>:<p className="knowledge-history-note">预览没有返回字段差异；确认前请核对当前版本。</p>}
       {canConfirm?<>
         <div className="knowledge-history-form">
-          <label>撤销理由（可选）<input maxLength={500} value={undoReason} onChange={event=>setUndoReason(event.target.value)} placeholder="例如：恢复此前的判断"/></label>
+          <label>撤销理由（可选）<TextInput maxLength={500} value={undoReason} onChange={event=>setUndoReason(event.target.value)} placeholder="例如：恢复此前的判断"/></label>
         </div>
         <div className="knowledge-history-actions">
           <button type="button" disabled={undoing} onClick={confirmUndo}>{undoing?'正在撤销…':'确认撤销并创建新版本'}</button>

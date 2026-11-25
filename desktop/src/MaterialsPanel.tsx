@@ -1,3 +1,6 @@
+import {TextInput, MultilineInput} from './gui/elements/FormElements';
+import {Collapsible} from './gui/elements/Collapsible';
+import {Checkbox, FilePicker} from './gui/elements/ChoiceElements';
 import {createPortal} from 'react-dom';
 import {PdfReader,type PdfInfo} from './PdfReader';
 import React,{useState} from 'react';
@@ -31,27 +34,27 @@ export function MaterialsPanel({jobs,materials,selectedPackage,taskId,onCommand,
  const confirmation=impact?.material_id===materialId&&impact?.version===selectedPackage?.version?impact:null;
  return <>{showList&&<div className="trace materials-file-list"><h2>原文文件</h2><p>粘贴原文可离线登记，不会自动联网或生成摘要。</p>
  <form onSubmit={e=>{e.preventDefault();onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url,dynamic});}}>
- <label>网页原链接<input required type="url" pattern="https://.+" value={url} onChange={e=>setUrl(e.target.value)}/></label>
- <label><input type="checkbox" checked={dynamic} onChange={e=>setDynamic(e.target.checked)}/>使用浏览器渲染公开动态页</label>
+ <label>网页原链接<TextInput required type="url" pattern="https://.+" value={url} onChange={e=>setUrl(e.target.value)}/></label>
+ <Checkbox checked={dynamic} onChange={e=>setDynamic(e.target.checked)}>使用浏览器渲染公开动态页</Checkbox>
  <button disabled={jobs.length>0}>获取网页正文</button></form>
  {jobs.map(id=><button key={id} onClick={()=>onCommand({action:'materials_web_cancel',operation_id:id})}>取消网页获取</button>)}
  <button onClick={()=>onCommand({action:"choose_pdf"})}>导入 PDF</button>
- <label className="html-picker">打开 HTML
-  <input type="file" accept=".html,.htm,text/html" onChange={event=>{
+ <div className="html-picker">打开 HTML
+  <FilePicker aria-label="打开 HTML" accept=".html,.htm,text/html" onChange={event=>{
    const file=event.currentTarget.files?.[0];
    if(file)onOpenHtml(file);
    event.currentTarget.value='';
   }}/>
- </label>
+ </div>
  <form onSubmit={e=>{e.preventDefault();onCommand({action:'materials_register',schema_version:1,operation_id:crypto.randomUUID(),title,source_label:label,text});}}>
-  <label>资料标题<input required maxLength={500} value={title} onChange={e=>setTitle(e.target.value)}/></label>
-  <label>来源说明<input required maxLength={2000} value={label} onChange={e=>setLabel(e.target.value)}/></label>
-  <label>原文<textarea required aria-label="资料原文" value={text} onChange={e=>setText(e.target.value)}/></label>
+  <label>资料标题<TextInput required maxLength={500} value={title} onChange={e=>setTitle(e.target.value)}/></label>
+  <label>来源说明<TextInput required maxLength={2000} value={label} onChange={e=>setLabel(e.target.value)}/></label>
+  <label>原文<MultilineInput required aria-label="资料原文" value={text} onChange={e=>setText(e.target.value)}/></label>
   <button type="submit">离线登记资料</button>
  </form>
  <section aria-label="资料列表"><h3>已登记资料</h3>{!materials.length&&<p>尚无资料。</p>}{materials.map(m=><button key={m.material_id} onClick={()=>onCommand({action:'materials_open',material_id:m.material_id,task_id:taskId})}>{m.title} · {m.source.label}</button>)}</section>
- <details><summary>已归档资料</summary>{!archived.length&&<p>尚无归档资料。</p>}{archived.map(m=><button key={m.material_id} onClick={()=>onCommand({action:'materials_open',material_id:m.material_id,task_id:taskId})}>{m.title} · {m.source.label}</button>)}
- <button onClick={()=>onCommand({action:'materials_collect_orphans'})}>回收无引用快照</button></details>
+ <Collapsible title="已归档资料">{!archived.length&&<p>尚无归档资料。</p>}{archived.map(m=><button key={m.material_id} onClick={()=>onCommand({action:'materials_open',material_id:m.material_id,task_id:taskId})}>{m.title} · {m.source.label}</button>)}
+ <button onClick={()=>onCommand({action:'materials_collect_orphans'})}>回收无引用快照</button></Collapsible>
  </div>}
  {selectedPackage&&detailHost&&createPortal(<article><h3>{selectedPackage.title}</h3>
  {selectedPackage.archived?<><p>已归档</p>
@@ -67,8 +70,8 @@ export function MaterialsPanel({jobs,materials,selectedPackage,taskId,onCommand,
  {selectedPackage.academic&&<section aria-label="学术全文获取"><h4>{({'pending_fulltext':'待全文','available':'已取得学术全文','abandoned':'已放弃','supplemented':'已补充全文'} as Record<string,string>)[selectedPackage.academic.status]}</h4>
  <p>{selectedPackage.academic.identity} · 版本 {selectedPackage.version} · {selectedPackage.academic.url}</p>
  {selectedPackage.academic.notice_type&&<p role="status">出版方通知：{({'correction':'更正','retraction':'撤稿','expression-of-concern':'关注声明'} as Record<string,string>)[selectedPackage.academic.notice_type]||selectedPackage.academic.notice_type}</p>}
- <details><summary>获取记录</summary><ul>{selectedPackage.academic.attempts.map((attempt,i)=><li key={i}>{academicStage[attempt.stage]||attempt.stage} · {academicOutcome[attempt.outcome]||attempt.outcome}{attempt.http_status? ` · HTTP ${attempt.http_status}`:''}{attempt.url? ` · ${attempt.url}`:''}</li>)}</ul></details>
- <details><summary>来源与引用覆盖</summary><ul>{selectedPackage.academic.provenance.map((origin,i)=><li key={i}>{origin.source} · {origin.source_id} · 检索 {origin.request_id} · 已列出参考文献 {origin.reference_ids.length} / 来源报告 {origin.reference_count??'未知'} 条 · 被引用 {origin.cited_by_count??'未知'} 次{Boolean(origin.related_dois?.length)&&<p>来源提供的关联 DOI：{origin.related_dois?.join('、')}</p>}</li>)}</ul></details>
+ <Collapsible title="获取记录"><ul>{selectedPackage.academic.attempts.map((attempt,i)=><li key={i}>{academicStage[attempt.stage]||attempt.stage} · {academicOutcome[attempt.outcome]||attempt.outcome}{attempt.http_status? ` · HTTP ${attempt.http_status}`:''}{attempt.url? ` · ${attempt.url}`:''}</li>)}</ul></Collapsible>
+ <Collapsible title="来源与引用覆盖"><ul>{selectedPackage.academic.provenance.map((origin,i)=><li key={i}>{origin.source} · {origin.source_id} · 检索 {origin.request_id} · 已列出参考文献 {origin.reference_ids.length} / 来源报告 {origin.reference_count??'未知'} 条 · 被引用 {origin.cited_by_count??'未知'} 次{Boolean(origin.related_dois?.length)&&<p>来源提供的关联 DOI：{origin.related_dois?.join('、')}</p>}</li>)}</ul></Collapsible>
  </section>}
  {!selectedPackage.archived&&<PendingMaterialActions key={'pending:'+selectedPackage.material_id} material={selectedPackage} taskId={taskId} send={onCommand}/>}
  <section aria-label="生成摘要"><h4>生成摘要</h4><p>{selectedPackage.summary===null?'尚未生成摘要':selectedPackage.summary}</p></section></article>,detailHost)}

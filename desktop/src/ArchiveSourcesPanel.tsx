@@ -1,3 +1,5 @@
+import {TextInput} from './gui/elements/FormElements';
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useState} from 'react';
 import type {MaterialSummary} from './MaterialsPanel';
@@ -33,15 +35,15 @@ export function ArchiveSourcesPanel({sources,materials,onOpen,send}:{
         material_id:form.get('material_id')||null});
       close();
     }}>
-      <label>标题<input name="title" required maxLength={500} defaultValue={editing?.title}/></label>
-      <label>来源说明<input name="label" required maxLength={2000} defaultValue={editing?.label}/></label>
-      <label>原始链接<input name="url" type="url" maxLength={4096} defaultValue={editing?.url??''}/></label>
-      <label>原文文件<select name="material_id" defaultValue={editing?.material_id??''}>
+      <label>标题<TextInput name="title" required maxLength={500} defaultValue={editing?.title}/></label>
+      <label>来源说明<TextInput name="label" required maxLength={2000} defaultValue={editing?.label}/></label>
+      <label>原始链接<TextInput name="url" type="url" maxLength={4096} defaultValue={editing?.url??''}/></label>
+      <label>原文文件<FixedSelect name="material_id" defaultValue={editing?.material_id??''}>
         <option value="">选择原文文件</option>
         {editing?.material_id&&!materials.some(material=>material.material_id===editing.material_id)&&
           <option value={editing.material_id}>已有原文关联</option>}
         {materials.map(material=><option key={material.material_id} value={material.material_id}>{material.title}</option>)}
-      </select></label>
+      </FixedSelect></label>
       <button type="submit">提交审核</button>
       <button type="button" onClick={close}>取消</button>
     </form>}

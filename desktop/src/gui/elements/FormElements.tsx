@@ -5,7 +5,7 @@ export function TextInput({className, ...props}: React.ComponentPropsWithoutRef<
   return <input {...props} className={['gui-text', className].filter(Boolean).join(' ')}/>;
 }
 
-export function MultilineInput({className, ...props}: React.ComponentPropsWithoutRef<'textarea'>) {
+export function MultilineInput({className, ...props}: React.ComponentPropsWithRef<'textarea'>) {
   return <textarea {...props} rows={1} className={['gui-text', 'gui-multiline', className].filter(Boolean).join(' ')}/>;
 }
 

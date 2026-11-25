@@ -1,3 +1,4 @@
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import React,{useEffect,useRef,useState} from 'react';
 import {MultilineInput, TextInput} from './gui/elements/FormElements';
 import {TermLists, type SourceInput} from './TermLists';
@@ -189,30 +190,30 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     terms={cards.filter(card=>card.card_id!==editing?.card_id)} materialName={materialName} termName={cardName}
     onAliases={values=>setAliases(values.join('\n'))} onSources={setSources} onRelations={setRelations}/>
   </>:<>
-  <label>标题<input required disabled={loading} value={title} onChange={e=>setTitle(e.target.value)}/></label>
-  <label>{termMode?'释义':'内容'}<textarea required disabled={loading} value={content} onChange={e=>setContent(e.target.value)}/></label>
-  <label>别名（每行一个）<textarea disabled={loading} value={aliases} onChange={e=>setAliases(e.target.value)}/></label>
+  <label>标题<TextInput required disabled={loading} value={title} onChange={e=>setTitle(e.target.value)}/></label>
+  <label>{termMode?'释义':'内容'}<MultilineInput required disabled={loading} value={content} onChange={e=>setContent(e.target.value)}/></label>
+  <label>别名（每行一个）<MultilineInput disabled={loading} value={aliases} onChange={e=>setAliases(e.target.value)}/></label>
   <fieldset><legend>来源</legend>
   {sources.map((source,index)=><div key={index}>
-    <label>已保存的资料<select required value={source.material_id} onChange={e=>changeSource(index,{material_id:e.target.value})}>
+    <label>已保存的资料<FixedSelect required value={source.material_id} onChange={e=>changeSource(index,{material_id:e.target.value})}>
       <option value="">选择资料</option>
       {source.material_id&&!materials.some(m=>m.material_id===source.material_id)&&<option value={source.material_id}>{materialName(source.material_id)}</option>}
       {materials.map(m=><option key={m.material_id} value={m.material_id}>{m.title}</option>)}
-    </select></label>
-    <label>定位<input required value={source.locator} onChange={e=>changeSource(index,{locator:e.target.value})}/></label>
-    <label>原文摘录<textarea required value={source.excerpt} onChange={e=>changeSource(index,{excerpt:e.target.value})}/></label>
+    </FixedSelect></label>
+    <label>定位<TextInput required value={source.locator} onChange={e=>changeSource(index,{locator:e.target.value})}/></label>
+    <label>原文摘录<MultilineInput required value={source.excerpt} onChange={e=>changeSource(index,{excerpt:e.target.value})}/></label>
     <button type="button" onClick={()=>setSources(current=>current.filter((_,i)=>i!==index))}>移除来源</button>
   </div>)}
   <button type="button" disabled={!materials.length||sources.length>=16} onClick={()=>setSources(current=>[...current,{material_id:'',locator:'',excerpt:''}])}>添加来源</button>
   {!materials.length&&!sources.length&&<p>可在「资料」保存来源，再到这里添加引用。</p>}
   </fieldset>
-  <label>{termMode?'关联术语':'关联知识卡片'}<select multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
+  <label>{termMode?'关联术语':'关联知识卡片'}<FixedSelect multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
     {cards.filter(card=>card.card_id!==editing?.card_id).map(card=><option key={card.card_id} value={card.card_id}>{card.title}{card.status==='archived'?'（已归档）':''}</option>)}
-  </select></label>
+  </FixedSelect></label>
   </>}
   <ConvergenceSelect kind="term" value={convergence} onChange={setConvergence}/>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
-  <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
+  <label>本次保存理由（可选）<TextInput maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
   <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':termMode?'创建术语':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </fieldset></form>}
