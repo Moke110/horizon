@@ -118,7 +118,20 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
         throw Error('The native caption does not reserve space for Windows window buttons');
       }
       navigation.querySelector('button[aria-label="词典"]').click();
-      (await wait(() => document.querySelector('[aria-label="新建术语"] button'))).click();
+      const search = await wait(() => document.querySelector('form[aria-label="搜索导航栏"]'));
+      const queryBox = search.querySelector('input[type="search"]').getBoundingClientRect();
+      const submitButton = search.querySelector('button[type="submit"]');
+      const searchIcon = submitButton.getBoundingClientRect();
+      if (searchIcon.left < queryBox.right || Math.abs(searchIcon.top - queryBox.top) > 1 ||
+          !submitButton.querySelector('svg') || submitButton.textContent.trim()) {
+        throw Error('Dictionary search icon must sit beside the query input');
+      }
+      const picker = search.querySelector('[role="combobox"]');
+      picker.focus();
+      await wait(() => picker.getAttribute('aria-expanded') === 'true');
+      picker.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+      await wait(() => picker.getAttribute('aria-expanded') === 'false');
+      (await wait(() => document.querySelector('[role="group"][aria-label="搜索导航栏"] button'))).click();
       const termField = await wait(() => Array.from(document.querySelectorAll('form label'))
         .find(label => label.textContent.trim() === '释义')?.querySelector('textarea'));
       const singleLineHeight = termField.getBoundingClientRect().height;
@@ -374,7 +387,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       throw Error('Escape did not close the picker while keeping the selection');
     }
     await mouseClick('#workspace-navigation button[aria-label="词典"]');
-    await mouseClick('[aria-label="新建术语"] button');
+    await mouseClick('[role="group"][aria-label="搜索导航栏"] button');
     const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
       .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
     if (!sourceToggle) throw Error('Native mouse did not open the Term draft');

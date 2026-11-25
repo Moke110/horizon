@@ -84,6 +84,7 @@ def test_short_chinese_mixed_language_and_normalized_queries_are_offline(tmp_pat
         cards, "optical", "光学传感器标定",
         "每天测量接收到的辐射。",
         aliases=["光学校准", "sensor calibration"])
+    assert cards.list(token="s")[0]["aliases"] == optical["aliases"]
     # Seed the same snapshot a release with the retired field would have saved.
     legacy = json.dumps(optical | {"recall_terms": ["obsolete keyword"]})
     with database_connection(tmp_path) as db:
@@ -240,6 +241,12 @@ def test_relations_are_direct_typed_and_bidirectional(tmp_path):
         ("card", middle["card_id"]), ("theme", linked_theme["theme_id"])}
     assert related("card", middle["card_id"]) == {
         ("card", anchor["card_id"]), ("card", outer["card_id"])}
+    targets = [{"kind": "card", "id": term["card_id"]} for term in (anchor, outer)]
+    matches = search(workbench, related_to=targets, kind="card", limit=1)
+    assert matches["total"] == 1
+    assert found(matches) == {("card", middle["card_id"])}
+    targets.append({"kind": "card", "id": middle["card_id"]})
+    assert search(workbench, related_to=targets, kind="card", limit=1)["total"] == 3
     # No transitive closure: outer reaches middle only.
     assert related("card", outer["card_id"]) == {
         ("card", middle["card_id"])}
