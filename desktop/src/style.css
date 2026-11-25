@@ -596,3 +596,37 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
   color: #eee;
 }
 .gui-dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+.gui-collapsible > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 10px;
+  border: 1px solid #383c4b;
+  border-radius: 8px;
+  background: #181a23;
+}
+.gui-collapsible > summary::after {
+  content: '';
+  flex: 0 0 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 0 1px 1px 0;
+  transform: rotate(-45deg);
+}
+.gui-collapsible[open] > summary::after { transform: rotate(45deg); }
+.gui-table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
+.gui-data-table { width: 100%; border-collapse: collapse; }
+.gui-data-table thead { background: #181a23; }
+.gui-data-table :is(th, td) {
+  padding: 7px 9px;
+  border-bottom: 1px solid #343744;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.gui-data-table tbody tr:is([tabindex], [role="button"]):hover { background: #282b37; }
