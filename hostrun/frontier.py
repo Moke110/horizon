@@ -5,12 +5,10 @@ constraints and a following/paused/resolved/deleted status. It lives in the
 stable data home (the same ``horizon.sqlite3`` as Voyager and AgentService), not
 in any cloud Base. K1 keeps relations empty; later slices add cards and themes.
 
-``FrontierService`` is the public application seam the desktop GUI drives. Its
-scope resolution is the *real knowledge provider* that replaces the temporary
-explicit scope for Voyager: a following Frontier resolves to a durable
-``frontier:`` scope identity, and pause/resolve/delete stop future retrieval
-without destroying the Frontier or any already-produced materials. Manual edits
-commit directly through this service; Keeper approval is a later slice.
+``FrontierService`` owns Frontier persistence beneath the Library. A following
+Frontier resolves to a durable ``frontier:`` scope identity for Voyager. Pausing,
+resolving or deleting it stops future retrieval while retaining existing
+retrieval records and materials. The Librarian reviews desktop and Agent writes.
 """
 
 from __future__ import annotations
@@ -238,8 +236,18 @@ class FrontierService:
     def history_undoable(record):
         return record.get("status") in ("following", "paused", "resolved")
 
+    def check_write_lock(self, db, frontier_id, *, now=None):
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='librarian_term_locks'").fetchone():
+            return
+        if db.execute("""SELECT 1 FROM librarian_term_locks AS lock
+            JOIN librarian_term_requests AS request ON request.id = lock.request_id
+            WHERE lock.term_id=? AND request.expires_at>?""",
+                      ("frontier:" + frontier_id, self.clock() if now is None else now)).fetchone():
+            raise CommandError("frontier_locked", "前沿正在等待确认")
+
     def apply_history_undo(self, db, record, fields):
         """Restore historical leaves and validate their combined Frontier scope."""
+        self.check_write_lock(db, record["frontier_id"])
         updated = json.loads(json.dumps(record))
         for path, value in fields.items():
             set_path(updated, path, value)
@@ -257,7 +265,7 @@ class FrontierService:
             self.notify_committed(frontier)
         return frontier
 
-    def apply_in_transaction(self, db, action, command, *, token, origin="manual"):
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None):
         """Apply one Frontier write on the caller's open transaction.
 
         The caller owns BEGIN, COMMIT and notification. Replays return their
@@ -301,6 +309,7 @@ class FrontierService:
             return frontier, True
         frontier_id = command.get("frontier_id")
         frontier = self._read(db, frontier_id)
+        self.check_write_lock(db, frontier_id, now=lock_clock)
         if type(command.get("expected_version")) is not int or command["expected_version"] != frontier["version"]:
             raise CommandError("version_conflict", "Frontier 已被修改，请刷新后重试")
         if frontier["status"] == "deleted":

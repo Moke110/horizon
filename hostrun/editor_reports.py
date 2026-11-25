@@ -9,7 +9,8 @@ import uuid
 from hostrun.agent_service import CommandError
 from hostrun.editor_keeper import enqueue_editor_request
 from hostrun.editor_preferences import record_feedback_candidate
-from hostrun.frontier import FrontierService
+from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.voyager_materials import MaterialsService, citation_anchors
 from hostrun.managed_database import database_connection
 
@@ -146,7 +147,8 @@ class ReportService:
             target = frontier_id or original_frontier
             if not target:
                 raise CommandError("invalid_feedback", "请为范围调整选择 Frontier")
-            frontier = FrontierService(self.home, token=token).view(target, token=token)
+            librarian = Librarian(KnowledgeCardService(self.home, token=token, materials=self.materials), token=token)
+            frontier = librarian.view_frontier(target, token=token)
             scope = {"frontier_id": target, "version": frontier["version"], "question": frontier["question"]}
         return {"owner": owner, "task_id": task_id, "report_id": report_id, "report_version": version,
                 "claim_index": claim_index, "claim_text": report["claims"][claim_index]["text"]

@@ -37,7 +37,7 @@ from hostrun.editor_keeper import verify_editor_request
 from hostrun.editor_reports import ReportService
 from hostrun.agent_service import AgentService, CommandError
 from hostrun.frontier import (
-    FrontierService, _validate_constraints, _validate_question,
+    _validate_constraints, _validate_question,
     _validate_relations, _validate_scope, _validate_status,
 )
 from hostrun.keeper_decisions import (
@@ -271,7 +271,7 @@ class KeeperService:
             raise ValueError("A launch token is required")
         self.agent = agent
         self.materials = materials
-        self.cards = Librarian(cards, token=token, clock=clock)
+        self.cards = Librarian(cards, token=token, clock=clock, frontiers=frontiers)
         self.themes = themes
         self.frontiers = frontiers
         self.home = Path(agent.home)
@@ -1313,14 +1313,17 @@ class KeeperService:
             raise error
 
     def _apply_owner(self, db, kind, action, command):
-        service = {"card": self.cards, "theme": self.themes,
-                   "frontier": self.frontiers}[kind]
+        if kind == "frontier":
+            return self.cards.apply_approved_frontier(db, action, command, token=self._token)
+        service = {"card": self.cards, "theme": self.themes}[kind]
         return service.apply_in_transaction(
             db, action, command, token=self._token, origin="keeper")
 
     def _notify_owner(self, kind, record):
-        service = {"card": self.cards, "theme": self.themes,
-                   "frontier": self.frontiers}[kind]
+        if kind == "frontier":
+            self.cards.notify_frontier(record)
+            return
+        service = {"card": self.cards, "theme": self.themes}[kind]
         service.notify_committed(record)
 
     def audit(self, proposal_id, *, token):
@@ -1478,7 +1481,7 @@ class KeeperService:
             return self.cards.read_in_transaction(db, identity)
         if kind == "theme":
             return KnowledgeThemeService.read_in_transaction(db, identity)
-        return FrontierService.read_in_transaction(db, identity)
+        return self.cards.read_frontier_in_transaction(db, identity)
 
     @staticmethod
     def _owner_label(kind, record):
@@ -1634,7 +1637,7 @@ class KeeperService:
             records = [record for record in records
                        if record.get("status") == "active" and record.get("known")]
         else:
-            records = FrontierService.query_all_in_transaction(db)
+            records = self.cards.query_frontiers_in_transaction(db)
             records = [record for record in records
                        if record.get("status") != "deleted"]
         evidence = []

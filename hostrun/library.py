@@ -4,13 +4,16 @@ from functools import cached_property
 
 from hostrun.archive_sources import ArchiveSources
 
-from hostrun import convergence, hpedia
+from hostrun import convergence, frontier_progress, hpedia
+from hostrun.frontier import FrontierService
 from hostrun.agent_service import CommandError
 
 
 class Library:
-    def __init__(self, cards):
+    def __init__(self, cards, *, token, frontiers, clock):
         self._cards = cards
+        self.authorize(token)
+        self._frontiers = frontiers if frontiers is not None else FrontierService(cards.home, token=token, clock=clock)
 
     @cached_property
     def archive(self):
@@ -59,6 +62,51 @@ class Library:
     def apply(self, db, action, command, *, token, now=None, origin="manual"):
         return self._cards.apply_in_transaction(
             db, action, command, token=token, lock_clock=now, origin=origin)
+
+    def list_frontiers(self, *, token):
+        return self._frontiers.list(token=token)
+
+    def view_frontier(self, frontier_id, *, token):
+        return self._frontiers.view(frontier_id, token=token)
+
+    @staticmethod
+    def read_frontier_in_transaction(db, frontier_id):
+        return FrontierService.read_in_transaction(db, frontier_id)
+
+    @staticmethod
+    def query_frontiers_in_transaction(db):
+        return FrontierService.query_all_in_transaction(db)
+
+    @staticmethod
+    def resolve_frontier_in_transaction(db, frontier_id, *, expected_version=None):
+        return FrontierService.resolve_in_transaction(db, frontier_id, expected_version=expected_version)
+
+    def list_progress(self, frontier_id, *, token):
+        self.authorize(token)
+        with self.connect() as db:
+            self._frontiers.read_in_transaction(db, frontier_id)
+            frontier_progress.initialize(db)
+            return frontier_progress.list_for_frontier(db, frontier_id)
+
+    def apply_frontier(self, db, action, command, *, token, now, origin="manual"):
+        if action == "create":
+            command = {"schema_version": 1, "hard_constraints": {},
+                       "scope": {"text": command.get("question"), "alternatives": [], "sources": ["arxiv"]},
+                       **command}
+        return self._frontiers.apply_in_transaction(
+            db, action, command, token=token, lock_clock=now, origin=origin)
+
+    def apply_progress(self, db, action, command, *, now):
+        frontier = self._frontiers.read_in_transaction(db, command.get("frontier_id"))
+        self._frontiers.check_write_lock(db, frontier["frontier_id"], now=now)
+        return frontier_progress.apply(
+            db, action, command, frontier=frontier, now=now,
+            view_source=lambda source_id: self.archive.read_in_transaction(db, source_id),
+            check_lock=lambda source_id: self.archive.check_write_lock(db, source_id),
+        )
+
+    def notify_frontier(self, frontier):
+        self._frontiers.notify_committed(frontier)
 
     @staticmethod
     def initialize_questions(db):

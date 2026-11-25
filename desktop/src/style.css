@@ -517,3 +517,10 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .bulletin-panel li + li { border-top: 1px solid #44444b; }
 .bulletin-panel button { text-align: left; overflow-wrap: anywhere; }
 .bulletin-panel small { color: #a3a5ae; margin-left: 8px; }
+
+.frontier-tracking { border-top: 1px solid #343437; margin-top: 18px; }
+.frontier-detail section { margin-top: 18px; }
+.frontier-detail article { border-bottom: 1px solid #343437; padding-block: 8px; }
+.frontier-detail textarea { display: block; width: 100%; }
+.frontier-detail input[type="checkbox"] { width: auto; }
+.frontier-detail fieldset label { display: block; }

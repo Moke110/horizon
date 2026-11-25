@@ -12,6 +12,8 @@ import pytest
 
 from hostrun.agent_service import CommandError
 from hostrun.frontier import FrontierService
+from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.voyager_service import VoyagerService
 
 
@@ -198,21 +200,26 @@ def test_invalid_scope_and_status_are_rejected(tmp_path):
 def test_desktop_frontier_commands_route_through_public_seam(tmp_path):
     from hostrun.desktop_bridge import frontier_command as bridge
 
-    service = FrontierService(tmp_path, token="s")
-    kind, created = bridge(service, {"action": "frontier_create", **frontier_command()}, token="s")
-    assert kind == "frontier_view" and created["status"] == "following"
-    kind, view = bridge(service, {"action": "frontier_open",
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    kind, pending = bridge(librarian, {"action": "frontier_create", **frontier_command()}, token="s")
+    assert kind == "frontier_confirmation" and pending["status"] == "pending"
+    assert librarian.list_frontiers(token="s") == []
+    _, result = bridge(librarian, {"action": "frontier_confirm", "operation_id": pending["operation_id"],
+                                  "choice": "confirm"}, token="s")
+    created = result["results"][0]
+    assert created["status"] == "following"
+    kind, view = bridge(librarian, {"action": "frontier_open",
                                   "frontier_id": created["frontier_id"]}, token="s")
     assert kind == "frontier_view" and view == created
-    kind, view = bridge(service, {"action": "frontier_open",
+    kind, view = bridge(librarian, {"action": "frontier_open",
                                   "frontier_id": created["frontier_id"],
                                   "operation_id": "open-frontier"}, token="s")
     assert kind == "frontier_view"
     assert view == {**created, "read_operation_id": "open-frontier"}
-    kind, listed = bridge(service, {"action": "frontier_list"}, token="s")
+    kind, listed = bridge(librarian, {"action": "frontier_list"}, token="s")
     assert kind == "frontier_list" and listed[0]["frontier_id"] == created["frontier_id"]
     with pytest.raises(CommandError):
-        bridge(service, {"action": "frontier_unknown"}, token="s")
+        bridge(librarian, {"action": "frontier_unknown"}, token="s")
 
 
 def test_pause_after_plan_stops_provider_execution(tmp_path):
@@ -248,23 +255,30 @@ def test_pause_after_plan_stops_provider_execution(tmp_path):
 def test_desktop_replayed_update_returns_its_original_committed_view(tmp_path):
     from hostrun.desktop_bridge import frontier_command as bridge
 
-    service = FrontierService(tmp_path, token="s")
-    _, created = bridge(service, {"action": "frontier_create", **frontier_command()}, token="s")
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+
+    def apply(command):
+        kind, pending = bridge(librarian, command, token="s")
+        assert kind == "frontier_confirmation"
+        _, result = bridge(librarian, {"action": "frontier_confirm", "operation_id": pending["operation_id"],
+                                      "choice": "confirm"}, token="s")
+        return result["results"][0]
+
+    created = apply({"action": "frontier_create", **frontier_command()})
     pause = {"action": "frontier_update", "schema_version": 1, "operation_id": "upd-pause",
              "frontier_id": created["frontier_id"], "expected_version": created["version"],
              "status": "paused"}
-    _, paused = bridge(service, pause, token="s")
+    paused = apply(pause)
     assert (paused["version"], paused["status"], paused["operation_id"]) == (2, "paused", "upd-pause")
 
     follow = {"action": "frontier_update", "schema_version": 1, "operation_id": "upd-follow",
               "frontier_id": created["frontier_id"], "expected_version": paused["version"],
               "status": "following"}
-    _, followed = bridge(service, follow, token="s")
+    followed = apply(follow)
     assert followed["version"] == 3 and followed["status"] == "following"
 
-    kind, replayed = bridge(service, pause, token="s")
-    assert kind == "frontier_view"
-    assert replayed == paused
+    assert apply(pause) == paused
+    assert librarian.view_frontier(created["frontier_id"], token="s") == followed
 
 
 def test_resolve_scope_is_the_public_knowledge_provider_entry(tmp_path):

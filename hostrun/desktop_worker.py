@@ -24,6 +24,8 @@ class DesktopWorker:
         operation = event.get("action")
         if event.get("type") == "source_request":
             return self._source_request(librarian, operation, event, token=token)
+        if event.get("type") == "tracking_request":
+            return self._tracking_request(librarian, operation, event, token=token)
         if operation == "list":
             return librarian.list(token=token)
         if operation == "view":
@@ -82,6 +84,29 @@ class DesktopWorker:
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
+    def _tracking_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        entity = event.get("entity")
+        if entity not in ("frontier", "progress"):
+            raise CommandError("invalid_command", "请选择前沿或进展")
+        frontier_id = event.get("frontierId")
+        if operation == "list":
+            return (librarian.list_frontiers(token=token) if entity == "frontier"
+                    else librarian.list_progress(frontier_id, token=token))
+        if operation == "view" and entity == "frontier":
+            return librarian.view_frontier(frontier_id, token=token)
+        fields, request_id = event.get("fields"), event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的前沿或进展变更")
+        command = {**fields, "operation_id": request_id, "schema_version": 1}
+        if frontier_id is not None:
+            command["frontier_id"] = frontier_id
+        submit = librarian.request_frontier if entity == "frontier" else librarian.request_progress
+        card = submit(operation, command, token=token, origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
     def run_agent(self, task, session_id=None, history=None):
         completed_text = None
         failure = None
@@ -120,7 +145,7 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') in ('term_request', 'source_request'):
+                if event.get('type') in ('term_request', 'source_request', 'tracking_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)
@@ -225,7 +250,8 @@ class DesktopWorker:
             from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
                                                 read_report_response, report_evidence)
             from hostrun.editor_synthesis import commit_synthesis, confirmed_knowledge, prepare_synthesis, synthesis_input
-            from hostrun.frontier import FrontierService
+            from hostrun.knowledge_cards import KnowledgeCardService
+            from hostrun.librarian import Librarian
             from hostrun.editor_preferences import PreferenceService
 
             reports = ReportService(self.home, token=self.service_token)
@@ -288,7 +314,8 @@ class DesktopWorker:
                 versions['preferences'] = [{**row, 'key': key} for key, row in effective.items()]
                 if frontier_id:
                     versions['writing_frontier_id'] = frontier_id
-                    frontier = FrontierService(self.home, token=self.service_token).view(frontier_id, token=self.service_token)
+                    frontier = Librarian(KnowledgeCardService(self.home, token=self.service_token),
+                                         token=self.service_token).view_frontier(frontier_id, token=self.service_token)
                     editor_context['frontier'] = {key: frontier[key] for key in ('frontier_id', 'version', 'question')}
                     versions['knowledge'].append({'kind': 'frontier', 'id': frontier_id, 'version': frontier['version']})
             if editor_context is not None and rewrite:

@@ -295,6 +295,21 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       type: "source_request", action: p.action, sourceId: p.sourceId, fields: p.fields ? JSON.parse(p.fields) : {},
     }, signal),
   });
+  const frontierTracking = defineTool({
+    name: "frontier_tracking", label: "Library Bulletin Board frontiers",
+    description: "List or view tracked frontiers and list their progress. Create a frontier with JSON fields question only, or include existing scope settings. For progress supply frontierId and fields content and source_ids (a list of Archive source IDs). For update or delete supply expected_version, and progress_id for progress. Changes require Explorer confirmation.",
+    parameters: Type.Object({
+      entity: Type.Union([Type.Literal("frontier"), Type.Literal("progress")]),
+      action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("create"),
+        Type.Literal("update"), Type.Literal("delete")]),
+      frontierId: Type.Optional(Type.String()),
+      fields: Type.Optional(Type.String({maxLength: 24000})),
+    }),
+    execute: (callId, p, signal) => requestLibrary(callId, {
+      type: "tracking_request", entity: p.entity, action: p.action, frontierId: p.frontierId,
+      fields: p.fields ? JSON.parse(p.fields) : {},
+    }, signal),
+  });
   if (voyager || editor || keeper) {
     const ownerInput = createInterface({ input: process.stdin, crlfDelay: Infinity });
     const context = await new Promise<string>((accept, reject) => {
@@ -308,9 +323,9 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     process.stdin.pause();
     tools.push(defineTool({ name: keeper ? "keeper_context" : editor ? "editor_context" : "voyager_context", label: "Saved source evidence", description: "Read the bound evidence and limitations.", parameters: Type.Object({}), execute: async () => result(context) }));
   } else if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
-  else tools.push(delegate, dictionary, archiveSource);
+  else tools.push(delegate, dictionary, archiveSource, frontierTracking);
   const allowedTools = keeper ? tools.filter(t => t.name === "keeper_context") : editor ? tools.filter(t => t.name === "editor_context") : voyager ? tools.filter(t => t.name === "voyager_context") :
-    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "dictionary", "archive_source"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -447,7 +462,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
           for (const call of calls) {
             if (after.some(message => message.role === "toolResult" && message.toolCallId === call.id)) continue;
             const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-            if (!tool || !["read_file", "delegate", "dictionary", "archive_source", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
+            if (!tool || !["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
             const output = await tool.execute(call.id, call.arguments, undefined);
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });
           }

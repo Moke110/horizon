@@ -7,6 +7,7 @@
 | [DeliveryPanel.tsx](DeliveryPanel.tsx) | Shows delivery attempts and guides recovery when the outcome is unknown. |
 | [EditorFeedbackPreview.tsx](EditorFeedbackPreview.tsx) | Report feedback shown with its original task, version and paragraph at the owning workflow. |
 | [EditorPreferences.tsx](EditorPreferences.tsx) | Writing style selection, saved preferences and feedback candidates. |
+| [FrontierTracking.tsx](FrontierTracking.tsx) | Displays Bulletin Board frontiers, progress, sources and Voyager history. |
 | [FeishuSetup.tsx](FeishuSetup.tsx) | Optional Feishu CLI install and bot setup panel. |
 | [EditorReports.tsx](EditorReports.tsx) | Selects report sources and reads saved reports, citations and pinned snapshots. |
 | [index.html](index.html) | Desktop renderer document. |

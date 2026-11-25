@@ -49,7 +49,7 @@ class ArchiveSources:
     def view(self, source_id):
         with self._connect() as db:
             self._ensure_initialized(db)
-            return self._read(db, source_id)
+            return self.read_in_transaction(db, source_id)
 
     def open(self, source_id, *, token, task_id=None):
         reference = self.view(source_id)
@@ -67,7 +67,7 @@ class ArchiveSources:
         return self._materials.pdf_original(reference["material_id"], token=token)
 
     @staticmethod
-    def _read(db, source_id):
+    def read_in_transaction(db, source_id):
         if not isinstance(source_id, str):
             raise CommandError("invalid_command", "需要资料库来源标识")
         row = db.execute("SELECT record FROM library_archive_sources WHERE source_id=?",
@@ -99,10 +99,8 @@ class ArchiveSources:
         if action == "create":
             record = {"source_id": str(uuid.uuid4()), "version": 0, "status": "active"}
         else:
-            record = self._read(db, command.get("source_id"))
-            if db.execute("SELECT 1 FROM librarian_term_locks WHERE term_id=?",
-                          ("archive:" + record["source_id"],)).fetchone():
-                raise CommandError("source_locked", "资料库来源正在等待确认")
+            record = self.read_in_transaction(db, command.get("source_id"))
+            self.check_write_lock(db, record["source_id"])
             expected = command.get("expected_version")
             if type(expected) is not int or record["version"] != expected:
                 raise CommandError("version_conflict", "资料库来源版本已变更")
@@ -122,6 +120,12 @@ class ArchiveSources:
         record["version"] += 1
         self._save(db, record)
         return record
+
+    @staticmethod
+    def check_write_lock(db, source_id):
+        if db.execute("SELECT 1 FROM librarian_term_locks WHERE term_id=?",
+                      ("archive:" + source_id,)).fetchone():
+            raise CommandError("source_locked", "资料库来源正在等待确认")
 
     @staticmethod
     def _drop_references(db, owner):

@@ -3,6 +3,7 @@
 import json
 import time
 
+from hostrun import frontier_progress
 from hostrun.agent_service import CommandError
 from hostrun.library import Library
 
@@ -10,10 +11,9 @@ from hostrun.library import Library
 class Librarian:
     confirmation_lifetime = 72 * 60 * 60
 
-    def __init__(self, cards, *, token, clock=time.time):
-        self.library = Library(cards)
+    def __init__(self, cards, *, token, clock=time.time, frontiers=None):
+        self.library = Library(cards, token=token, frontiers=frontiers, clock=clock)
         self.clock = clock
-        self.library.authorize(token)
         with self.library.connect() as db:
             self.library.initialize_questions(db)
 
@@ -25,6 +25,46 @@ class Librarian:
 
     def view(self, term_id, *, token):
         return self.library.view(term_id, token=token)
+
+    def list_frontiers(self, *, token):
+        return self.library.list_frontiers(token=token)
+
+    def view_frontier(self, frontier_id, *, token):
+        return self.library.view_frontier(frontier_id, token=token)
+
+    def list_progress(self, frontier_id, *, token):
+        return self.library.list_progress(frontier_id, token=token)
+
+    @staticmethod
+    def read_frontier_in_transaction(db, frontier_id):
+        return Library.read_frontier_in_transaction(db, frontier_id)
+
+    @staticmethod
+    def query_frontiers_in_transaction(db):
+        return Library.query_frontiers_in_transaction(db)
+
+    def apply_approved_frontier(self, db, action, command, *, token):
+        """Persist a Frontier change already approved as part of a Keeper group."""
+        return self.library.apply_frontier(db, action, command, token=token, now=self.clock(), origin="keeper")
+
+    def notify_frontier(self, frontier):
+        self.library.notify_frontier(frontier)
+
+    @staticmethod
+    def resolve_frontier_in_transaction(db, frontier_id, *, expected_version=None):
+        return Library.resolve_frontier_in_transaction(db, frontier_id, expected_version=expected_version)
+
+    def request_frontier(self, action, command, *, token, origin):
+        return self._request_tracking("frontier", action, command, token=token, origin=origin)
+
+    def request_progress(self, action, command, *, token, origin):
+        return self._request_tracking("progress", action, command, token=token, origin=origin)
+
+    def _request_tracking(self, entity, action, command, *, token, origin):
+        if not isinstance(command, dict):
+            raise CommandError("invalid_command", "需要前沿或进展变更内容")
+        return self.request_batch(command.get("operation_id"), [(action, command)],
+                                  token=token, origin=origin, entity=entity)
 
     def list_sources(self, *, token):
         self.library.authorize(token)
@@ -162,7 +202,9 @@ class Librarian:
             raise CommandError("invalid_command", "确认请求需要来源、标识和 1 至 100 项变更")
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
-                   "source": ("create", "update", "delete")}.get(entity, ())
+                   "source": ("create", "update", "delete"),
+                   "frontier": ("create", "update", "delete"),
+                   "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
             if not isinstance(change, (list, tuple)) or len(change) != 2 \
                     or change[0] not in actions \
@@ -181,9 +223,12 @@ class Librarian:
                 if row[:2] != (origin, encoded):
                     raise CommandError("operation_conflict", "确认请求标识已使用")
                 return json.loads(row[2])
-            if entity == "source":
+            if entity in ("source", "progress"):
                 self.library.archive.initialize(db)
+            if entity == "progress":
+                frontier_progress.initialize(db)
             term_ids = set()
+            summaries = []
             db.execute("SAVEPOINT librarian_review")
             try:
                 for action, command in changes:
@@ -199,6 +244,17 @@ class Librarian:
                         proposed = self.library.archive.apply(db, action, command)
                         if action != "create":
                             term_ids.add("archive:" + proposed["source_id"])
+                    elif entity == "frontier":
+                        proposed, _ = self.library.apply_frontier(db, action, command, token=token, now=now)
+                        summaries.append(proposed["question"])
+                        if action != "create":
+                            term_ids.add("frontier:" + proposed["frontier_id"])
+                    elif entity == "progress":
+                        proposed = self.library.apply_progress(db, action, command, now=now)
+                        summaries.append(proposed["content"])
+                        term_ids.add("frontier:" + proposed["frontier_id"])
+                        if action != "delete":
+                            term_ids.update("archive:" + source_id for source_id in proposed["source_ids"])
                     else:
                         term_id = command.get("card_id")
                         if action != "create" and isinstance(term_id, str):
@@ -212,17 +268,20 @@ class Librarian:
                     "changes": normalized}
             if entity != "term":
                 card["entity"] = entity
+            if summaries:
+                card["summaries"] = summaries
             db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
                        (request_id, origin, encoded, card["expires_at"], json.dumps(card)))
             db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
                            [(term_id, request_id) for term_id in term_ids])
         return card
 
-    def decide(self, request_id, choice, *, token, origin):
+    def decide(self, request_id, choice, *, token, origin, expected_entity=None):
         self.library.authorize(token)
         if choice not in ("confirm", "reject"):
             raise CommandError("invalid_command", "无效的确认选项")
         notifications = []
+        frontier_notifications = []
         with self.library.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             now = self.clock()
@@ -232,6 +291,8 @@ class Librarian:
             if not row:
                 raise CommandError("not_found", "本会话没有该确认请求")
             card = json.loads(row[0])
+            if expected_entity is not None and card.get("entity", "term") != expected_entity:
+                raise CommandError("not_found", "本会话没有该类型的确认请求")
             if card["status"] != "pending":
                 return card
             db.execute("DELETE FROM librarian_term_locks WHERE request_id=?", (request_id,))
@@ -242,6 +303,13 @@ class Librarian:
                         results.append(self.library.apply_question(db, action, command, now=now))
                     elif card.get("entity") == "source":
                         results.append(self.library.archive.apply(db, action, command))
+                    elif card.get("entity") == "frontier":
+                        frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
+                        results.append(frontier)
+                        if changed:
+                            frontier_notifications.append(frontier)
+                    elif card.get("entity") == "progress":
+                        results.append(self.library.apply_progress(db, action, command, now=now))
                     else:
                         term, changed = self.library.apply(db, action, command, token=token, now=now)
                         results.append(term)
@@ -252,4 +320,6 @@ class Librarian:
                        (json.dumps(card), request_id))
         for term in notifications:
             self.library.notify_committed(term)
+        for frontier in frontier_notifications:
+            self.library.notify_frontier(frontier)
         return card

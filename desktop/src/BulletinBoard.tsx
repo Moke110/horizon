@@ -11,8 +11,9 @@ export type BulletinLink = {
   convergence:Exclude<Convergence,'resolved'>;
 };
 
-export function BulletinBoard({links,terms,detailHost,openDetail,send}:{
+export function BulletinBoard({links,terms,detailHost,openDetail,send,children}:{
   links:BulletinLink[];
+  children?:React.ReactNode;
   terms:CardSummary[];
   detailHost:HTMLElement|null;
   openDetail:()=>void;
@@ -41,6 +42,7 @@ export function BulletinBoard({links,terms,detailHost,openDetail,send}:{
         {termLinkLabels(link.title,terms)} <small>{link.kind==='term'?'术语':'百科问题'} · {convergenceLabel(link.convergence,link.kind)}</small>
       </button>
     </li>)}</ul>:<p>暂无待解决的术语和问题。</p>}
+    {children}
     {detailHost&&selection&&createPortal(
       selection.kind==='term'?<article aria-label="词典术语"><TermContents term={selection.value}/></article>:
         <article aria-label="百科问题"><QuestionContents question={selection.value} terms={terms}
