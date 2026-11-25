@@ -22,7 +22,6 @@ import pytest
 from hostrun import distribution, release
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 INDEX_PATH = ROOT / "releases" / "index.json"
 REQUIREMENTS = ROOT / "requirements-release.txt"
 FIXED_SHA = "a" * 64
@@ -848,237 +847,6 @@ def test_reproducibility_cli_fails_and_prints_both_hashes(tmp_path, capsys):
     assert "reproducibility check failed" in captured.err
 
 
-# ------------------------------------------------------- CI workflow contract
-def _workflow() -> dict:
-    import yaml
-
-    assert WORKFLOW.is_file(), "the release workflow is missing"
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-
-
-def _steps(workflow: dict) -> list[dict]:
-    return workflow["jobs"]["release"]["steps"]
-
-
-def _run_text(steps: list[dict]) -> str:
-    return "\n".join(str(step.get("run") or "") for step in steps)
-
-
-def test_workflow_parses_and_is_tag_triggered_on_a_windows_runner():
-    workflow = _workflow()
-    triggers = workflow["on"]
-    assert triggers["push"]["tags"] == ["v*"]
-    dispatch = triggers["workflow_dispatch"]
-    assert "tag" in dispatch["inputs"]
-    assert dispatch["inputs"]["dry_run"]["type"] == "boolean"
-    assert workflow["permissions"]["contents"] == "write"
-    job = workflow["jobs"]["release"]
-    assert job["runs-on"] == "windows-latest"
-
-    steps = _steps(workflow)
-    checkout = next(
-        step for step in steps if str(step.get("uses", "")).startswith("actions/checkout")
-    )
-    assert checkout["with"]["fetch-depth"] == 0
-    setup = next(
-        step
-        for step in steps
-        if str(step.get("uses", "")).startswith("actions/setup-python")
-    )
-    assert str(setup["with"]["python-version"]) == "3.13"
-
-
-def test_workflow_derives_identity_with_the_tested_module_not_inline_shell():
-    text = _run_text(_steps(_workflow()))
-    assert "hostrun.release" in text
-    assert " tag " in text or '"tag"' in text or "tag --tag" in text
-
-
-def test_workflow_assembles_the_runtime_from_pinned_downloads():
-    text = _run_text(_steps(_workflow()))
-    assert "python.org" in text
-    assert "embed-amd64.zip" in text
-    assert "pip download" in text
-    assert "--only-binary=:all:" in text
-    assert "requirements-release.txt" in text
-    assert "scripts/prepare_runtime.py" in text
-    assert "--require-module yaml" in text
-    assert "--require-module pypdf" in text
-
-
-def test_workflow_builds_with_explicit_inputs_and_a_bundled_runtime():
-    workflow = _workflow()
-    text = _run_text(_steps(workflow))
-    assert "hostrun.distribution" in text
-    assert "--runtime-dir" in text
-    assert "--built-from-commit" in text
-    assert "github.sha" in text
-    for fragment in (
-        "--os windows",
-        "--arch x86_64",
-        "--python",
-        "--dsh '*'",
-    ):
-        assert fragment in text
-    assert workflow["env"]["DIST_REPRO_DIR"] == "dist-repro"
-
-
-def test_workflow_verifies_layout_and_reproducibility():
-    text = _run_text(_steps(_workflow()))
-    assert "release verify-artifact" in text
-    assert "release check-reproducible" in text
-
-
-def test_workflow_creates_stable_and_prerelease_releases_conditionally():
-    steps = _steps(_workflow())
-    create_steps = [step for step in steps if "gh release create" in _run_text([step])]
-    assert len(create_steps) == 2
-    stable = next(
-        step for step in create_steps if "stable" in str(step.get("if", ""))
-    )
-    prerelease = next(
-        step for step in create_steps if "prerelease" in str(step.get("if", ""))
-    )
-    assert "--prerelease" not in _run_text([stable])
-    assert "--prerelease" in _run_text([prerelease])
-    for step in create_steps:
-        assert "inputs.dry_run" in str(step.get("if", ""))
-        assert "GH_TOKEN" in step.get("env", {})
-        assert ".zip" in _run_text([step])
-        assert ".digest.json" in _run_text([step])
-        assert "manifest.json" in _run_text([step])
-
-
-def test_workflow_updates_the_index_and_commits_it_to_main_with_a_retry():
-    steps = _steps(_workflow())
-    text = _run_text(steps)
-    assert "scripts/update_release_index.py" in text
-    assert "release upload" in text
-    assert "releases/index.json" in text
-    assert "github-actions[bot]" in text
-    assert "git push origin HEAD:main" in text
-    assert "merge-base --is-ancestor" in text
-    update = next(
-        step
-        for step in steps
-        if "scripts/update_release_index.py" in _run_text([step])
-    )
-    assert "inputs.dry_run" in str(update.get("if", ""))
-
-
-def test_workflow_index_retry_resolves_the_tag_once_and_rebuilds_from_origin_main():
-    steps = _steps(_workflow())
-    update = next(
-        step
-        for step in steps
-        if "scripts/update_release_index.py" in _run_text([step])
-    )
-    text = str(update["run"])
-
-    # The tag commit is evidence about the artifact, not about whatever HEAD is
-    # after a merge/reset, so resolve it exactly once before the attempt loop.
-    assert text.count("$tagCommit =") == 1
-    assert text.index("$tagCommit =") < text.index("for ($attempt")
-
-    # Every attempt starts from a clean origin/main, then regenerates the index;
-    # a rejected push must never retry on top of the previous local commit.
-    reset_at = text.index("git reset --hard origin/main")
-    regenerate_at = text.index("scripts/update_release_index.py")
-    assert reset_at < regenerate_at
-    assert "git merge --ff-only origin/main" not in text
-    assert "$head = (git rev-parse HEAD)" not in text
-
-    # Ancestry is checked against the precomputed tag commit, after the reset
-    # and regeneration, and before the commit is pushed.
-    ancestry = text.index("git merge-base --is-ancestor $tagCommit origin/main")
-    commit_at = text.index('git commit -m "chore(release)')
-    assert reset_at < regenerate_at < ancestry < commit_at
-    assert "git merge-base --is-ancestor $head origin/main" not in text
-
-    # At most one retry, and the final failure still names the Release and the
-    # manual index step.
-    assert "for ($attempt = 1; $attempt -le 2; $attempt++)" in text
-    assert "-le 3" not in text
-    assert "$releaseUrl" in text
-    assert "update releases/index.json manually" in text
-
-
-def test_workflow_runs_the_package_install_smoke_after_building_it():
-    steps = _steps(_workflow())
-    build_at = next(
-        index
-        for index, step in enumerate(steps)
-        if "hostrun.distribution" in _run_text([step])
-    )
-    smoke_at = next(
-        index
-        for index, step in enumerate(steps)
-        if "scripts/ci_install_smoke.py" in _run_text([step])
-    )
-    assert smoke_at > build_at, "the install smoke must run on the built artifact"
-
-    assert (ROOT / "scripts" / "ci_install_smoke.py").is_file()
-    text = _run_text([steps[smoke_at]])
-    for fragment in (
-        "--zip",
-        "--code",
-        "--archive",
-        "--skills-target",
-        "--check-wrapper",
-        "install-smoke",
-        "RUNNER_TEMP",
-    ):
-        assert fragment in text
-    # The wrapper check must fail the job, not merely print a reason.
-    assert "throw" in text
-
-
-def test_workflow_dry_run_still_builds_and_smokes_but_publishes_nothing():
-    """workflow_dispatch dry_run must build + smoke, and gate every publish step."""
-    steps = _steps(_workflow())
-    build_at = next(
-        index
-        for index, step in enumerate(steps)
-        if "hostrun.distribution" in _run_text([step])
-    )
-    smoke_at = next(
-        index
-        for index, step in enumerate(steps)
-        if "scripts/ci_install_smoke.py" in _run_text([step])
-    )
-    publish_steps = [
-        (index, step)
-        for index, step in enumerate(steps)
-        if any(
-            marker in _run_text([step])
-            for marker in (
-                "gh release create",
-                "scripts/update_release_index.py",
-                "release upload",
-            )
-        )
-    ]
-    assert publish_steps, "the workflow has no publish steps to gate"
-    # Build and smoke have no condition: a dry run exercises them.
-    assert not steps[build_at].get("if"), "the build must run on a dry run"
-    assert not steps[smoke_at].get("if"), "the smoke test must run on a dry run"
-    # Every publish step is gated on dry_run (and on non-dispatch tag runs).
-    for _, step in publish_steps:
-        condition = str(step.get("if") or "")
-        assert "inputs.dry_run" in condition
-        assert "github.event_name" in condition
-    # Publishing happens only after the build + smoke proved the artifact.
-    assert max(index for index, _ in publish_steps) > smoke_at > build_at
-
-
-def test_workflow_pins_actions_by_major_tag_with_a_documented_follow_up():
-    text = WORKFLOW.read_text(encoding="utf-8")
-    assert "SHA-pinning" in text
-    # No secret is consumed besides the workflow token.
-    assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", text)) == {"GITHUB_TOKEN"}
-
-
-# ------------------------------------------------------------ repository files
 def test_committed_release_index_is_valid():
     """The committed index must validate whether or not releases exist yet."""
     payload = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
@@ -1103,15 +871,15 @@ def test_release_requirements_pin_exact_versions():
         assert ">" not in version and "<" not in version
 
 
-def test_release_contract_documents_tag_channel_index_and_ci():
+def test_release_contract_documents_desktop_updates_and_historical_index():
     contract = (ROOT / "contracts" / "release.md").read_text(encoding="utf-8")
     for fragment in (
         "releases/index.json",
-        "vX.Y.Z",
+        "Horizon.cmd",
         "prerelease",
         "artifact_sha256",
         "schema_version",
-        "runtime",
+        "无需发布标签",
     ):
         assert fragment in contract
 
