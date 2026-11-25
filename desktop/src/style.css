@@ -481,3 +481,7 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .local-html img { display: block; max-width: 100%; height: auto; }
 .html-picker { display: block; margin-block: 8px; }
 .html-picker input { width: auto; margin-left: 8px; }
+
+.dictionary-workbench { grid-template-columns: minmax(0, 1fr); }
+.dictionary-workbench .workbench-list { border-right: 0; }
+.dictionary-detail .workbench-detail-head { padding-inline: 0; }
