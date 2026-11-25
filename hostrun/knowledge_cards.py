@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hostrun.agent_service import CommandError
+from hostrun.convergence import current as current_convergence, validate as validate_convergence
 from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 from hostrun.voyager_materials import MaterialsService
@@ -117,6 +118,7 @@ class KnowledgeCardService:
         "editable": (("title",), ("content",), ("aliases",),
                      ("recall_terms",), ("sources",), ("relations",),
                      ("questionable",), ("convergence",)),
+        "defaults": {("convergence",): current_convergence},
     }
 
     def __init__(self, home, *, token, clock=time.time, on_change=None, materials=None):
@@ -257,8 +259,7 @@ class KnowledgeCardService:
         if "questionable" in command:
             fields["questionable"] = _validate_questionable(command["questionable"])
         if "convergence" in command:
-            from hostrun.convergence import validate
-            fields["convergence"] = validate(command["convergence"])
+            fields["convergence"] = validate_convergence(command["convergence"])
             fields["questionable"] = fields["convergence"] != "resolved"
         return fields
 

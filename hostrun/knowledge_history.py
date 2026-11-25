@@ -45,7 +45,11 @@ def validate_reason(value, *, code):
     return value
 
 
-def get_path(record, path):
+def get_path(record, path, defaults=None):
+    # A field added after the receipt was written can have an owner-defined
+    # value derived from the old snapshot without rewriting receipt history.
+    if defaults and path in defaults and path[0] not in record:
+        return defaults[path](record)
     node = record
     for key in path:
         node = node[key]
@@ -221,14 +225,15 @@ class KnowledgeHistoryService:
         """Inverse patch per owner-defined field, preserving unrelated edits."""
         changes = []
         conflict = False
+        defaults = meta.get("defaults")
         for path in meta["editable"]:
-            old = get_path(before, path)
-            new = get_path(after, path)
-            now = get_path(current, path)
+            old = get_path(before, path, defaults)
+            new = get_path(after, path, defaults)
+            now = get_path(current, path, defaults)
             if old == new:
                 continue  # The selected edit did not touch this field.
             touched_later = any(item["before"] is None or
-                                get_path(item["before"], path) != get_path(item["after"], path)
+                                get_path(item["before"], path, defaults) != get_path(item["after"], path, defaults)
                                 for item in later)
             if now == old:
                 proposed, reverted, flagged = now, True, False
@@ -249,16 +254,17 @@ class KnowledgeHistoryService:
         projected_before = project(before, removed)
         projected_after = project(after, removed)
         projected_current = project(current, removed)
+        defaults = service.HISTORY.get("defaults")
         displayed = []
         for change in changes:
             path = change["path"]
             displayed.append({
                 "field": ".".join(path),
-                "before": get_path(projected_before, path),
-                "after": get_path(projected_after, path),
-                "current": get_path(projected_current, path),
-                "proposed": get_path(projected_current, path)
-                if change["reverted"] else get_path(projected_before, path),
+                "before": get_path(projected_before, path, defaults),
+                "after": get_path(projected_after, path, defaults),
+                "current": get_path(projected_current, path, defaults),
+                "proposed": get_path(projected_current, path, defaults)
+                if change["reverted"] else get_path(projected_before, path, defaults),
                 "conflict": change["conflict"],
             })
         return displayed

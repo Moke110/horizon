@@ -746,3 +746,20 @@ def test_reason_is_validated_for_all_owners_without_legacy_invention(tmp_path):
                                  f"history-reason-{kind}")
         assert kind_name == "knowledge_history"
         assert page["entries"][0]["reason"] is None
+
+
+def test_undo_uses_legacy_term_convergence_without_rewriting_history(tmp_path):
+    services = owners(tmp_path)
+    cards = services["card"]
+    before = create_card(cards, title="测试术语", questionable=True)
+    after = update_card(cards, before, "resolve", convergence="resolved")
+    _, preview = bridge(services, "knowledge_undo_preview", "card",
+                        before["card_id"], "preview-convergence", target_version=after["version"])
+    assert preview["can_undo"]
+    status, = [item for item in preview["changes"] if item["field"] == "convergence"]
+    assert (status["before"], status["after"]) == ("unresolved", "resolved")
+    bridge(services, "knowledge_undo", "card", before["card_id"], "undo-convergence",
+           target_version=after["version"], expected_version=after["version"],
+           preview_token=preview["preview_token"])
+    assert cards.view(before["card_id"], token="s")["convergence"] == "unresolved"
+    assert create_card(cards, title="测试术语", questionable=True) == before
