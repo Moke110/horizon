@@ -1,15 +1,17 @@
 import React,{useEffect,useRef,useState} from 'react';
 
-export type CardSummary={card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;updated_at:number};
+import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
+
+export type CardSummary={card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
 type SourceInput={material_id:string;excerpt:string;locator:string};
 type SavedSource=SourceInput&{title:string;material_version:number;content_hash:string;status?:'removed'};
 type MaterialSummary={material_id:string;title:string};
-export type KnowledgeCard={schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];recall_terms:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;known:boolean;status:string;created_at:number;updated_at:number};
+export type KnowledgeCard={schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];recall_terms:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};
 export type CardConflictDetails={expected_version?:number;current_version?:number;current?:KnowledgeCard;submitted?:Record<string,unknown>;changed?:string[]};
 export type CardViewEvent={source:'view';operation_id?:string;nonce:string};
 export type CardCommandError={operation_id?:string;code?:string;message?:string;details?:CardConflictDetails};
 
-type CardDraft={title:string;content:string;aliases:string;recallTerms:string;sources:SourceInput[];relations:string[];questionable:boolean};
+type CardDraft={title:string;content:string;aliases:string;recallTerms:string;sources:SourceInput[];relations:string[];convergence:Convergence};
 export type CardDiffRow={field:string;label:string;mine:string;theirs:string};
 
 const statusLabel:Record<string,string>={active:'有效',archived:'已归档'};
@@ -18,7 +20,7 @@ const provenanceLabel=(card:{provenance?:string})=>card.provenance==='sourced'?'
 const draftFrom=(card:KnowledgeCard):CardDraft=>({
   title:card.title,content:card.content,aliases:card.aliases.join('\n'),recallTerms:card.recall_terms.join('\n'),
   sources:card.sources.map(({material_id,excerpt,locator})=>({material_id,excerpt,locator})),
-  relations:card.relations,questionable:card.questionable,
+  relations:card.relations,convergence:card.convergence??(card.questionable?'unresolved':'resolved'),
 });
 const draftFields=(draft:CardDraft,materialName:(id:string)=>string,cardName:(id:string)=>string) => [
   {field:'title',label:'标题',mine:draft.title,raw:draft.title},
@@ -27,7 +29,7 @@ const draftFields=(draft:CardDraft,materialName:(id:string)=>string,cardName:(id
   {field:'recall_terms',label:'检索词',mine:lines(draft.recallTerms).join('\n'),raw:lines(draft.recallTerms)},
   {field:'sources',label:'来源',mine:draft.sources.map(s=>[materialName(s.material_id),s.locator,s.excerpt].join(' · ')).join('、'),raw:draft.sources},
   {field:'relations',label:'关系',mine:draft.relations.map(cardName).join('、'),raw:draft.relations},
-  {field:'questionable',label:'存疑',mine:draft.questionable?'是':'否',raw:draft.questionable},
+  {field:'convergence',label:'收敛状态',mine:convergenceLabel(draft.convergence,'term'),raw:draft.convergence},
 ];
 const sameValue=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 /** Field-by-field difference between a local draft and the latest committed card. */
@@ -46,7 +48,7 @@ type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:strin
 
 export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted,termMode=false}:{cards:CardSummary[];materials:MaterialSummary[];selected:KnowledgeCard|null;viewEvent:CardViewEvent|null;commandError:CardCommandError|null;onCommand:(c:unknown)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;termMode?:boolean;onCommitted?:(card_id:string,version:number)=>void}){
   const [title,setTitle]=useState(''),[content,setContent]=useState(''),[aliases,setAliases]=useState(''),[recallTerms,setRecallTerms]=useState('');
-  const [sources,setSources]=useState<SourceInput[]>([]),[relations,setRelations]=useState<string[]>([]),[questionable,setQuestionable]=useState(false);
+  const [sources,setSources]=useState<SourceInput[]>([]),[relations,setRelations]=useState<string[]>([]),[convergence,setConvergence]=useState<Convergence>('resolved');
   const [editing,setEditing]=useState<{card_id:string;version:number}|null>(null);
   const [latest,setLatest]=useState<KnowledgeCard|null>(null);
   const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
@@ -56,9 +58,9 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const committed=useRef(onCommitted);
   committed.current=onCommitted;
   const send=(operation_id:string,action:string,extra:object={})=>onCommand({action,schema_version:1,operation_id,...extra});
-  const draft=():CardDraft=>({title,content,aliases,recallTerms,sources,relations,questionable});
-  const clearDraft=()=>{setEditing(null);setLatest(null);setTitle('');setContent('');setAliases('');setRecallTerms('');setSources([]);setRelations([]);setQuestionable(false);setReason('');};
-  const populate=(card:KnowledgeCard)=>{const next=draftFrom(card);setEditing({card_id:card.card_id,version:card.version});setTitle(next.title);setContent(next.content);setAliases(next.aliases);setRecallTerms(next.recallTerms);setSources(next.sources);setRelations(next.relations);setQuestionable(next.questionable);setLatest(null);};
+  const draft=():CardDraft=>({title,content,aliases,recallTerms,sources,relations,convergence});
+  const clearDraft=()=>{setEditing(null);setLatest(null);setTitle('');setContent('');setAliases('');setRecallTerms('');setSources([]);setRelations([]);setConvergence('resolved');setReason('');};
+  const populate=(card:KnowledgeCard)=>{const next=draftFrom(card);setEditing({card_id:card.card_id,version:card.version});setTitle(next.title);setContent(next.content);setAliases(next.aliases);setRecallTerms(next.recallTerms);setSources(next.sources);setRelations(next.relations);setConvergence(next.convergence);setLatest(null);};
   const load=(card:Pick<CardSummary,'card_id'>)=>{
     const operation_id=crypto.randomUUID();
     pending.current={kind:'load',card_id:card.card_id,operation_id};
@@ -81,7 +83,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const save=()=>{
     if(loading||saving||latest)return;
     if(staleDraft){setMessage('当前草稿属于另一条知识卡片；请重新载入本记录后再保存。');return;}
-    const payload={title,content,aliases:lines(aliases),recall_terms:lines(recallTerms),sources,relations,questionable,...(reason.trim()?{reason:reason.trim()}:{})};
+    const payload={title,content,aliases:lines(aliases),recall_terms:lines(recallTerms),sources,relations,convergence,...(reason.trim()?{reason:reason.trim()}:{})};
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,card_id:editing?.card_id};
     setSaving(true);setLatest(null);
@@ -200,7 +202,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <label>{termMode?'关联术语':'关联知识卡片'}<select multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
     {cards.filter(card=>card.card_id!==editing?.card_id).map(card=><option key={card.card_id} value={card.card_id}>{card.title}{card.status==='archived'?'（已归档）':''}</option>)}
   </select></label>
-  <label><input type="checkbox" disabled={loading} checked={questionable} onChange={e=>setQuestionable(e.target.checked)}/> 标为存疑</label>
+  <ConvergenceSelect kind="term" value={convergence} onChange={setConvergence}/>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
   <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
@@ -217,12 +219,12 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
   <p>{selected.title} · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 检索词：{selected.recall_terms.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
-  <p>{provenanceLabel(selected)}{selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
+  <p>{provenanceLabel(selected)}{selected.convergence?(' · '+convergenceLabel(selected.convergence,'term')):selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}
   {selected.status!=='archived'&&<div className="workbench-actions"><button type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</button></div>}
   </section>}
   {showList&&<><h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
-  {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{card.questionable?' · 存疑':''} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
+  {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{card.convergence?(' · '+convergenceLabel(card.convergence,'term')):card.questionable?' · 存疑':''} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
   <button disabled={loading||saving} onClick={()=>load(card)}>{card.status==='archived'?'查看完整版本（只读）':'编辑（读取完整版本）'}</button>
   {card.status!=='archived'&&<button disabled={loading||saving} onClick={()=>archive(card)}>归档</button>}
   </section>)}</>}

@@ -5,6 +5,7 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.convergence import validate
 
 
 _TERM_LINK = re.compile(r"\[\[term:([^\[\]\s]+)\]\]")
@@ -96,6 +97,8 @@ def apply(db, action, command, *, read_term, check_question_lock, now):
             raise CommandError("invalid_question", "只可引用有效的词典术语")
     question.update(version=question["version"] + 1, updated_at=int(now),
                     prompt=prompt, answer=answer, term_ids=term_ids)
+    if "convergence" in command:
+        question["convergence"] = validate(command["convergence"])
     db.execute("""INSERT INTO hpedia_questions VALUES(?,?)
         ON CONFLICT(question_id) DO UPDATE SET result=excluded.result""",
                (identity, json.dumps(question)))

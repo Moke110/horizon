@@ -537,6 +537,19 @@ def frontier_command(frontier, command, *, token):
     return "frontier_view", value
 
 
+def bulletin_board_command(librarian, command, *, token):
+    action = command["action"]
+    if action == "bulletin_list":
+        return "bulletin_list", librarian.bulletin_links(token=token)
+    if action == "bulletin_open":
+        identity = command.get("id")
+        if command.get("kind") == "term":
+            return "bulletin_term", librarian.view(identity, token=token)
+        if command.get("kind") == "question":
+            return "bulletin_question", librarian.view_question(identity, token=token)
+    raise CommandError("invalid_command", "不支持的白板操作")
+
+
 def librarian_question_command(librarian, command, *, token, origin):
     action = command["action"]
     if action == "question_list":
@@ -853,7 +866,7 @@ def _serve(resolved, executable, managed):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'themes':knowledge_themes.list(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'bulletin_links':librarian.bulletin_links(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
                            'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
@@ -1056,7 +1069,10 @@ def _serve(resolved, executable, managed):
                                 for term in data['results']:
                                     emit('card_view', term)
                             state()
-                    elif action in ('question_list','question_open','question_create',
+                    elif action in ('bulletin_list','bulletin_open'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        emit(*bulletin_board_command(librarian,cmd,token=token))
+                    elif action in ('question_list' ,'question_open','question_create',
                                     'question_update','question_delete','question_confirm'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=librarian_question_command(librarian,cmd,token=token,origin='gui:hpedia')

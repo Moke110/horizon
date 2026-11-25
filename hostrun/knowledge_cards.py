@@ -116,7 +116,7 @@ class KnowledgeCardService:
         "event_type": "knowledge_card.undo",
         "editable": (("title",), ("content",), ("aliases",),
                      ("recall_terms",), ("sources",), ("relations",),
-                     ("questionable",)),
+                     ("questionable",), ("convergence",)),
     }
 
     def __init__(self, home, *, token, clock=time.time, on_change=None, materials=None):
@@ -256,6 +256,10 @@ class KnowledgeCardService:
                                                    max_items=_MAX_RELATIONS)
         if "questionable" in command:
             fields["questionable"] = _validate_questionable(command["questionable"])
+        if "convergence" in command:
+            from hostrun.convergence import validate
+            fields["convergence"] = validate(command["convergence"])
+            fields["questionable"] = fields["convergence"] != "resolved"
         return fields
 
     def _resolve_sources(self, db, card_id, sources, previous=()):
@@ -343,6 +347,8 @@ class KnowledgeCardService:
                 "created_at": now,
                 "updated_at": now,
             }
+            if "convergence" in fields:
+                card["convergence"] = fields["convergence"]
             db.execute("INSERT INTO knowledge_cards VALUES(?,?)",
                        (card_id, json.dumps(card)))
             db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
@@ -356,6 +362,10 @@ class KnowledgeCardService:
         self._check_term_lock(db, card["card_id"], lock_clock)
         if action == "update":
             fields = self._fields(command)
+            if "questionable" in fields and "convergence" not in fields and "convergence" in card:
+                fields["convergence"] = (
+                    "resolved" if not fields["questionable"] else
+                    "unresolved" if card["convergence"] == "resolved" else card["convergence"])
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, fields)
@@ -455,6 +465,7 @@ class KnowledgeCardService:
             "source_pending": card["source_pending"],
             "source_removed": any(source.get("status") == "removed" for source in card["sources"]),
             "questionable": card["questionable"],
+            **({"convergence": card["convergence"]} if "convergence" in card else {}),
             "updated_at": card["updated_at"],
         }
 
@@ -483,7 +494,7 @@ class KnowledgeCardService:
         submitted = {}
         changed = []
         for name in ("title", "content", "aliases", "recall_terms", "sources",
-                     "relations", "questionable"):
+                     "relations", "questionable", "convergence"):
             if name not in fields:
                 continue
             submitted[name] = fields[name]

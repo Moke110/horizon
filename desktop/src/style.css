@@ -503,3 +503,13 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .hpedia-reference-picker select { margin-left: 6px; max-width: 100%; }
 .hpedia-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .hpedia-term-link { color: #9db9ff; text-decoration: underline; padding: 0 2px; }
+
+
+.bulletin-icon { position: relative; display: inline-block; width: 18px; height: 16px; }
+.bulletin-icon::before { content: ""; position: absolute; inset: 5px 2px 2px 1px; border: 1px solid currentColor; border-radius: 1px; }
+.bulletin-icon::after { content: ""; position: absolute; width: 12px; height: 2px; top: 6px; right: -1px; background: currentColor; transform: rotate(-45deg); }
+.bulletin-panel { padding: 24px 30px; overflow: auto; }
+.bulletin-panel ul { list-style: none; padding: 0; }
+.bulletin-panel li + li { border-top: 1px solid #44444b; }
+.bulletin-panel button { text-align: left; overflow-wrap: anywhere; }
+.bulletin-panel small { color: #a3a5ae; margin-left: 8px; }
