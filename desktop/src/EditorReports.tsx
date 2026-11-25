@@ -1,3 +1,4 @@
+import {createPortal} from 'react-dom';
 import React, {useEffect, useState} from 'react';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
 import type {MaterialSummary} from './MaterialsPanel';
@@ -11,7 +12,8 @@ type Report = {report_id:string; version:number; task_id:string; title:string; c
   feedback?:{revision:number; score:number|null; reason?:string; claim_index?:number}; gaps?:{material_id?:string; reason:string; source?:string; detail?:string}[]};
 type Citation = {segment?:string; status:string; segment_truncated?:boolean; next_offset?:number|null};
 
-export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, frontiers, handoff, send}:{
+export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, frontiers, handoff, send, detailHost, onOpenDetail}:{
+  detailHost:HTMLDivElement|null; onOpenDetail:()=>void;
   taskId:string; materials:MaterialSummary[]; children:Child[]; disabled:boolean;
   prepareRewrite:(id:string,version:number,question:string,options:WritingRequest)=>void;
   frontiers:FrontierChoice[]; handoff:(draft:FeedbackHandoff)=>void;
@@ -74,11 +76,11 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
         {Boolean(saved.gaps?.length) && '部分来源未覆盖。'}
       </p>;
       return saved.report_id && <button key={child.child_id}
-        onClick={()=>send({action:'report_open', report_id:saved.report_id, version:saved.version})}>
+        onClick={()=>{onOpenDetail();send({action:'report_open', report_id:saved.report_id, version:saved.version});}}>
         打开报道 {saved.report_id.slice(0, 8)} · v{saved.version}
       </button>;
     })}
-    {report && <article aria-label="报道正文">
+    {report && detailHost && createPortal(<article aria-label="报道正文">
       <h2>{report.title} · v{report.version}</h2>
       <UsedWritingPreferences rows={report.context_versions?.preferences || []} frontiers={frontiers}/>
       <form key={JSON.stringify([report.report_id, report.version, report.feedback?.revision])} onSubmit={event=>{
@@ -164,6 +166,6 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
         report_id:report.report_id, version:report.version, claim_index:snapshot.claimIndex, citation_index:snapshot.citationIndex,
         snapshot_offset:citation.next_offset,
       })}>下一段原文</button>}
-    </article>}
+    </article>,detailHost)}
   </details>;
 }

@@ -444,3 +444,40 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
   padding-inline: 12px;
   background: var(--sidebar-background);
 }
+
+.navigation-toggle { app-region: no-drag; padding: 5px 10px; font-size: 18px; }
+#workspace-navigation { min-height: 0; }
+.nav button { display: flex; align-items: center; gap: 10px; }
+.nav button[aria-current] { background: #303034; }
+.session-icon { display: none; }
+.navigation-collapsed #workspace-navigation { width: 62px; padding-inline: 8px; }
+.navigation-collapsed :is(.nav-label, .brand small, .section, .workspace) { display: none; }
+.navigation-collapsed :is(.nav button, .new, .sessions button, .settings) {
+  justify-content: center;
+  text-align: center;
+  padding-inline: 6px;
+}
+.navigation-collapsed .session-icon { display: inline; }
+
+.workzone {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+.workzone > main { min-width: min(320px, 100%); overflow: auto; }
+.workspace-detail {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  max-width: max(0px, calc(100cqw - 328px));
+  background: #1d1d20;
+}
+.detail-resize { width: 8px; flex: 0 0 8px; cursor: col-resize; touch-action: none; background: #29292d; }
+.detail-resize:is(:hover, :focus-visible) { background: #7898e8; }
+.detail-toolbar { display: flex; justify-content: flex-end; border-bottom: 1px solid #343437; }
+.detail-body { min-height: 0; overflow: auto; overflow-wrap: anywhere; padding: 16px; }
+.local-html img { display: block; max-width: 100%; height: auto; }
+.html-picker { display: block; margin-block: 8px; }
+.html-picker input { width: auto; margin-left: 8px; }
