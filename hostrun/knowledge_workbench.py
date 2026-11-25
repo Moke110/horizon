@@ -237,7 +237,7 @@ class KnowledgeWorkbenchService:
         return result
 
     def search(self, query="", *, token, kind=None, scope="active",
-               related_to=None, limit=_DEFAULT_LIMIT, offset=0):
+               related_to=None, limit=_DEFAULT_LIMIT, offset=0, all_terms=False):
         """Search one scope with direct relation, type and paging filters.
 
         An empty query lists the whole scope in descending update order. A
@@ -256,6 +256,8 @@ class KnowledgeWorkbenchService:
             raise CommandError("invalid_query", "relation targets must contain kind and id")
         targets = {self._related(item) for item in targets if item is not None}
         self._page_bounds(limit, offset)
+        if type(all_terms) is not bool or (all_terms and (selected_kind != "card" or offset != 0)):
+            raise CommandError("invalid_query", "all_terms requires a dictionary search from offset zero")
         terms = _query_terms(query)
         if query.strip() and not terms:
             return {"results": [], "total": 0, "offset": offset, "limit": limit}
@@ -284,6 +286,8 @@ class KnowledgeWorkbenchService:
         matched.sort(key=lambda item: (-item[1]["updated_at"],
                                        item[0], _id(item[0], item[1])))
         total = len(matched)
+        if all_terms:
+            limit = total
         page = [self._result(kind, row)
                 for kind, row in matched[offset:offset + limit]]
         return {"results": page, "total": total, "offset": offset, "limit": limit}

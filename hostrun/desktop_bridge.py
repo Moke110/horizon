@@ -669,7 +669,8 @@ def workbench_command(workbench, command, *, token):
         command.get("query", ""), token=token,
         kind=command.get("kind"), scope=command.get("scope", "active"),
         related_to=command.get("related_to"),
-        limit=command.get("limit", 40), offset=command.get("offset", 0))
+        limit=command.get("limit", 40), offset=command.get("offset", 0),
+        **({"all_terms": command["all_terms"]} if "all_terms" in command else {}))
     return "knowledge_search", {"operation_id": operation_id, **data}
 
 

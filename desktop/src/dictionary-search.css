@@ -3,8 +3,6 @@
 .search-icon { border: 1px solid #44444d; background: #252529; display: grid; place-items: center; padding: 0; flex: 0 0 38px; border-radius: 7px; }
 .dictionary-filter-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,3fr); gap: 12px; align-items: start; }
 .dictionary-search select.dictionary-scope { display: flex; align-items: center; justify-content: space-between; }
-.dictionary-scope::picker-icon { content: ''; display: block; width: 10px; height: 10px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath fill='%23d6d8df' d='M8 0 1 5l7 5z'/%3E%3C/svg%3E") center/contain no-repeat; }
-.dictionary-scope:open::picker-icon { transform: rotate(180deg); }
 .term-picker { position: relative; min-width: 0; }
 .term-field { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px; min-height: 38px; padding: 4px 8px; background: #202024; border: 1px solid #44444d; border-radius: 7px; cursor: text; }
 .term-field:focus-within { outline: 2px solid #7898e8; outline-offset: 1px; }
@@ -16,4 +14,3 @@
 .term-chip:hover, .term-chip[aria-selected="true"], .term-chip.chosen { border-color: #667aa8; background: #303a50; }
 .term-chip.chosen { padding-block: 2px; }
 .term-chip.chosen span { margin-left: 6px; }
-.workbench-create.dictionary-create { order: 1; margin-top: auto; flex-shrink: 0; border-bottom: 0; border-top: 1px solid #303035; }

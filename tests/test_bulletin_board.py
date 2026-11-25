@@ -18,6 +18,8 @@ def test_board_links_follow_confirmed_convergence_and_open_the_originals(tmp_pat
 
     assert [(item["kind"], item["id"], item["convergence"]) for item in links()] == [
         ("term", term["card_id"], "unresolved")]
+    assert links()[0]["summary"] == term["content"]
+    assert links()[0]["term_ids"] == [term["card_id"]]
     assert board("bulletin_open", kind="term", id=term["card_id"])[1] == term
     question = {"schema_version": 1, "operation_id": "question", "prompt": "测试百科问题",
                 "answer": f"[[term:{term['card_id']}]]", "convergence": "conflicted"}

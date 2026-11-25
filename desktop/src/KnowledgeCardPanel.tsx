@@ -1,3 +1,4 @@
+import {Button} from './gui/elements/Button';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import React,{useEffect,useRef,useState} from 'react';
 import {MultilineInput, TextInput} from './gui/elements/FormElements';
@@ -202,9 +203,9 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     </FixedSelect></label>
     <label>定位<TextInput required value={source.locator} onChange={e=>changeSource(index,{locator:e.target.value})}/></label>
     <label>原文摘录<MultilineInput required value={source.excerpt} onChange={e=>changeSource(index,{excerpt:e.target.value})}/></label>
-    <button type="button" onClick={()=>setSources(current=>current.filter((_,i)=>i!==index))}>移除来源</button>
+    <Button type="button" onClick={()=>setSources(current=>current.filter((_,i)=>i!==index))}>移除来源</Button>
   </div>)}
-  <button type="button" disabled={!materials.length||sources.length>=16} onClick={()=>setSources(current=>[...current,{material_id:'',locator:'',excerpt:''}])}>添加来源</button>
+  <Button type="button" disabled={!materials.length||sources.length>=16} onClick={()=>setSources(current=>[...current,{material_id:'',locator:'',excerpt:''}])}>添加来源</Button>
   {!materials.length&&!sources.length&&<p>可在「资料」保存来源，再到这里添加引用。</p>}
   </fieldset>
   <label>{termMode?'关联术语':'关联知识卡片'}<FixedSelect multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
@@ -215,27 +216,27 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
   <label>本次保存理由（可选）<TextInput maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
-  <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':termMode?'创建术语':'创建知识卡片'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
+  <Button variant={termMode?'primary':'standard'} type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':termMode?'创建术语':'创建知识卡片'}</Button>{editing&&<Button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</Button>}
   </fieldset></form>}
   {locked&&<p>已归档的知识卡片以只读方式显示；不会创建或覆盖任何记录。</p>}
   {message&&<p role="status">{message}</p>}
   {latest&&<section className="child-result" role="alert"><h3>版本冲突：草稿与当前已提交版本 {latest.version} 的差异</h3>
   <p>你的保存没有覆盖他人已提交的内容。逐项核对后再决定：采用最新版本作为基线会保留你的草稿文字，但提交时会写入一个新的版本。</p>
   {conflict.length===0?<p>当前草稿与已提交内容一致；可直接重新保存。</p>:<ul>{conflict.map(row=><li key={row.field}><strong>{row.label}</strong><br/>你的草稿：{row.mine}<br/>已提交（v{latest.version}）：{row.theirs}</li>)}</ul>}
-  <button type="button" disabled={loading||saving||latest.status==='archived'} onClick={()=>{setEditing({card_id:latest.card_id,version:latest.version});setLatest(null);setMessage(`已把草稿改为基于最新版本 ${latest.version}；请核对后保存。`);}}>保留草稿，基于最新版本重试</button>
-  <button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该卡片已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</button>
+  <Button type="button" disabled={loading||saving||latest.status==='archived'} onClick={()=>{setEditing({card_id:latest.card_id,version:latest.version});setLatest(null);setMessage(`已把草稿改为基于最新版本 ${latest.version}；请核对后保存。`);}}>保留草稿，基于最新版本重试</Button>
+  <Button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该卡片已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</Button>
   </section>}
   {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
   <p>{selected.title} <TestTag tags={selected.tags}/> · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
   <p>{provenanceLabel(selected)}{selected.convergence?(' · '+convergenceLabel(selected.convergence,'term')):selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}
-  {selected.status!=='archived'&&<div className="workbench-actions"><button type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</button></div>}
+  {selected.status!=='archived'&&<div className="workbench-actions"><Button variant={termMode?'archive':'standard'} type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</Button></div>}
   </section>}
   {showList&&<><h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
   {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{card.convergence?(' · '+convergenceLabel(card.convergence,'term')):card.questionable?' · 存疑':''} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
-  <button disabled={loading||saving} onClick={()=>load(card)}>{card.status==='archived'?'查看完整版本（只读）':'编辑（读取完整版本）'}</button>
-  {card.status!=='archived'&&<button disabled={loading||saving} onClick={()=>archive(card)}>归档</button>}
+  <Button disabled={loading||saving} onClick={()=>load(card)}>{card.status==='archived'?'查看完整版本（只读）':'编辑（读取完整版本）'}</Button>
+  {card.status!=='archived'&&<Button disabled={loading||saving} onClick={()=>archive(card)}>归档</Button>}
   </section>)}</>}
   </div>;
 }

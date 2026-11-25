@@ -20,6 +20,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from hostrun.hpedia import referenced_terms
 from hostrun.agent_service import CommandError
 from hostrun.library_tags import new_test_tags, visible_tags
 from hostrun.knowledge_history import set_path, validate_reason
@@ -365,7 +366,8 @@ class FrontierService:
     def _summary(frontier):
         return {"frontier_id": frontier["frontier_id"], "version": frontier["version"],
                 "question": frontier["question"], "status": frontier["status"],
-                "scope_text": frontier["scope"]["text"][:256], "updated_at": frontier["updated_at"],
+                "scope_text": frontier["scope"]["text"][:256],
+                "term_ids": referenced_terms(frontier["question"], frontier["scope"]["text"]), "updated_at": frontier["updated_at"],
                 **visible_tags(frontier)}
 
     def view(self, frontier_id, *, token):

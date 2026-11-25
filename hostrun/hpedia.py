@@ -56,6 +56,10 @@ def read(db, question_id):
     return json.loads(row[0])
 
 
+def referenced_terms(*texts):
+    return list(dict.fromkeys(term for text in texts for term in _TERM_LINK.findall(text)))
+
+
 def list_questions(db):
     rows = db.execute("SELECT result FROM hpedia_questions ORDER BY rowid DESC").fetchall()
     return [json.loads(row[0]) for row in rows]
@@ -86,7 +90,7 @@ def apply(db, action, command, *, read_term, check_question_lock, now):
         return {**question, "status": "deleted"}
     prompt = _text(command.get("prompt", question.get("prompt")), "题干")
     answer = _text(command.get("answer", question.get("answer")), "解答")
-    term_ids = list(dict.fromkeys(_TERM_LINK.findall(prompt) + _TERM_LINK.findall(answer)))
+    term_ids = referenced_terms(prompt, answer)
     if not term_ids:
         raise CommandError("invalid_question", "题干或解答需明确引用至少一个词典术语")
     for term_id in term_ids:

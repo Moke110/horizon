@@ -1,3 +1,6 @@
+import {ResultCard,ResultCards} from './ResultCards';
+import {termLinkLabels} from './HpediaPanel';
+import type {CardSummary} from './KnowledgeCardPanel';
 import {MultilineInput} from './gui/elements/FormElements';
 import {Checkbox} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
@@ -13,9 +16,12 @@ type Tracking={frontier_id:string;progress:Progress[];history:VoyagerSummary[]};
 
 const statusText:Record<string,string>={following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 
-export function FrontierTracking({frontiers,sources,frontier,viewEvent,error,detailHost,openDetail,
+export function FrontierTracking({frontiers,terms,matches,createRequest,sources,frontier,viewEvent,error,detailHost,openDetail,
   send,openSource,openVoyager}:{
   frontiers:FrontierSummary[];
+  terms:CardSummary[];
+  matches:(text:string,status:string,ids:string[])=>boolean;
+  createRequest:number;
   sources:ArchiveSource[];
   frontier:Frontier|null;
   viewEvent:FrontierViewEvent|null;
@@ -51,17 +57,26 @@ export function FrontierTracking({frontiers,sources,frontier,viewEvent,error,det
     setDraft(null);
     openDetail();
   };
+  const lastCreate=useRef(createRequest);
+  useEffect(()=>{
+    if(lastCreate.current!==createRequest){
+      lastCreate.current=createRequest;
+      show({kind:'create',nonce:crypto.randomUUID()});
+    }
+  },[createRequest]);
   const selected=selection?.kind==='create'||frontier?.frontier_id===selectedId?frontier:null;
   const progress=tracking?.frontier_id===selectedId?tracking.progress:[];
   const history=tracking?.frontier_id===selectedId?tracking.history:[];
+  const visibleFrontiers=frontiers.filter(item=>{
+    const text=termLinkLabels(item.question+' '+item.scope_text,terms);
+    return item.status!=='deleted' && matches(text,item.status,item.term_ids||[]);
+  });
   return <section className="frontier-tracking" aria-label="前沿">
     <h2>前沿</h2>
-    <button type="button" onClick={()=>show({kind:'create',nonce:crypto.randomUUID()})}>新增前沿</button>
-    <ul>{frontiers.filter(item=>item.status!=='deleted').map(item=><li key={item.frontier_id}>
-      <button type="button" onClick={()=>show({kind:'open',nonce:crypto.randomUUID(),id:item.frontier_id,version:item.version})}>
-        {item.question} <TestTag tags={item.tags}/> <small>{statusText[item.status]}</small>
-      </button>
-    </li>)}</ul>
+    <ResultCards label="前沿结果">{visibleFrontiers.map(item=><ResultCard key={item.frontier_id}
+      title={<>{termLinkLabels(item.question,terms)} <TestTag tags={item.tags}/></>} summary={termLinkLabels(item.scope_text||'',terms)}
+      status={statusText[item.status]} selected={!!detailHost && selectedId===item.frontier_id}
+      onOpen={()=>show({kind:'open',nonce:crypto.randomUUID(),id:item.frontier_id,version:item.version})}/>)}</ResultCards>
     {detailHost&&selection&&createPortal(<div aria-label="前沿详情" className="frontier-detail">
       <KnowledgePanel frontiers={frontiers} selected={selected} viewEvent={viewEvent} commandError={error}
         onCommand={send} embedded showList={false} openRequest={selection} titleOnly

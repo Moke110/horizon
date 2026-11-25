@@ -4,7 +4,7 @@ import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
 
-export type FrontierSummary={tags?:string[];frontier_id:string;version:number;question:string;status:string;scope_text:string;updated_at:number};
+export type FrontierSummary={tags?:string[];frontier_id:string;version:number;question:string;status:string;scope_text:string;term_ids?:string[];updated_at:number};
 export type Frontier={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;frontier_id:string;version:number;question:string;status:string;scope:{text:string;alternatives:string[];sources:string[]};hard_constraints:{must_include:string[];exclude:string[]};relations:unknown[];created_at:number;updated_at:number};
 export type FrontierViewEvent={source:'view';operation_id?:string;nonce:string};
 export type FrontierCommandError={operation_id?:string;code?:string;message?:string};

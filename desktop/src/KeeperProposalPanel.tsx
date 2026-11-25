@@ -1,3 +1,4 @@
+import {Button} from './gui/elements/Button';
 import {MultilineInput} from './gui/elements/FormElements';
 import {Collapsible} from './gui/elements/Collapsible';
 import {Checkbox} from './gui/elements/ChoiceElements';
@@ -1079,12 +1080,12 @@ export function KeeperProposalPanel({
           {testBadge&&<span className="keeper-badge keeper-badge-test">{testBadge}</span>}
           {groups.map(group=><span className="keeper-badge" key={group.kind}>{keeperKindLabel(group.kind)}</span>)}
         </div>
-        <button type="button" onClick={onClose}>关闭</button>
+        <Button type="button" onClick={onClose}>关闭</Button>
       </div>
     </header>
     {proposal&&<Meta proposal={proposal}/>}
     {loading&&<p className="workbench-status keeper-loading" role="status">正在读取完整提议…</p>}
-    {error&&<div className="workbench-error" role="alert"><p>{error}</p><button type="button" onClick={onRetry}>重试</button></div>}
+    {error&&<div className="workbench-error" role="alert"><p>{error}</p><Button type="button" onClick={onRetry}>重试</Button></div>}
     {proposal&&revisionNotes&&publishedRevision&&<RevisionNotesSection proposal={proposal} notes={revisionNotes}/>}
     {terminal&&proposal&&(effectiveStatus==='returned'
       ?<ReturnedReceipt proposal={proposal} notes={revisionNotes}/>
@@ -1102,9 +1103,9 @@ export function KeeperProposalPanel({
       {decisionError&&<div className="keeper-decision-error" role="alert"><p>{decisionError}</p><p className="keeper-decision-note">取消失败；当前修订仍未确认取消，可重试。</p></div>}
       {decisionNotice&&<div className="keeper-decision-notice" role="alert"><p>{decisionNotice}</p></div>}
       <div className="keeper-revision-progress-actions">
-        <button type="button" className="keeper-cancel-revision" disabled={!canCancel} onClick={()=>revise('cancel')}>
+        <Button type="button" className="keeper-cancel-revision" disabled={!canCancel} onClick={()=>revise('cancel')}>
           {busyAction('cancel')?'正在取消…':'取消本次修订'}
-        </button>
+        </Button>
       </div>
       <p className="keeper-decision-note">只有当前修订明确处于修订中时才可取消；较旧的事件不会覆盖较新的修订。</p>
     </section>}
@@ -1121,12 +1122,12 @@ export function KeeperProposalPanel({
       </label>
       {decisionError&&<div className="keeper-decision-error" role="alert"><p>{decisionError}</p><p className="keeper-decision-note">决定未确认成功；已填写的理由、调整说明和字段选择仍然保留，可重试。</p></div>}
       <div className="keeper-decision-actions">
-        <button type="button" className="keeper-approve" disabled={!canDecide} onClick={()=>decide('approve')}>
+        <Button type="button" className="keeper-approve" disabled={!canDecide} onClick={()=>decide('approve')}>
           {busyAction('approve')?'正在提交…':revised?`批准本次修订${revisionLabel}`:'批准整组'}
-        </button>
-        <button type="button" className="keeper-reject" disabled={!canDecide} onClick={()=>decide('reject')}>
+        </Button>
+        <Button type="button" className="keeper-reject" disabled={!canDecide} onClick={()=>decide('reject')}>
           {busyAction('reject')?'正在提交…':'拒绝'}
-        </button>
+        </Button>
       </div>
       <p className="keeper-decision-note">两个按钮都作用于整组，不存在逐项批准。</p>
     </section>}
@@ -1168,12 +1169,12 @@ export function KeeperProposalPanel({
       {(!revisionValid||!versionsValid)&&<p className="keeper-decision-warning" role="alert">该提议缺少可绑定的修订或固定版本，暂不能要求调整；请刷新提议核对。</p>}
       {!actionable&&decisionError&&<div className="keeper-decision-error" role="alert"><p>{decisionError}</p><p className="keeper-decision-note">请求未确认完成；已填写的说明、整项移除和字段选择仍然保留，可刷新后重试。</p></div>}
       <div className="keeper-decision-actions">
-        <button type="button" className="keeper-adjust-submit" disabled={!canAdjust||!feedbackText||feedbackTooLong||omitsEveryChange} onClick={()=>revise('adjust')}>
+        <Button type="button" className="keeper-adjust-submit" disabled={!canAdjust||!feedbackText||feedbackTooLong||omitsEveryChange} onClick={()=>revise('adjust')}>
           {busyAction('adjust')?'正在提交…':hasSelection?'提交调整请求':'记录说明并重新复核'}
-        </button>
-        <button type="button" className="keeper-cancel-revision" disabled={!canCancel} onClick={()=>revise('cancel')}>
+        </Button>
+        <Button type="button" className="keeper-cancel-revision" disabled={!canCancel} onClick={()=>revise('cancel')}>
           {busyAction('cancel')?'正在取消…':'取消该提议'}
-        </button>
+        </Button>
       </div>
       {omitsEveryChange&&<p className="keeper-decision-note" role="status">如果想放弃全部变更，可以取消该提议。</p>}
     </section>}

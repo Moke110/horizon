@@ -68,6 +68,12 @@ app.whenReady().then(()=>{serveReader();win=new BrowserWindow({
   } : {}),
   width:1440,height:940,minWidth:900,minHeight:620,backgroundColor:'#141416',title:'Horizon',autoHideMenuBar:true,webPreferences:{preload:join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
 tray=new Tray(nativeImage.createFromBitmap(Buffer.from(Array.from({length:16*16},()=>[200,135,105,255]).flat()),{width:16,height:16}));tray.setToolTip('Horizon');tray.setContextMenu(Menu.buildFromTemplate([{label:'打开 Horizon',click:showWindow},{type:'separator'},...optionsItems()]));tray.on('double-click',()=>{win.show();win.focus();});
+let minimizedAt:number|null=null;
+win.on('minimize',()=>{minimizedAt??=Date.now();});
+win.on('restore',()=>{
+  if(minimizedAt!==null && Date.now()-minimizedAt>=60*60*1000)send({kind:'board_reset_type'});
+  minimizedAt=null;
+});
 win.on('close',e=>{if(!quitting){e.preventDefault();win.hide();}});
 win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());
 win.webContents.once('did-finish-load',()=>{ready=true;pending.splice(0).forEach(send);});

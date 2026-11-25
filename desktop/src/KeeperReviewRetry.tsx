@@ -1,3 +1,4 @@
+import {Button} from './gui/elements/Button';
 import React,{useEffect,useState} from 'react';
 
 type Review={request_id?:string; review_id?:string; report_id?:string; report_version?:number; proposal_id?:string};
@@ -20,10 +21,10 @@ export function KeeperReviewRetry() {
     <ul>{reviews.map(review=><li key={review.review_id || review.request_id}>
       {review.review_id ? `提议 ${review.proposal_id?.slice(0,8)} 的复审` :
         `报道 ${review.report_id?.slice(0,8)} v${review.report_version} 的审核`}
-      <button type="button" onClick={()=>send({action:'keeper_retry_review',schema_version:1,
+      <Button type="button" onClick={()=>send({action:'keeper_retry_review',schema_version:1,
         operation_id:crypto.randomUUID(),...(review.review_id?{review_id:review.review_id}:{request_id:review.request_id})})}>
         重试审核
-      </button>
+      </Button>
     </li>)}</ul>
   </section>;
 }
