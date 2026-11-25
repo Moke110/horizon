@@ -539,6 +539,60 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
   color: #eee;
   line-height: 20px;
 }
+.gui-select:not([multiple]),
+.gui-select:not([multiple])::picker(select) {
+  appearance: base-select;
+}
+.gui-select:not([multiple])::picker(select) {
+  background: #202024;
+  color: #eee;
+  border: 1px solid #44444d;
+  border-radius: 7px;
+}
+.gui-select::picker-icon { margin-inline-start: auto; }
+.gui-select option { padding: 7px 10px; }
+.gui-select option:hover, .gui-select option:focus-visible { background: #373742; }
+.gui-select option::checkmark { order: 1; margin-inline-start: auto; }
+label.gui-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.gui-checkbox input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 16px;
+  display: grid;
+  place-content: center;
+  border: 1px solid #646473;
+  border-radius: 4px;
+  background: #202024;
+}
+.gui-checkbox input:checked { background: #6854bf; border-color: #a292e5; }
+.gui-checkbox input:checked::after { content: '✓'; color: #fff; }
+.gui-checkbox input:focus-visible { outline: 2px solid #a292e5; outline-offset: 2px; }
+.gui-checkbox input:disabled { opacity: .55; }
+.gui-file-picker {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.gui-file-picker input[type="file"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.gui-file-picker label {
+  flex: none;
+  padding: 7px 10px;
+  border: 1px solid #44444d;
+  border-radius: 7px;
+  background: #202024;
+  cursor: pointer;
+}
+.gui-file-picker input:focus-visible + label { outline: 2px solid #a292e5; outline-offset: 2px; }
+.gui-file-picker span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gui-multiline.gui-multiline {
   field-sizing: content;
   min-height: calc(1lh + 18px);
