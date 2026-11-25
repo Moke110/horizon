@@ -24,6 +24,19 @@ class Librarian:
     def view(self, term_id, *, token):
         return self.library.view(term_id, token=token)
 
+    @property
+    def HISTORY(self):
+        return self.library.history_metadata
+
+    def history_removed(self, db):
+        return self.library.history_removed(db)
+
+    def history_project(self, term, removed):
+        return self.library.history_project(term, removed)
+
+    def check_write_lock(self, db, term_id):
+        self.library.check_write_lock(db, term_id)
+
     def read_in_transaction(self, db, term_id):
         return self.library.read_in_transaction(db, term_id)
 

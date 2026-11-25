@@ -19,6 +19,19 @@ class Library:
     def view(self, term_id, *, token):
         return self._cards.view(term_id, token=token)
 
+    @property
+    def history_metadata(self):
+        return self._cards.HISTORY
+
+    def history_removed(self, db):
+        return self._cards.history_removed(db)
+
+    def history_project(self, term, removed):
+        return self._cards.history_project(term, removed)
+
+    def check_write_lock(self, db, term_id):
+        self._cards._check_term_lock(db, term_id)
+
     def read_in_transaction(self, db, term_id):
         return self._cards.read_in_transaction(db, term_id)
 

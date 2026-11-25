@@ -206,6 +206,8 @@ class KeeperGroupUndo:
                      command):
         kind, identifier = entry["kind"], entry["id"]
         service = self.services[kind]
+        if kind == "card":
+            service.check_write_lock(db, identifier)
         meta = service.HISTORY
         operation_id = owner_operation_id(
             proposal["proposal_id"], decision["revision"], index)
@@ -224,7 +226,7 @@ class KeeperGroupUndo:
             raise CommandError("snapshot_conflict",
                                "The approved owner snapshot has an unexpected status")
 
-        current = service._read(db, identifier)
+        current = service.read_in_transaction(db, identifier)
         if current.get(meta["id_field"]) != identifier:
             raise CommandError("snapshot_conflict",
                                "The owner record identity changed")
@@ -304,7 +306,7 @@ class KeeperGroupUndo:
                     elif unchanged:
                         version = relation["version"]
                     else:
-                        card = self.services["card"]._read(db, card_id)
+                        card = self.services["card"].read_in_transaction(db, card_id)
                         if card.get("status") != "active" \
                                 or not card.get("known") \
                                 or card.get("version") != relation.get("version"):
@@ -325,7 +327,7 @@ class KeeperGroupUndo:
                     elif card_id in existing:
                         continue
                     else:
-                        related = self.services["card"]._read(db, card_id)
+                        related = self.services["card"].read_in_transaction(db, card_id)
                     if related.get("status") != "active" or not related.get("known"):
                         raise CommandError(
                             "invalid_relation",
