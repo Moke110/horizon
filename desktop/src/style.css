@@ -524,3 +524,7 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .frontier-detail textarea { display: block; width: 100%; }
 .frontier-detail input[type="checkbox"] { width: auto; }
 .frontier-detail fieldset label { display: block; }
+
+.library-test-tag { border: 1px solid #b18455; border-radius: 4px; color: #ffd7a8; padding: 1px 4px; font-size: 12px; }
+.cleanup-entries > li { margin-block: 10px; }
+.cleanup-entries > li > div > span:last-child { margin-left: 8px; }

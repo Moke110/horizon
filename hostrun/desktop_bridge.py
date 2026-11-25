@@ -868,6 +868,13 @@ def _serve(resolved, executable, managed):
                                 'task_id': chats[current]['task_id'], 'expected_version': previous_version if expected_version is None else expected_version, 'role': role, 'text': text}, token=token)
         refresh_chats()
         return result['version'] > previous_version
+    def invalidate_cleaned_progress(card):
+        if card.get('entity') == 'test_cleanup' and card['status'] == 'confirmed':
+            frontier_ids = sorted({item['record']['frontier_id'] for item in card['results']
+                                   if item['kind'] == 'progress'})
+            if frontier_ids:
+                emit('frontier_tracking_invalidated', frontier_ids)
+
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
@@ -1130,12 +1137,25 @@ def _serve(resolved, executable, managed):
                             else:
                                 emit('private_pdf', None)
                             emit('material_package', package)
+                    elif action in ('test_cleanup_preview', 'test_cleanup_request', 'test_cleanup_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if action == 'test_cleanup_request':
+                            librarian.request_test_cleanup(cmd.get('operation_id'), token=token, origin='gui',
+                                                         selection=cmd.get('selection'))
+                            state()
+                        elif action == 'test_cleanup_confirm':
+                            card = librarian.decide(cmd.get('operation_id'), cmd.get('choice'), token=token,
+                                                    origin='gui', expected_entity='test_cleanup')
+                            invalidate_cleaned_progress(card)
+                            state()
+                        emit('test_cleanup_preview', librarian.preview_test_cleanup(token=token))
                     elif action == 'agent_term_confirm':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if not chats or cmd.get('task_id') != chats[current]['task_id']:
                             raise CommandError('not_found', '本会话没有该确认请求')
-                        librarian.decide(cmd.get('operation_id'),cmd.get('choice'),
-                                         token=token,origin='agent:'+chats[current]['task_id'])
+                        card = librarian.decide(cmd.get('operation_id'),cmd.get('choice'),
+                                                token=token,origin='agent:'+chats[current]['task_id'])
+                        invalidate_cleaned_progress(card)
                         state()
                     elif action in ('theme_create','theme_update','theme_archive'):
                         raise CommandError('retired_theme', '请在百科中新增或编辑问题。')

@@ -18,11 +18,12 @@ import {HpediaPanel,type Question} from './HpediaPanel';
 import {KnowledgeWorkbench} from './KnowledgeWorkbench';
 import {EditorReports} from './EditorReports';
 import {readLocalHtml} from './LocalHtml';
+import {CleanupEntries,TestCleanupPanel,TestTag,type CleanupPlan} from './TestCleanupPanel';
 import {FeishuSetup} from './FeishuSetup';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
 type Child={child_id:string;session_id:string;parent_session_id:string;role:string;input_version:number;status:string;artifact_ref:string;result?:string;error?:string};
 type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;changes:{action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
-type TermConfirmation={entity?:'question'|'source'|'frontier'|'progress';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][];summaries?:string[]};
+type TermConfirmation={entity?:'question'|'source'|'frontier'|'progress'|'test_cleanup';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][];summaries?:string[];cleanup?:CleanupPlan};
 
 function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfirmation;terms?:CardSummary[];sources?:ArchiveSource[];decide:(choice:'confirm'|'reject')=>void}){
   const [elapsed,setElapsed]=useState(false);
@@ -38,10 +39,11 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
     questionable:'存疑',convergence:'收敛状态',reason:'修改理由',label:'来源说明',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态'};
   const previewText=(value:unknown)=>typeof value==='string'?value.replace(
     /\[\[term:([^\[\]\s]+)\]\]/g,(_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语'):'';
-  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':card.entity==='source'?'来源变更确认':card.entity==='frontier'?'前沿变更确认':card.entity==='progress'?'进展变更确认':'术语变更确认'}>
+  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':card.entity==='source'?'来源变更确认':card.entity==='frontier'?'前沿变更确认':card.entity==='progress'?'进展变更确认':card.entity==='test_cleanup'?'测试内容清理确认':'术语变更确认'}>
     <div className="author">图书管理员</div>
+    {card.cleanup&&<CleanupEntries plan={card.cleanup}/>}
     {card.changes.map(([action,change],index)=><div key={index}>
-      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong>
+      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
       {card.entity!=='progress'&&previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
       <dl>{Object.entries(change).filter(([field])=>field in labels).map(([field,value])=><React.Fragment key={field}>
         <dt>{labels[field]}</dt><dd>{field==='convergence'?convergenceLabel(value as Convergence,card.entity==='question'?'question':'term'):typeof value==='string'?value:JSON.stringify(value)}</dd>
@@ -175,12 +177,13 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   }}>
   <button role="menuitem" onClick={()=>chooseOption(openSettings)}>模型设置</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>navigate('feishu'))}>飞书适配器</button>
+  <button role="menuitem" onClick={()=>chooseOption(()=>navigate('test-cleanup'))}>清理测试内容</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'export_diagnostics'}))}>导出诊断</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'exit'}))}>退出Horizon</button>
 </div></aside><div className="workzone" ref={workzone}><main>{conversationOpen && <><header><strong>{chat?.title||'新会话'}</strong><span>研究助手</span></header><div className="tabs"><button className={tab==='chat'?'active':''} onClick={()=>navigate('chat')}>对话</button><button className={tab==='trace'?'active':''} onClick={()=>navigate('trace')}>轨迹</button></div></>}{notice&&<div className="notice" role="alert">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
 {state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
-  decide={choice=>send({action:card.entity==='question'?'question_confirm':card.entity==='source'?'source_confirm':card.entity==='frontier'?'frontier_confirm':card.entity==='progress'?'progress_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
-{tab==='bulletin'?<BulletinBoard links={state.bulletin_links||[]} terms={state.cards||[]} send={send}
+  decide={choice=>send({action:card.entity==='question'?'question_confirm':card.entity==='source'?'source_confirm':card.entity==='frontier'?'frontier_confirm':card.entity==='progress'?'progress_confirm':card.entity==='test_cleanup'?'test_cleanup_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
+{tab==='test-cleanup'?<TestCleanupPanel send={send} pending={Boolean(state.gui_term_confirmations?.some(card=>card.entity==='test_cleanup'))}/>:tab==='bulletin'?<BulletinBoard links={state.bulletin_links||[]} terms={state.cards||[]} send={send}
   detailHost={detail==='bulletin'?detailHost:null} openDetail={()=>{closeDetail();setDetail('bulletin');}}>
   <FrontierTracking frontiers={state.frontiers||[]} sources={state.archive_sources||[]} frontier={frontierView}
     viewEvent={frontierViewEvent} error={frontierError} detailHost={detail==='frontier'?detailHost:null}

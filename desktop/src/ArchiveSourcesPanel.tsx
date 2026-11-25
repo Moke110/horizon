@@ -1,7 +1,9 @@
+import {TestTag} from './TestCleanupPanel';
 import React,{useState} from 'react';
 import type {MaterialSummary} from './MaterialsPanel';
 
 export type ArchiveSource={
+  tags?:string[];
   source_id:string;
   title:string;
   label:string;
@@ -45,7 +47,7 @@ export function ArchiveSourcesPanel({sources,materials,onOpen,send}:{
     </form>}
     {sources.length===0?<p>尚无来源。</p>:<ul>
       {sources.map(source=><li key={source.source_id}>
-        <button type="button" onClick={()=>onOpen(source)}>{source.title} · 打开原文</button>
+        <button type="button" onClick={()=>onOpen(source)}>{source.title} <TestTag tags={source.tags}/> · 打开原文</button>
         <span>{source.label}</span>
         <button type="button" onClick={()=>{setCreating(false);setEditing(source);}}>编辑</button>
         <button type="button" onClick={()=>send({action:'source_delete',operation_id:crypto.randomUUID(),

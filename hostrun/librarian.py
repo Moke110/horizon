@@ -3,7 +3,7 @@
 import json
 import time
 
-from hostrun import frontier_progress
+from hostrun import frontier_progress, library_cleanup
 from hostrun.agent_service import CommandError
 from hostrun.library import Library
 
@@ -194,6 +194,70 @@ class Librarian:
         return self.request_batch(command.get("operation_id"), [(action, command)],
                                   token=token, origin=origin)
 
+    def preview_test_cleanup(self, *, token, selection=None):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.library.archive.initialize(db)
+            frontier_progress.initialize(db)
+            return library_cleanup.plan(db, selection)
+
+    def request_test_cleanup(self, request_id, *, token, origin, selection=None):
+        self.library.authorize(token)
+        if not isinstance(request_id, str) or not request_id.strip() or not isinstance(origin, str) or not origin:
+            raise CommandError("invalid_command", "需要有效的清理确认标识")
+        encoded = json.dumps({"entity": "test_cleanup", "selection": selection}, sort_keys=True)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            now = self.clock()
+            self._expire(db, now)
+            row = db.execute("SELECT origin,request,result FROM librarian_term_requests WHERE id=?",
+                             (request_id,)).fetchone()
+            if row:
+                if row[:2] != (origin, encoded):
+                    raise CommandError("operation_conflict", "确认请求标识已使用")
+                return json.loads(row[2])
+            self.library.archive.initialize(db)
+            frontier_progress.initialize(db)
+            plan = library_cleanup.plan(db, selection)
+            entries = [item for item in plan["entries"] if not item["blocked"]]
+            if not entries:
+                raise CommandError("nothing_to_clean", "没有可清理的测试条目")
+            keys = library_cleanup.lock_keys(entries)
+            for key in keys:
+                if db.execute("SELECT 1 FROM librarian_term_locks WHERE term_id=?", (key,)).fetchone():
+                    raise CommandError("test_cleanup_locked", "测试条目或相关前沿正在等待确认")
+            card = {"operation_id": request_id, "status": "pending", "entity": "test_cleanup",
+                    "expires_at": now + self.confirmation_lifetime, "changes": [], "cleanup": plan}
+            db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
+                       (request_id, origin, encoded, card["expires_at"], json.dumps(card)))
+            db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
+                           [(key, request_id) for key in sorted(keys)])
+        return card
+
+    def _clean_test_records(self, db, card, *, token, now):
+        original = card["cleanup"]["entries"]
+        current = library_cleanup.plan(db, [[entry["kind"], entry["id"]] for entry in original])["entries"]
+        if current != original:
+            raise CommandError("test_cleanup_changed", "清理条目或受影响引用已变化，请重新审核")
+        results = []
+        for i, item in enumerate(entry for entry in current if not entry["blocked"]):
+            kind = item["kind"]
+            code = f'{card["operation_id"]}:cleanup:{i}'
+            command = library_cleanup.removal_command(item, code)
+            if kind == "question":
+                result = self.library.apply_question(db, "delete", command, now=now)
+            elif kind == "progress":
+                result = self.library.apply_progress(db, "delete", command, now=now)
+            elif kind == "source":
+                result = self.library.archive.apply(db, "delete", command)
+            elif kind == "frontier":
+                result, _ = self.library.apply_frontier(db, "delete", command, token=token, now=now)
+            else:
+                result, _ = self.library.apply(db, "delete", command, token=token, now=now)
+            results.append({"kind": kind, "record": result})
+        return results
+
     def request_batch(self, request_id, changes, *, token, origin, entity="term"):
         self.library.authorize(token)
         if not isinstance(origin, str) or not origin or not isinstance(request_id, str) \
@@ -210,6 +274,11 @@ class Librarian:
                     or change[0] not in actions \
                     or not isinstance(change[1], dict):
                 raise CommandError("invalid_command", "无效的术语变更")
+        for action, command in changes:
+            if "test_data" in command and (
+                type(command["test_data"]) is not bool or action != "create" or not origin.startswith("agent:")
+            ):
+                raise CommandError("invalid_command", "只有 Agent 新建的测试条目可以标记为测试")
         normalized = [list(change) for change in changes]
         encoded = json.dumps({"entity": entity, "changes": normalized} if entity != "term"
                              else normalized, sort_keys=True)
@@ -298,6 +367,10 @@ class Librarian:
             db.execute("DELETE FROM librarian_term_locks WHERE request_id=?", (request_id,))
             results = []
             if choice == "confirm":
+                if card.get("entity") == "test_cleanup":
+                    results = self._clean_test_records(db, card, token=token, now=now)
+                    notifications.extend(item["record"] for item in results if item["kind"] == "term")
+                    frontier_notifications.extend(item["record"] for item in results if item["kind"] == "frontier")
                 for action, command in card["changes"]:
                     if card.get("entity") == "question":
                         results.append(self.library.apply_question(db, action, command, now=now))

@@ -1,3 +1,4 @@
+import {TestTag} from './TestCleanupPanel';
 import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import type {CardSummary, KnowledgeCard} from './KnowledgeCardPanel';
@@ -5,6 +6,7 @@ import type {CardSummary, KnowledgeCard} from './KnowledgeCardPanel';
 import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
 export type Question = {
+  tags?:string[];
   question_id:string;
   version:number;
   prompt:string;
@@ -31,7 +33,7 @@ export function termLinkLabels(text:string,terms:CardSummary[]){
 
 export function QuestionContents({question,terms,openTerm}:{question:Question;terms:CardSummary[];openTerm:(id:string)=>void}) {
   return <>
-    <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)}</h2>
+    <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)} <TestTag tags={question.tags}/></h2>
     <p className="hpedia-text">{referencedText(question.answer,terms,openTerm)}</p>
     <p>{convergenceLabel(question.convergence??'resolved','question')}</p>
   </>;
@@ -39,7 +41,7 @@ export function QuestionContents({question,terms,openTerm}:{question:Question;te
 
 export function TermContents({term}:{term:KnowledgeCard}) {
   return <>
-    <h2>{term.title}</h2>
+    <h2>{term.title} <TestTag tags={term.tags}/></h2>
     <p className="hpedia-text">{term.content}</p>
     <p>{convergenceLabel(term.convergence??(term.questionable?'unresolved':'resolved'),'term')}</p>
     {!!term.aliases.length&&<p>别名 {term.aliases.join('、')}</p>}
@@ -191,7 +193,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <h1>百科</h1>
     <button type="button" disabled={waiting} onClick={()=>start(null)}>新增问题</button>
     {questions.length?<ul>{questions.map(row=><li key={row.question_id}>
-      <button type="button" onClick={()=>show(row.question_id)}>{termLinkLabels(row.prompt,terms)}</button>
+      <button type="button" onClick={()=>show(row.question_id)}>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></button>
     </li>)}</ul>:<p>暂无百科问题。</p>}
     {detailHost&&createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost)}
   </section>;

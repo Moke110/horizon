@@ -1,7 +1,8 @@
+import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
 
-export type FrontierSummary={frontier_id:string;version:number;question:string;status:string;scope_text:string;updated_at:number};
-export type Frontier={schema_version:number;operation_id:string;read_operation_id?:string;frontier_id:string;version:number;question:string;status:string;scope:{text:string;alternatives:string[];sources:string[]};hard_constraints:{must_include:string[];exclude:string[]};relations:unknown[];created_at:number;updated_at:number};
+export type FrontierSummary={tags?:string[];frontier_id:string;version:number;question:string;status:string;scope_text:string;updated_at:number};
+export type Frontier={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;frontier_id:string;version:number;question:string;status:string;scope:{text:string;alternatives:string[];sources:string[]};hard_constraints:{must_include:string[];exclude:string[]};relations:unknown[];created_at:number;updated_at:number};
 export type FrontierViewEvent={source:'view';operation_id?:string;nonce:string};
 export type FrontierCommandError={operation_id?:string;code?:string;message?:string};
 type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
@@ -184,7 +185,7 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   {locked&&<p>已删除的 Frontier 以只读方式显示；历史检索与资料仍然保留。</p>}
   {message&&<p role="status">{message}</p>}
   {stale&&<p role="alert">该 Frontier 已更新到版本 {selected.version}，当前编辑仍固定在载入的版本 {editing.version}；提交会因版本冲突失败。请取消修改后重新编辑以载入最新版本。</p>}
-  {!isCreateDraft&&isFullView(selected)&&<section className="child-result"><h3>当前完整已提交版本</h3><p>关注问题：{selected.question}</p><p>状态：{statusLabel[selected.status]||selected.status} · 版本 {selected.version}</p><p>原始研究范围：{selected.scope.text}</p><p>替代查询：{selected.scope.alternatives.join('、')||'无'} · 必须包含：{selected.hard_constraints.must_include.join('、')||'无'} · 排除：{selected.hard_constraints.exclude.join('、')||'无'}</p><p>来源：{selected.scope.sources.join('、')} · 关联：{selected.relations.length?`${selected.relations.length} 项`:'空关联（合法）'}</p>
+  {!isCreateDraft&&isFullView(selected)&&<section className="child-result"><h3>当前完整已提交版本</h3><p>关注问题：{selected.question} <TestTag tags={selected.tags}/></p><p>状态：{statusLabel[selected.status]||selected.status} · 版本 {selected.version}</p><p>原始研究范围：{selected.scope.text}</p><p>替代查询：{selected.scope.alternatives.join('、')||'无'} · 必须包含：{selected.hard_constraints.must_include.join('、')||'无'} · 排除：{selected.hard_constraints.exclude.join('、')||'无'}</p><p>来源：{selected.scope.sources.join('、')} · 关联：{selected.relations.length?`${selected.relations.length} 项`:'空关联（合法）'}</p>
   {selected.status!=='deleted'&&<div className="workbench-actions">
     {selected.status==='following'&&<button type="button" disabled={!!creating||loading||saving} onClick={()=>retrieve(selected)}>{creating===selected.frontier_id?'正在创建检索计划…':'创建检索计划（不检索）'}</button>}
     {selected.status==='following'&&<><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'paused')}>暂停</button><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'resolved')}>解决</button></>}

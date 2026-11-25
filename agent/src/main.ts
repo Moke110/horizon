@@ -92,7 +92,8 @@ async function main() {
       : `You are Horizon's built-in research agent. Complete the current bounded task using Horizon business tools.
 Read the workflow references before performing a workflow. Existing Python commands in references map to horizon_cli(module, args).
 Use the installed interpreter implicitly through horizon_cli; no shell or external agent is needed.
-Desktop recoverable turns expose only read_file and delegate: legacy mutating CLI and file writes are unavailable because their commits cannot be safely replayed. Never claim those operations completed.
+Desktop recoverable turns expose read_file, delegate, and Librarian tools. Legacy mutating CLI and file writes are unavailable there because their commits cannot be safely replayed. Never claim those operations completed.
+For every Library entry created to exercise or verify functionality, including a term, Hpedia question, Archive source, frontier or progress, set testData to true. Mark only test records that way. Library cleanup requires Explorer confirmation.
 Never modify application code or credentials. Never bypass validators or user review. Never repeat an ambiguous delivery.
 Use read_file and write_file for task JSON and artifacts. Do not claim delivery without tool evidence.\n${skill}` });
   await loader.reload();
@@ -277,9 +278,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         Type.Literal("create"), Type.Literal("update"), Type.Literal("archive"), Type.Literal("batch")]),
       termId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
+      testData: Type.Optional(Type.Boolean({description:"True for development test records being created."})),
     }),
     execute: (callId, p, signal) => requestLibrary(callId, {
-      type: "term_request", action: p.action, termId: p.termId, fields: p.fields ? JSON.parse(p.fields) : {},
+      type: "term_request", testData: p.testData, action: p.action, termId: p.termId, fields: p.fields ? JSON.parse(p.fields) : {},
     }, signal),
   });
   const archiveSource = defineTool({
@@ -290,9 +292,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         Type.Literal("create"), Type.Literal("update"), Type.Literal("delete")]),
       sourceId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
+      testData: Type.Optional(Type.Boolean({description:"True for development test records being created."})),
     }),
     execute: (callId, p, signal) => requestLibrary(callId, {
-      type: "source_request", action: p.action, sourceId: p.sourceId, fields: p.fields ? JSON.parse(p.fields) : {},
+      type: "source_request", testData: p.testData, action: p.action, sourceId: p.sourceId, fields: p.fields ? JSON.parse(p.fields) : {},
     }, signal),
   });
   const frontierTracking = defineTool({
@@ -304,10 +307,37 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         Type.Literal("update"), Type.Literal("delete")]),
       frontierId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
+      testData: Type.Optional(Type.Boolean({description:"True for development test records being created."})),
     }),
     execute: (callId, p, signal) => requestLibrary(callId, {
-      type: "tracking_request", entity: p.entity, action: p.action, frontierId: p.frontierId,
+      type: "tracking_request", testData: p.testData, entity: p.entity, action: p.action, frontierId: p.frontierId,
       fields: p.fields ? JSON.parse(p.fields) : {},
+    }, signal),
+  });
+  const hpediaQuestion = defineTool({
+    name: "hpedia_question", label: "Library Hpedia question",
+    description: "List, view, or propose a create, update or delete for an Hpedia question. Create requires JSON fields prompt and answer, with an explicit [[term:ID]] Dictionary reference in at least one. Use questionId and expected_version for update or delete. Set testData for development test questions.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("create"),
+        Type.Literal("update"), Type.Literal("delete")]),
+      questionId: Type.Optional(Type.String()),
+      fields: Type.Optional(Type.String({maxLength: 64000})),
+      testData: Type.Optional(Type.Boolean()),
+    }),
+    execute: (callId, p, signal) => requestLibrary(callId, {
+      type: "question_request", action: p.action, questionId: p.questionId, testData: p.testData,
+      fields: p.fields ? JSON.parse(p.fields) : {},
+    }, signal),
+  });
+  const libraryTestCleanup = defineTool({
+    name: "library_test_cleanup", label: "Library test data cleanup",
+    description: "Preview test-tagged Library records and affected references. Request Explorer confirmation for removals. A preview or pending confirmation never deletes data. Optionally pass pairs of entity kind and record ID.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("preview"), Type.Literal("request")]),
+      selection: Type.Optional(Type.Array(Type.Tuple([Type.String(), Type.String()]))),
+    }),
+    execute: (callId, p, signal) => requestLibrary(callId, {
+      type:"test_cleanup_request", action:p.action, selection:p.selection,
     }, signal),
   });
   if (voyager || editor || keeper) {
@@ -323,9 +353,12 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     process.stdin.pause();
     tools.push(defineTool({ name: keeper ? "keeper_context" : editor ? "editor_context" : "voyager_context", label: "Saved source evidence", description: "Read the bound evidence and limitations.", parameters: Type.Object({}), execute: async () => result(context) }));
   } else if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
-  else tools.push(delegate, dictionary, archiveSource, frontierTracking);
+  else {
+    tools.push(delegate);
+    if (values["turn-id"]) tools.push(dictionary, archiveSource, frontierTracking, hpediaQuestion, libraryTestCleanup);
+  }
   const allowedTools = keeper ? tools.filter(t => t.name === "keeper_context") : editor ? tools.filter(t => t.name === "editor_context") : voyager ? tools.filter(t => t.name === "voyager_context") :
-    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -462,7 +495,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
           for (const call of calls) {
             if (after.some(message => message.role === "toolResult" && message.toolCallId === call.id)) continue;
             const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-            if (!tool || !["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
+            if (!tool || !["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
             const output = await tool.execute(call.id, call.arguments, undefined);
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });
           }

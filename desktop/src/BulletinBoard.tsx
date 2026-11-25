@@ -1,3 +1,4 @@
+import {TestTag} from './TestCleanupPanel';
 import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {convergenceLabel,type Convergence} from './ConvergenceSelect';
@@ -5,6 +6,7 @@ import {QuestionContents,TermContents,termLinkLabels,type Question} from './Hped
 import type {CardSummary,KnowledgeCard} from './KnowledgeCardPanel';
 
 export type BulletinLink = {
+  tags?:string[];
   kind:'term'|'question';
   id:string;
   title:string;
@@ -39,7 +41,7 @@ export function BulletinBoard({links,terms,detailHost,openDetail,send,children}:
     <h1>白板</h1>
     {links.length?<ul>{links.map(link=><li key={link.kind+':'+link.id}>
       <button type="button" onClick={()=>open(link.kind,link.id)}>
-        {termLinkLabels(link.title,terms)} <small>{link.kind==='term'?'术语':'百科问题'} · {convergenceLabel(link.convergence,link.kind)}</small>
+        {termLinkLabels(link.title,terms)} <TestTag tags={link.tags}/> <small>{link.kind==='term'?'术语':'百科问题'} · {convergenceLabel(link.convergence,link.kind)}</small>
       </button>
     </li>)}</ul>:<p>暂无待解决的术语和问题。</p>}
     {children}

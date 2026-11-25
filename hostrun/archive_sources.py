@@ -5,6 +5,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from hostrun.agent_service import CommandError
+from hostrun.library_tags import new_test_tags
 
 _FIELDS = {"title", "label", "url", "material_id"}
 
@@ -86,6 +87,8 @@ class ArchiveSources:
 
     def apply(self, db, action, command):
         allowed = {"operation_id", "schema_version"}
+        if action == "create":
+            allowed.add("test_data")
         if action != "create":
             allowed |= {"source_id", "expected_version"}
         if action != "delete":
@@ -97,7 +100,7 @@ class ArchiveSources:
         ):
             raise CommandError("invalid_command", "不支持的资料库来源版本")
         if action == "create":
-            record = {"source_id": str(uuid.uuid4()), "version": 0, "status": "active"}
+            record = {"source_id": str(uuid.uuid4()), "version": 0, "status": "active", **new_test_tags(command)}
         else:
             record = self.read_in_transaction(db, command.get("source_id"))
             self.check_write_lock(db, record["source_id"])

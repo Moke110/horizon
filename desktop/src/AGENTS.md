@@ -27,6 +27,7 @@
 | [SchedulePanel.tsx](SchedulePanel.tsx) | Edits retrieval schedules and shows their running state. |
 | [style.css](style.css) | Desktop layout and control styles. |
 | [SubscriptionPanel.tsx](SubscriptionPanel.tsx) | Configures subscription sources and displays incremental discovery status. |
+| [TestCleanupPanel.tsx](TestCleanupPanel.tsx) | Previews test content cleanup and displays affected references. |
 | [ThemePanel.tsx](ThemePanel.tsx) | Edits Theme judgments, conditions and supporting or opposing evidence. |
 | [VoyagerPanel.tsx](VoyagerPanel.tsx) | Starts scoped retrieval and presents candidates and coverage. |
 | [VoyagerSourceSettings.tsx](VoyagerSourceSettings.tsx) | Configures retrieval sources and displays credential availability. |

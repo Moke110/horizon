@@ -5,6 +5,7 @@ import time
 import uuid
 
 from hostrun.agent_service import CommandError
+from hostrun.library_tags import new_test_tags
 
 
 def initialize(db):
@@ -23,6 +24,8 @@ def list_for_frontier(db, frontier_id):
 
 def apply(db, action, command, *, frontier, view_source, check_lock, now=None):
     allowed = {"schema_version", "operation_id", "frontier_id"}
+    if action == "create":
+        allowed.add("test_data")
     if action != "create":
         allowed.update(("progress_id", "expected_version"))
     if action != "delete":
@@ -39,7 +42,7 @@ def apply(db, action, command, *, frontier, view_source, check_lock, now=None):
         now = time.time()
     if action == "create":
         progress = {"progress_id": str(uuid.uuid4()), "frontier_id": frontier_id,
-                    "version": 0, "status": "active", "created_at": int(now)}
+                    "version": 0, "status": "active", "created_at": int(now), **new_test_tags(command)}
     else:
         progress_id = command.get("progress_id")
         if not isinstance(progress_id, str):

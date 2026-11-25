@@ -1,12 +1,13 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {TestTag} from './TestCleanupPanel';
 
 import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
-export type CardSummary={card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
+export type CardSummary={tags?:string[];card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
 type SourceInput={material_id:string;excerpt:string;locator:string};
 type SavedSource=SourceInput&{title:string;material_version:number;content_hash:string;status?:'removed'};
 type MaterialSummary={material_id:string;title:string};
-export type KnowledgeCard={schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];recall_terms:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};
+export type KnowledgeCard={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];recall_terms:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};
 export type CardConflictDetails={expected_version?:number;current_version?:number;current?:KnowledgeCard;submitted?:Record<string,unknown>;changed?:string[]};
 export type CardViewEvent={source:'view';operation_id?:string;nonce:string};
 export type CardCommandError={operation_id?:string;code?:string;message?:string;details?:CardConflictDetails};
@@ -217,7 +218,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该卡片已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</button>
   </section>}
   {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
-  <p>{selected.title} · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
+  <p>{selected.title} <TestTag tags={selected.tags}/> · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 检索词：{selected.recall_terms.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
   <p>{provenanceLabel(selected)}{selected.convergence?(' · '+convergenceLabel(selected.convergence,'term')):selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}

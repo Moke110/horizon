@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hostrun.agent_service import CommandError
+from hostrun.library_tags import new_test_tags, visible_tags
 from hostrun.convergence import current as current_convergence, validate as validate_convergence
 from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
@@ -345,6 +346,7 @@ class KnowledgeCardService:
                 "known": True,
                 "origin": "keeper" if origin == "keeper" else "manual",
                 "status": "active",
+                **new_test_tags(command),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -467,6 +469,7 @@ class KnowledgeCardService:
             "source_removed": any(source.get("status") == "removed" for source in card["sources"]),
             "questionable": card["questionable"],
             **({"convergence": card["convergence"]} if "convergence" in card else {}),
+            **visible_tags(card),
             "updated_at": card["updated_at"],
         }
 

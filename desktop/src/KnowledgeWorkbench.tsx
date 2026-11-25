@@ -1,3 +1,4 @@
+import {TestTag} from './TestCleanupPanel';
 import {createPortal} from 'react-dom';
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {KeeperReviewRetry} from './KeeperReviewRetry';
@@ -1243,7 +1244,7 @@ export function KnowledgeWorkbench({
         :<ul className="workbench-results" ref={results} aria-label="搜索结果">
           {rows.map(row=><li key={`${row.kind}:${row.id}`}>
             <button type="button" data-result className={active?.mode==='open'&&active.type===row.kind&&active.id===row.id?'selected':''} aria-current={active?.mode==='open'&&active.type===row.kind&&active.id===row.id?true:undefined} onClick={()=>openResult(row)}>
-              <span className="workbench-result-title">{row.title||'（无标题）'}</span>
+              <span className="workbench-result-title">{row.title||'（无标题）'} {row.kind==='card'&&<TestTag tags={cards.find(card=>card.card_id===row.id)?.tags}/>}</span>
               {row.summary&&<span className="workbench-result-summary">{row.summary}</span>}
               <span className="workbench-result-meta">
                 <span>{kindLabel(row.kind)}</span>

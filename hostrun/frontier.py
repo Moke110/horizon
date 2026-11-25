@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hostrun.agent_service import CommandError
+from hostrun.library_tags import new_test_tags, visible_tags
 from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 
@@ -295,6 +296,7 @@ class FrontierService:
                 "scope": _validate_scope(command.get("scope")),
                 "hard_constraints": _validate_constraints(command.get("hard_constraints")),
                 "relations": _validate_relations(command.get("relations", [])),
+                **new_test_tags(command),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -363,7 +365,8 @@ class FrontierService:
     def _summary(frontier):
         return {"frontier_id": frontier["frontier_id"], "version": frontier["version"],
                 "question": frontier["question"], "status": frontier["status"],
-                "scope_text": frontier["scope"]["text"][:256], "updated_at": frontier["updated_at"]}
+                "scope_text": frontier["scope"]["text"][:256], "updated_at": frontier["updated_at"],
+                **visible_tags(frontier)}
 
     def view(self, frontier_id, *, token):
         self._authorize(token)

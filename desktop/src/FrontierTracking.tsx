@@ -1,10 +1,11 @@
+import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {KnowledgePanel,type Frontier,type FrontierCommandError,type FrontierSummary,type FrontierViewEvent} from './KnowledgePanel';
 import type {ArchiveSource} from './ArchiveSourcesPanel';
 import type {VoyagerSummary} from './VoyagerPanel';
 
-type Progress={progress_id:string;frontier_id:string;version:number;content:string;source_ids:string[]};
+type Progress={tags?:string[];progress_id:string;frontier_id:string;version:number;content:string;source_ids:string[]};
 type Selection={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 type Tracking={frontier_id:string;progress:Progress[];history:VoyagerSummary[]};
 
@@ -34,6 +35,9 @@ export function FrontierTracking({frontiers,sources,frontier,viewEvent,error,det
     if(event.kind==='frontier_tracking'&&event.data.frontier_id===requested.current){
       setTracking(event.data);
     }
+    if(event.kind==='frontier_tracking_invalidated'&&requested.current&&event.data.includes(requested.current)){
+      sending.current({action:'frontier_tracking',frontier_id:requested.current});
+    }
   }),[]);
   useEffect(()=>{
     requested.current=selectedId;
@@ -53,7 +57,7 @@ export function FrontierTracking({frontiers,sources,frontier,viewEvent,error,det
     <button type="button" onClick={()=>show({kind:'create',nonce:crypto.randomUUID()})}>新增前沿</button>
     <ul>{frontiers.filter(item=>item.status!=='deleted').map(item=><li key={item.frontier_id}>
       <button type="button" onClick={()=>show({kind:'open',nonce:crypto.randomUUID(),id:item.frontier_id,version:item.version})}>
-        {item.question} <small>{statusText[item.status]}</small>
+        {item.question} <TestTag tags={item.tags}/> <small>{statusText[item.status]}</small>
       </button>
     </li>)}</ul>
     {detailHost&&selection&&createPortal(<div aria-label="前沿详情" className="frontier-detail">
@@ -82,7 +86,7 @@ export function FrontierTracking({frontiers,sources,frontier,viewEvent,error,det
           <button type="button" onClick={()=>setDraft(null)}>取消</button>
         </form>}
         {progress.length===0?<p>尚无进展。</p>:progress.map(item=><article key={item.progress_id}>
-          <p>{item.content}</p>
+          <p>{item.content} <TestTag tags={item.tags}/></p>
           {item.source_ids.length>0&&<ul aria-label="进展来源">{item.source_ids.map(id=>{
             const source=sources.find(row=>row.source_id===id);
             return <li key={id}>{source?<button type="button" onClick={()=>openSource(source)}>{source.title}</button>:'来源已移除'}</li>;

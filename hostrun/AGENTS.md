@@ -38,6 +38,8 @@
 | [executor.py](executor.py) | Single-executor lease: one host drives one knowledge base at a time. |
 | [facilities.py](facilities.py) | Create or attach the Feishu facilities horizon needs, by confirmed names. |
 | [feedback.py](feedback.py) | Persistent feedback in Feishu: questions, submissions, results, corrections. |
+| [library_cleanup.py](library_cleanup.py) | Previews removal of marked Library records and affected references. |
+| [library_tags.py](library_tags.py) | Defines the marker stored on Agent-generated development records. |
 | [frontier_progress.py](frontier_progress.py) | Stores versioned Frontier progress and Archive source references. |
 | [frontier.py](frontier.py) | Local Frontier (关注问题/方向) knowledge, independent of Feishu. |
 | [initialize.py](initialize.py) | Formal knowledge initialization from literature, requirements and a draft. |

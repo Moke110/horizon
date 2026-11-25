@@ -26,6 +26,10 @@ class DesktopWorker:
             return self._source_request(librarian, operation, event, token=token)
         if event.get("type") == "tracking_request":
             return self._tracking_request(librarian, operation, event, token=token)
+        if event.get("type") == "question_request":
+            return self._question_request(librarian, operation, event, token=token)
+        if event.get("type") == "test_cleanup_request":
+            return self._test_cleanup_request(librarian, operation, event, token=token)
         if operation == "list":
             return librarian.list(token=token)
         if operation == "view":
@@ -46,11 +50,12 @@ class DesktopWorker:
                 if not isinstance(item, list) or len(item) != 2 or not isinstance(item[1], dict):
                     raise CommandError("invalid_command", "无效的术语变更")
                 action, fields = item
-                commands.append((action, {**fields, "operation_id": f"{request_id}:{index}",
+                commands.append((action, {**self._development_fields(event, action, fields), "operation_id": f"{request_id}:{index}",
                                           "schema_version": 1}))
             card = librarian.request_batch(request_id, commands, token=token, origin=origin)
         elif operation in ("create", "update", "archive"):
-            command = {**payload, "operation_id": request_id, "schema_version": 1}
+            command = {**self._development_fields(event, operation, payload),
+                       "operation_id": request_id, "schema_version": 1}
             card = librarian.request(operation, command, token=token, origin=origin)
         else:
             raise CommandError("invalid_command", "不支持的术语操作")
@@ -77,7 +82,7 @@ class DesktopWorker:
         request_id = event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
-        command = {**fields, "operation_id": request_id}
+        command = {**self._development_fields(event, operation, fields), "operation_id": request_id}
         if source_id:
             command["source_id"] = source_id
         card = librarian.request_source(operation, command, token=token, origin="agent:" + self.task_id)
@@ -99,11 +104,51 @@ class DesktopWorker:
         fields, request_id = event.get("fields"), event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
             raise CommandError("invalid_command", "需要有效的前沿或进展变更")
-        command = {**fields, "operation_id": request_id, "schema_version": 1}
+        command = {**self._development_fields(event, operation, fields),
+                   "operation_id": request_id, "schema_version": 1}
         if frontier_id is not None:
             command["frontier_id"] = frontier_id
         submit = librarian.request_frontier if entity == "frontier" else librarian.request_progress
         card = submit(operation, command, token=token, origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    @staticmethod
+    def _development_fields(event, action, fields):
+        if action == "create" and event.get("testData") is True:
+            return {**fields, "test_data": True}
+        return fields
+
+    def _question_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        question_id = event.get("questionId")
+        if operation == "list":
+            return librarian.list_questions(token=token)
+        if operation == "view":
+            return librarian.view_question(question_id, token=token)
+        fields, request_id = event.get("fields"), event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的百科问题变更")
+        command = {**self._development_fields(event, operation, fields),
+                   "operation_id": request_id, "schema_version": 1}
+        if question_id is not None:
+            command["question_id"] = question_id
+        card = librarian.request_question(operation, command, token=token, origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    def _test_cleanup_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        selection = event.get("selection")
+        if operation == "preview":
+            return librarian.preview_test_cleanup(token=token, selection=selection)
+        request_id = event.get("requestId")
+        if operation != "request" or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的测试内容清理请求")
+        card = librarian.request_test_cleanup(request_id, token=token, origin="agent:" + self.task_id,
+                                             selection=selection)
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
@@ -145,7 +190,7 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') in ('term_request', 'source_request', 'tracking_request'):
+                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)
