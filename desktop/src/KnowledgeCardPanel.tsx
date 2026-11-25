@@ -1,10 +1,11 @@
 import React,{useEffect,useRef,useState} from 'react';
+import {MultilineInput, TextInput} from './gui/elements/FormElements';
+import {TermLists, type SourceInput} from './TermLists';
 import {TestTag} from './TestCleanupPanel';
 
 import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
 export type CardSummary={tags?:string[];card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
-type SourceInput={material_id:string;excerpt:string;locator:string};
 type SavedSource=SourceInput&{title:string;material_version:number;content_hash:string;status?:'removed'};
 type MaterialSummary={material_id:string;title:string};
 export type KnowledgeCard={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};
@@ -83,6 +84,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   const save=()=>{
     if(loading||saving||latest)return;
     if(staleDraft){setMessage('当前草稿属于另一条知识卡片；请重新载入本记录后再保存。');return;}
+    if(termMode&&sources.some(source=>!source.locator.trim()||!source.excerpt.trim())){setMessage('请为每项来源填写定位和原文摘录。');return;}
     const payload={title,content,aliases:lines(aliases),sources,relations,convergence,...(reason.trim()?{reason:reason.trim()}:{})};
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,card_id:editing?.card_id};
@@ -181,6 +183,12 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
 
 
   {!locked&&!staleDraft&&<form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
+  {termMode?<><label>标题<TextInput required value={title} onChange={e=>setTitle(e.target.value)}/></label>
+  <label>释义<MultilineInput required value={content} onChange={e=>setContent(e.target.value)}/></label>
+  <TermLists aliases={lines(aliases)} sources={sources} relations={relations} materials={materials}
+    terms={cards.filter(card=>card.card_id!==editing?.card_id)} materialName={materialName} termName={cardName}
+    onAliases={values=>setAliases(values.join('\n'))} onSources={setSources} onRelations={setRelations}/>
+  </>:<>
   <label>标题<input required disabled={loading} value={title} onChange={e=>setTitle(e.target.value)}/></label>
   <label>{termMode?'释义':'内容'}<textarea required disabled={loading} value={content} onChange={e=>setContent(e.target.value)}/></label>
   <label>别名（每行一个）<textarea disabled={loading} value={aliases} onChange={e=>setAliases(e.target.value)}/></label>
@@ -201,6 +209,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <label>{termMode?'关联术语':'关联知识卡片'}<select multiple value={relations} onChange={e=>setRelations(Array.from(e.target.selectedOptions,option=>option.value))}>
     {cards.filter(card=>card.card_id!==editing?.card_id).map(card=><option key={card.card_id} value={card.card_id}>{card.title}{card.status==='archived'?'（已归档）':''}</option>)}
   </select></label>
+  </>}
   <ConvergenceSelect kind="term" value={convergence} onChange={setConvergence}/>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
   <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>

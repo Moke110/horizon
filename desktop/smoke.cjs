@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 
+if (process.env.HORIZON_SMOKE_PROFILE) app.setPath('userData', process.env.HORIZON_SMOKE_PROFILE);
+
 const timeout = setTimeout(() => finish('Timed out', 1), 15000);
 function finish(result, code) {
   clearTimeout(timeout);
@@ -58,6 +60,7 @@ const server = net.createServer(socket => socket.on('data', chunk => {
   if (!chunk.toString().includes('"action":"ready"')) return;
   socket.write(JSON.stringify({kind:'state', data:{
     chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
+    cards:[{card_id:'related-term',version:1,title:'Related term',status:'active',updated_at:1}],
     children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}], providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
   }}) + '\n');
 }));
@@ -89,7 +92,105 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       if (navigator.userAgent.includes('Windows') && (!overlay?.height || overlay.width >= innerWidth)) {
         throw Error('The native caption does not reserve space for Windows window buttons');
       }
+      navigation.querySelector('button[aria-label="词典"]').click();
+      (await wait(() => document.querySelector('[aria-label="新建术语"] button'))).click();
+      const termField = await wait(() => Array.from(document.querySelectorAll('form label'))
+        .find(label => label.textContent.trim() === '释义')?.querySelector('textarea'));
+      const singleLineHeight = termField.getBoundingClientRect().height;
+      termField.value = Array(10).fill('A long definition').join(String.fromCharCode(10));
+      const lineHeight = Number.parseFloat(getComputedStyle(termField).lineHeight);
+      if (!Number.isFinite(lineHeight) || Math.abs(termField.getBoundingClientRect().height - singleLineHeight - lineHeight * 5) > 1 ||
+          termField.scrollHeight <= termField.clientHeight) {
+        throw Error('Term definition did not grow to six visible lines and scroll');
+      }
+      const buttonByText = (root, text) => Array.from(root.querySelectorAll('button'))
+        .find(button => button.textContent.trim() === text);
+      const clickNamed = name => document.querySelector('button[aria-label="' + name + '"]').click();
+      const press = (element, key) => element.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles:true}));
+      const setField = (field, value) => {
+        const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
+          field instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(field, value);
+        field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input', {bubbles:true}));
+      };
+      const toggleList = async label => {
+        const toggle = await wait(() => Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
+          .find(button => button.firstElementChild?.textContent === label));
+        toggle.click();
+        return document.getElementById(toggle.getAttribute('aria-controls'));
+      };
+      const termFormTitle = Array.from(termField.form.querySelectorAll('label'))
+        .find(label => label.textContent.trim() === '标题').querySelector('input');
+      setField(termFormTitle, 'Interaction test');
+      setField(termField, 'A definition');
+      const aliases = await toggleList('别名');
+      clickNamed('新增别名');
+      let aliasInput = await wait(() => aliases.querySelector('input'));
+      setField(aliasInput, 'Term alias');
+      press(aliasInput, 'Enter');
+      await wait(() => aliases.textContent.includes('Term alias'));
+      clickNamed('编辑别名 Term alias');
+      aliasInput = await wait(() => aliases.querySelector('input'));
+      setField(aliasInput, 'Discarded');
+      press(aliasInput, 'Escape');
+      await wait(() => aliases.textContent.includes('Term alias'));
+      clickNamed('编辑别名 Term alias');
+      aliasInput = await wait(() => aliases.querySelector('input'));
+      setField(aliasInput, 'Outside saved');
+      termField.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true}));
+      await wait(() => aliases.textContent.includes('Outside saved'));
+      clickNamed('删除别名 Outside saved');
+      await wait(() => !aliases.textContent.includes('Outside saved'));
+      clickNamed('新增别名');
+      aliasInput = await wait(() => aliases.querySelector('input'));
+      press(aliasInput, 'Enter');
+      await wait(() => !aliases.querySelector('input') && !aliases.querySelector('[aria-label^="编辑"]'));
+
+      const sources = await toggleList('来源');
+      const openDialog = async label => {
+        clickNamed('新增' + label);
+        return wait(() => document.querySelector('main [role="dialog"]'));
+      };
+      let dialog = await openDialog('来源');
+      dialog.parentElement.click();
+      if (!dialog.isConnected || !Array.from(document.querySelector('main').children).some(el => el.inert)) {
+        throw Error('Main-panel dialog closed on backdrop or left main-panel controls interactive');
+      }
+      setField(dialog.querySelector('input'), 'Page 1');
+      buttonByText(dialog, '保存').click();
+      await wait(() => dialog.querySelector('[role="alert"]')?.textContent.includes('请选择资料'));
+      setField(dialog.querySelector('select'), 'material');
+      buttonByText(dialog, '保存').click();
+      await wait(() => sources.textContent.includes('Test source'));
+      const termForm = termField.form;
+      buttonByText(termForm, '创建术语').click();
+      await wait(() => termForm.parentElement.querySelector('[role="status"]')?.textContent.includes('定位和原文摘录'));
+      dialog = await openDialog('来源');
+      buttonByText(dialog, '取消').click();
+      await wait(() => !dialog.isConnected && sources.querySelectorAll('[aria-label^="编辑"]').length === 1);
+      const sourceEdit = sources.querySelector('[aria-label^="编辑"]');
+      sourceEdit.click();
+      dialog = await wait(() => document.querySelector('main [role="dialog"]'));
+      setField(dialog.querySelector('select'), '');
+      setField(dialog.querySelector('input'), '');
+      buttonByText(dialog, '保存').click();
+      await wait(() => !sources.textContent.includes('Test source'));
+      const relations = await toggleList('关联术语');
+      dialog = await openDialog('关联术语');
+      setField(dialog.querySelector('select'), 'related-term');
+      buttonByText(dialog, '保存').click();
+      await wait(() => relations.textContent.includes('Related term'));
+      clickNamed('编辑关联术语 Related term');
+      dialog = await wait(() => document.querySelector('main [role="dialog"]'));
+      setField(dialog.querySelector('select'), '');
+      press(dialog.querySelector('select'), 'Escape');
+      await wait(() => !dialog.isConnected && relations.textContent.includes('Related term'));
+      clickNamed('删除关联术语 Related term');
+      await wait(() => !relations.textContent.includes('Related term'));
+      dialog = await openDialog('关联术语');
       navigation.querySelector('button[aria-label="资料"]').click();
+      await wait(() => !dialog.isConnected && !document.querySelector('main > [inert]'));
+
       const material = await wait(() => Array.from(document.querySelectorAll('[aria-label="资料列表"] button'))
         .find(button => button.textContent.includes('Test source')));
       const main = document.querySelector('main');
@@ -116,7 +217,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       report.click();
       await wait(() => document.querySelector('[aria-label="工作区详情"] article')?.textContent.includes('Report body'));
       if (!main.contains(report)) throw Error('The report launcher did not stay in the main panel');
-      return 'Desktop smoke passed: caption overlay, navigation, HTML snapshot, PDF rendering, report, panel resize and close';
+      return 'Desktop smoke passed: dictionary input sizing, alias and source editing, related Terms, modal cancellation, caption overlay, navigation, HTML snapshot, PDF rendering, report, panel resize and close';
     })()`);
     const fixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), 'research-view.html');
     fs.writeFileSync(fixture, '<h1>Saved HTML report</h1><script>throw Error("unsafe")</script><p><strong>Report emphasis</strong></p>');
@@ -145,6 +246,38 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       }
       throw Error('Saved HTML did not open in the detail panel');
     })()`);
+    const mouseClick = async selector => {
+      const bounds = await win.webContents.executeJavaScript(`(() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        if (!element) throw new Error('Missing mouse target: ' + ${JSON.stringify(selector)});
+        element.scrollIntoView({block:'nearest'});
+        const bounds = element.getBoundingClientRect();
+        return {x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2)};
+      })()`);
+      win.webContents.sendInputEvent({type:'mouseMove', ...bounds});
+      win.webContents.sendInputEvent({type:'mouseDown', button:'left', clickCount:1, ...bounds});
+      win.webContents.sendInputEvent({type:'mouseUp', button:'left', clickCount:1, ...bounds});
+      await new Promise(resolve => setTimeout(resolve, 80));
+    };
+    win.show();
+    win.focus();
+    win.webContents.focus();
+    await mouseClick('#workspace-navigation button[aria-label="词典"]');
+    await mouseClick('[aria-label="新建术语"] button');
+    const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
+      .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
+    if (!sourceToggle) throw Error('Native mouse did not open the Term draft');
+    await mouseClick('button[aria-controls="' + sourceToggle + '"]');
+    await mouseClick('button[aria-label="新增来源"]');
+    if (!await win.webContents.executeJavaScript(`!!document.querySelector('main [role="dialog"]')`)) {
+      throw Error('Native mouse did not open the source dialog');
+    }
+    win.webContents.sendInputEvent({type:'keyDown', keyCode:'Escape'});
+    win.webContents.sendInputEvent({type:'keyUp', keyCode:'Escape'});
+    await new Promise(resolve => setTimeout(resolve, 80));
+    if (await win.webContents.executeJavaScript(`!!document.querySelector('main [role="dialog"]')`)) {
+      throw Error('Native keyboard Escape did not dismiss the source dialog');
+    }
     if (process.env.HORIZON_SMOKE_SCREENSHOT) {
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
