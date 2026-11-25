@@ -211,13 +211,36 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       await wait(() => document.querySelector('[aria-label="工作区详情"] canvas')?.height === 300);
       (await wait(() => navigation.querySelector('.sessions button'))).click();
       const reportsSummary = await wait(() => document.querySelector('.messages details summary'));
+      if (reportsSummary.getBoundingClientRect().width < reportsSummary.parentElement.clientWidth - 1 ||
+          getComputedStyle(reportsSummary).borderTopLeftRadius === '0px' ||
+          getComputedStyle(reportsSummary, '::after').content === 'none') {
+        throw Error('The report launcher needs a full-row rounded disclosure with an end arrow');
+      }
       reportsSummary.click();
+      if (!reportsSummary.parentElement.open) throw Error('The report disclosure did not open');
+      const synthesis = Array.from(reportsSummary.parentElement.querySelectorAll('summary'))
+        .find(summary => summary.textContent === '综合多份资料');
+      synthesis.click();
+      const expand = synthesis.parentElement.querySelector('input[type="checkbox"]');
+      const checked = expand.checked;
+      expand.closest('label').querySelector('span').click();
+      if (checked === expand.checked) throw Error('The report checkbox label did not toggle its value');
       const report = await wait(() => Array.from(document.querySelectorAll('.messages button'))
         .find(button => button.textContent.includes('打开报道')));
       report.click();
       await wait(() => document.querySelector('[aria-label="工作区详情"] article')?.textContent.includes('Report body'));
+      const score = await wait(() => document.querySelector('article[aria-label="报道正文"] select[name="score"]'));
+      setField(score, '4');
+      if (!score.checkValidity() || new FormData(score.form).get('score') !== '4') {
+        throw Error('The report rating did not preserve select validity and form submission');
+      }
+      const page = score.closest('article');
+      const handoff = Array.from(page.querySelectorAll('summary'))
+        .find(summary => summary.textContent === '交给其他流程的反馈');
+      handoff.click();
+      await wait(() => page.querySelector('textarea[name="note"]')?.getBoundingClientRect().height > 0);
       if (!main.contains(report)) throw Error('The report launcher did not stay in the main panel');
-      return 'Desktop smoke passed: dictionary input sizing, alias and source editing, related Terms, modal cancellation, caption overlay, navigation, HTML snapshot, PDF rendering, report, panel resize and close';
+      return 'Desktop smoke passed: dictionary input sizing, alias and source editing, related Terms, modal cancellation, caption overlay, navigation, HTML snapshot, PDF rendering, report disclosure and form controls, panel resize and close';
     })()`);
     const fixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), 'research-view.html');
     fs.writeFileSync(fixture, '<h1>Saved HTML report</h1><script>throw Error("unsafe")</script><p><strong>Report emphasis</strong></p>');

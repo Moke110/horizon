@@ -1,3 +1,5 @@
+import {FixedSelect} from './gui/elements/ChoiceElements';
+import {Collapsible} from './gui/elements/Collapsible';
 import React, {useEffect, useState} from 'react';
 
 export type FrontierChoice = {frontier_id:string; question:string; status:string};
@@ -18,17 +20,17 @@ const scopeLabels:Record<string,string> = {default:'默认', global:'全局', fr
 function StyleChoices({kind, value, onChange, inherit}:{
   kind:StyleKey; value:string; onChange:(value:string)=>void; inherit?:boolean;
 }) {
-  return <label>{names[kind]} <select value={value} onChange={event=>onChange(event.target.value)}>
+  return <label>{names[kind]} <FixedSelect value={value} onChange={event=>onChange(event.target.value)}>
     {inherit && <option value="">沿用偏好</option>}
     {Object.entries(labels[kind]).map(([key,label])=><option key={key} value={key}>{label}</option>)}
-  </select></label>;
+  </FixedSelect></label>;
 }
 
 export function CurrentWritingOptions({frontiers, value, inherited, onChange}:{
   frontiers:FrontierChoice[]; value:WritingRequest; inherited?:string; onChange:(value:WritingRequest)=>void;
 }) {
-  return <details><summary>本次写作样式</summary>
-    <label>报道所属 Frontier <select value={value.frontier_id===null?'__global':value.frontier_id || ''} onChange={event=>{
+  return <Collapsible title="本次写作样式">
+    <label>报道所属 Frontier <FixedSelect value={value.frontier_id===null?'__global':value.frontier_id || ''} onChange={event=>{
       const selected=event.target.value;
       onChange({...value, frontier_id:selected==='__global'?null:selected || undefined});
     }}>
@@ -36,7 +38,7 @@ export function CurrentWritingOptions({frontiers, value, inherited, onChange}:{
       <option value="__global">全局</option>
       {frontiers.filter(row=>row.status==='following').map(row=>
         <option key={row.frontier_id} value={row.frontier_id}>{row.question}</option>)}
-    </select></label>
+    </FixedSelect></label>
     {keys.map(key=><StyleChoices key={key} kind={key} value={value.once?.[key] || ''} inherit
       onChange={next=>{
         const once={...value.once};
@@ -44,14 +46,14 @@ export function CurrentWritingOptions({frontiers, value, inherited, onChange}:{
         else delete once[key];
         onChange({...value, once});
       }}/>)}
-  </details>;
+  </Collapsible>;
 }
 
 export function UsedWritingPreferences({rows, frontiers}: {rows:WritingPreference[]; frontiers:FrontierChoice[]}) {
   const preferences = rows.filter(row=>row.key);
   if (!preferences.length) return null;
-  return <details><summary>本版使用的写作偏好</summary><ul>{preferences.map(row=>
-    <li key={row.key}>{names[row.key]} · {labels[row.key][row.value]} · {scopeLabels[row.scope || 'default']}{row.frontier_id && ` · ${frontiers.find(item=>item.frontier_id===row.frontier_id)?.question || row.frontier_id}`} · v{row.version}</li>)}</ul></details>;
+  return <Collapsible title="本版使用的写作偏好"><ul>{preferences.map(row=>
+    <li key={row.key}>{names[row.key]} · {labels[row.key][row.value]} · {scopeLabels[row.scope || 'default']}{row.frontier_id && ` · ${frontiers.find(item=>item.frontier_id===row.frontier_id)?.question || row.frontier_id}`} · v{row.version}</li>)}</ul></Collapsible>;
 }
 
 export function EditorPreferences({taskId, frontiers, send}:{
@@ -76,20 +78,19 @@ export function EditorPreferences({taskId, frontiers, send}:{
     key:row.key, frontier_id:row.frontier_id, expected_version:row.version,
   });
   const scopeName = (id?:string|null) => id ? frontiers.find(row=>row.frontier_id===id)?.question || id : '全局';
-  return <details>
-    <summary>写作偏好</summary>
+  return <Collapsible title="写作偏好">
     <form onSubmit={event=>{
       event.preventDefault();
       change('save',{key:kind,value,frontier_id:scope || null,expected_version:current(kind)?.version || 0});
     }}>
-      <label>长期生效范围 <select value={scope} onChange={event=>setScope(event.target.value)}>
+      <label>长期生效范围 <FixedSelect value={scope} onChange={event=>setScope(event.target.value)}>
         <option value="">全局</option>
         {frontiers.filter(row=>row.status==='following').map(row=>
           <option key={row.frontier_id} value={row.frontier_id}>{row.question}</option>)}
-      </select></label>
-      <label>样式类别 <select value={kind} onChange={event=>{setKind(event.target.value as StyleKey);setValue('standard');}}>
+      </FixedSelect></label>
+      <label>样式类别 <FixedSelect value={kind} onChange={event=>{setKind(event.target.value as StyleKey);setValue('standard');}}>
         {keys.map(key=><option key={key} value={key}>{names[key]}</option>)}
-      </select></label>
+      </FixedSelect></label>
       <StyleChoices kind={kind} value={value} onChange={setValue}/>
       <button type="submit">保存为长期偏好</button>
       <button type="button" onClick={()=>change('reset',{frontier_id:scope || null,
@@ -119,5 +120,5 @@ export function EditorPreferences({taskId, frontiers, send}:{
         })}>采用到{scopeName(scope)}</button>
         <button type="button" onClick={()=>change('dismiss',{candidate_id:row.id})}>忽略</button>
       </li>)}</ul>}
-  </details>;
+  </Collapsible>;
 }
