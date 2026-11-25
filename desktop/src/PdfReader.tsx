@@ -1,3 +1,4 @@
+import {MultilineInput} from './gui/elements/FormElements';
 import React,{useEffect,useRef,useState} from 'react';
 import type {PDFDocumentLoadingTask, RenderTask, PDFWorker} from 'pdfjs-dist';
 export type PdfInfo={status:string;reason:string;anchors:{page:number;start:number;end:number}[]};
@@ -35,6 +36,6 @@ export function PdfReader({id,info,text,version,send}:{id:string;info:PdfInfo;te
  {info.anchors.map(a=><button key={a.page} aria-pressed={a.page===page} onClick={()=>setPage(a.page)}>第 {a.page} 页</button>)}
  {error?<p role="alert">{error}</p>:<canvas aria-label={'PDF 第 '+page+' 页'} ref={canvas} style={{maxWidth:'100%',height:'auto'}}/>}
  {info.status==='supplemented'?<><h4>补充文本</h4><pre style={{whiteSpace:'pre-wrap'}}>{text}</pre></>:anchor&&<><h4>第 {page} 页提取文本</h4><pre style={{whiteSpace:'pre-wrap'}}>{Array.from(text).slice(anchor.start,anchor.end).join('')}</pre></>}
- {info.status==='pending_text'&&<><label>补充文本<textarea value={supplement} onChange={e=>setSupplement(e.target.value)}/></label><button disabled={!supplement.trim()} onClick={()=>resolve('supplement')}>保存补充文本</button><button onClick={()=>resolve('abandon')}>放弃补充</button></>}
+ {info.status==='pending_text'&&<><label>补充文本<MultilineInput value={supplement} onChange={e=>setSupplement(e.target.value)}/></label><button disabled={!supplement.trim()} onClick={()=>resolve('supplement')}>保存补充文本</button><button onClick={()=>resolve('abandon')}>放弃补充</button></>}
  {info.status==='abandoned'&&<p>已放弃补充文本。</p>}</section>;
 }
