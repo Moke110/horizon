@@ -15,6 +15,28 @@ class DesktopWorker:
                         turn_id=(getattr(self, 'turn', None) or {}).get('turn_id', ''))
         record_event(self.home, event, **metadata)
 
+    def _term_request(self, event):
+        from hostrun.agent_service import CommandError
+        from hostrun.knowledge_cards import KnowledgeCardService
+        from hostrun.librarian import Librarian
+        token = self.service_token
+        librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
+        operation = event.get("action")
+        if operation == "list":
+            return librarian.list(token=token)
+        if operation == "view":
+            return librarian.view(event.get("termId"), token=token)
+        if operation not in ("create", "update", "archive"):
+            raise CommandError("invalid_command", "不支持的术语操作")
+        payload = event.get("fields")
+        if not isinstance(payload, dict):
+            raise CommandError("invalid_command", "需要术语变更内容")
+        command = {**payload, "operation_id": event["requestId"], "schema_version": 1}
+        card = librarian.request(operation, command, token=token,
+                                 origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
     def run_agent(self, task, session_id=None, history=None):
         completed_text = None
         failure = None
@@ -52,6 +74,16 @@ class DesktopWorker:
                 try:
                     event = json.loads(line)
                 except ValueError:
+                    continue
+                if event.get('type') == 'term_request':
+                    from hostrun.agent_service import CommandError
+                    try:
+                        result = self._term_request(event)
+                    except CommandError as exc:
+                        result = {"status": "returned", "message": str(exc)}
+                    self.process.stdin.write(json.dumps({"requestId": event["requestId"],
+                                                        "result": result}) + "\n")
+                    self.process.stdin.flush()
                     continue
                 if event.get('type') == 'delegate_request':
                     try:

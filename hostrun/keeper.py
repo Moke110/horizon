@@ -46,7 +46,7 @@ from hostrun.keeper_decisions import (
     validate_relations_against_deletions,
 )
 from hostrun.keeper_evidence_policy import review_policy
-from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.knowledge_cards import _provenance as _card_provenance
 from hostrun.knowledge_themes import KnowledgeThemeService, _MAX_EVIDENCE, _sufficiency
 from hostrun.managed_database import database_connection
@@ -271,7 +271,7 @@ class KeeperService:
             raise ValueError("A launch token is required")
         self.agent = agent
         self.materials = materials
-        self.cards = cards
+        self.cards = Librarian(cards, token=token)
         self.themes = themes
         self.frontiers = frontiers
         self.home = Path(agent.home)
@@ -1443,10 +1443,9 @@ class KeeperService:
             **({"provenance": {"source": "editor"}, "execution_attempt": receipt.get("execution_attempt", 0)} if command.get("report_kind") == "editor" else {}),
         }
 
-    @staticmethod
-    def _read_owner(db, kind, identity):
+    def _read_owner(self, db, kind, identity):
         if kind == "card":
-            return KnowledgeCardService.read_in_transaction(db, identity)
+            return self.cards.read_in_transaction(db, identity)
         if kind == "theme":
             return KnowledgeThemeService.read_in_transaction(db, identity)
         return FrontierService.read_in_transaction(db, identity)
@@ -1548,7 +1547,7 @@ class KeeperService:
                 or entry["proposal"]["action"] != "create":
             return None
         label = _normalized_label(self._creation_label(entry))
-        matches = [record for record in KnowledgeCardService.query_all_in_transaction(db)
+        matches = [record for record in self.cards.query_all_in_transaction(db)
                    if record.get("status") == "active" and record.get("known")
                    and _normalized_label(record.get("title") or "") == label]
         if len(matches) != 1:
@@ -1597,7 +1596,7 @@ class KeeperService:
         kind = entry["kind"]
         label = _normalized_label(self._creation_label(entry))
         if kind == "card":
-            records = KnowledgeCardService.query_all_in_transaction(db)
+            records = self.cards.query_all_in_transaction(db)
             records = [record for record in records
                        if record.get("status") == "active" and record.get("known")]
         elif kind == "theme":
@@ -1721,7 +1720,7 @@ class KeeperService:
                                          change, change["sources"])
         if len(change["sources"]) > 16:
             raise CommandError("invalid_card", "来源数量超出限制")
-        fields = KnowledgeCardService._fields(editable)
+        fields = self.cards.term_fields(editable)
         if action == "create":
             if merge_from is not None or add_sources is not None:
                 raise CommandError(
@@ -1730,7 +1729,7 @@ class KeeperService:
                 raise CommandError("invalid_card", "title and content are required")
             if not citations:
                 raise _Returned("missing_evidence")
-            relations = self.cards._relations(db, None, fields.get("relations", []))
+            relations = self.cards.term_relations(db, None, fields.get("relations", []))
             sources = self._dedupe_card_sources(citations)
             provenance, source_pending = _card_provenance(sources)
             after = {
@@ -1759,7 +1758,7 @@ class KeeperService:
             raise CommandError("invalid_command", "Sources belong on the change")
         relations = card["relations"]
         if "relations" in fields:
-            relations = self.cards._relations(db, card["card_id"], fields["relations"])
+            relations = self.cards.term_relations(db, card["card_id"], fields["relations"])
         requested_sources = [self._card_source(source, reference)
                              for source, reference in citations]
         if merge_from is not None:
@@ -1780,8 +1779,8 @@ class KeeperService:
                 raise CommandError("invalid_card", "来源数量超出限制")
             updated = keeper_merge.survivor_after(card, donor, sources)
             editable_merge = {key: updated[key] for key in _CARD_FIELDS}
-            KnowledgeCardService._fields(editable_merge)
-            self.cards._relations(db, card["card_id"], updated["relations"])
+            self.cards.term_fields(editable_merge)
+            self.cards.term_relations(db, card["card_id"], updated["relations"])
             updated["provenance"], updated["source_pending"] = _card_provenance(sources)
             proposal = self._proposal_change(
                 "card", "update", card["card_id"], change["expected_version"],
@@ -2054,7 +2053,7 @@ class KeeperService:
     def _inbound_redirects(self, db, donor_id, survivor_id, survivor_version):
         """Active Cards and Themes that must explicitly replace the donor."""
         expected = {}
-        for record in KnowledgeCardService.query_all_in_transaction(db):
+        for record in self.cards.query_all_in_transaction(db):
             if record.get("status") != "active" or not record.get("known") \
                     or record.get("card_id") in (donor_id, survivor_id):
                 continue

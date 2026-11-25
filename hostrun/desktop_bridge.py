@@ -16,6 +16,7 @@ from hostrun.voyager_materials import MaterialsService
 from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.knowledge_history import KnowledgeHistoryService
 from hostrun.keeper_group_undo import KeeperGroupUndo
 from hostrun.knowledge_themes import KnowledgeThemeService
@@ -536,6 +537,26 @@ def frontier_command(frontier, command, *, token):
     return "frontier_view", value
 
 
+def librarian_card_command(librarian, command, *, token, origin):
+    action = command["action"]
+    if action in ("card_create", "card_update", "card_archive"):
+        payload = {key: value for key, value in command.items() if key != "action"}
+        card = librarian.request(action.removeprefix("card_"), payload,
+                                 token=token, origin=origin)
+        return "term_confirmation", card
+    if action == "card_batch":
+        card = librarian.request_batch(command.get("operation_id"), command.get("changes"),
+                                       token=token, origin=origin)
+        return "term_confirmation", card
+    if action == "card_confirm":
+        card = librarian.decide(command["operation_id"], command.get("choice"),
+                                token=token, origin=origin)
+        return "term_confirmation", card
+    if action in ("card_list", "card_query", "card_open"):
+        return card_command(librarian, command, token=token)
+    raise CommandError("invalid_command", "不支持的术语操作")
+
+
 def card_command(cards, command, *, token):
     """Route desktop Knowledge Card commands through the public service."""
     action = command.get("action")
@@ -718,8 +739,9 @@ def _serve(resolved, executable, managed):
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
-    knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=knowledge_cards,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
-    knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=knowledge_cards,themes=knowledge_themes,frontiers=frontier)
+    librarian = Librarian(knowledge_cards, token=token)
+    knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=librarian,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
+    knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=librarian,themes=knowledge_themes,frontiers=frontier)
     keeper_runtime = KeeperRuntime(service, token=token, code_root=code)
     keeper_service = None
     keeper_test_enabled = keeper_test_requests_enabled()
@@ -808,7 +830,8 @@ def _serve(resolved, executable, managed):
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':knowledge_cards.list(token=token),'themes':knowledge_themes.list(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'themes':knowledge_themes.list(token=token),
+                            'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -997,10 +1020,20 @@ def _serve(resolved, executable, managed):
                         kind,data=frontier_command(frontier,cmd,token=token)
                         emit(kind,data)
                     elif action in ('card_create','card_update','card_archive',
-                                    'card_open','card_list','card_query'):
+                                    'card_open','card_list','card_query','card_confirm','card_batch'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
-                        kind,data=card_command(knowledge_cards,cmd,token=token)
+                        kind,data=librarian_card_command(librarian,cmd,token=token,origin='gui')
                         emit(kind,data)
+                        if kind == 'term_confirmation' and data['status'] == 'confirmed':
+                            for term in data['results']:
+                                emit('card_view', term)
+                    elif action == 'agent_term_confirm':
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if not chats or cmd.get('task_id') != chats[current]['task_id']:
+                            raise CommandError('not_found', '本会话没有该确认请求')
+                        librarian.decide(cmd.get('operation_id'),cmd.get('choice'),
+                                         token=token,origin='agent:'+chats[current]['task_id'])
+                        state()
                     elif action in ('theme_create','theme_update','theme_archive',
                                     'theme_open','theme_list','theme_query','theme_source'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
@@ -1175,6 +1208,8 @@ def _serve(resolved, executable, managed):
             if kind == 'agent':
                 if data['type'] == 'text': response += data['text']
                 elif data['type'] == 'error': response += '\n错误：' + data['message']
+            elif kind == 'term_confirmation_changed':
+                state()
             elif kind == 'done':
                 if not data or not data.get('durable'):
                     if getattr(app, 'turn', None):

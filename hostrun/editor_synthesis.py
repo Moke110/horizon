@@ -6,6 +6,7 @@ from hostrun.agent_service import CommandError
 from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, SYNTHESIS_SOURCE_BUDGET,
                                     build_editor_context, evidence_provenance, report_evidence)
 from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.voyager_service import VoyagerService
 
 
@@ -31,7 +32,8 @@ def synthesis_input(value):
 
 
 def confirmed_knowledge(home, *, token):
-    cards = KnowledgeCardService(home, token=token).query(token=token)
+    librarian = Librarian(KnowledgeCardService(home, token=token), token=token)
+    cards = librarian.query(token=token)
     return [{"kind": "card", "id": item["card_id"], "version": item["version"],
               "title": item["title"][:120], "summary": item["content"][:500]}
              for item in cards if item["known"] and not item["source_pending"] and not item["questionable"]

@@ -1254,7 +1254,7 @@ export function KnowledgeWorkbench({
             <div>
               <span className="workbench-kind">{TYPE_LABEL[active.type]}</span>
               <h2 ref={detailHeading} tabIndex={-1}>{activeTitle||'知识库记录'}</h2>
-              <p>{active.mode==='create'?'保存会直接创建并提交':`${STATUS_LABEL[activeStatus]||activeStatus||'已提交'}${activeVersion?` · 版本 v${activeVersion}`:''}`}</p>
+              <p>{active.mode==='create'?(active.type==='card'?'提交后需要确认':'保存会直接创建并提交'):`${STATUS_LABEL[activeStatus]||activeStatus||'已提交'}${activeVersion?` · 版本 v${activeVersion}`:''}`}</p>
             </div>
             <div className="workbench-detail-actions">
               {active.mode==='open'&&active.id&&<button ref={historyButton} type="button" aria-expanded={historyOpen} aria-controls="knowledge-history" onClick={()=>{if(historyOpen)closeHistory();else setHistoryOpen(true);}}>{historyOpen?'收起版本历史':'版本历史'}</button>}

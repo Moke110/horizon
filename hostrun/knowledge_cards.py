@@ -138,6 +138,12 @@ class KnowledgeCardService:
         db.execute("CREATE TABLE IF NOT EXISTS knowledge_card_operations(operation_id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS knowledge_card_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT UNIQUE NOT NULL,event TEXT NOT NULL)")
 
+        db.execute("""CREATE TABLE IF NOT EXISTS librarian_term_requests(
+            id TEXT PRIMARY KEY, origin TEXT NOT NULL, request TEXT NOT NULL,
+            expires_at REAL NOT NULL, result TEXT NOT NULL)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS librarian_term_locks(
+            term_id TEXT PRIMARY KEY, request_id TEXT NOT NULL)""")
+
     @contextmanager
     def _connect(self):
         with database_connection(self.home) as db:
@@ -281,7 +287,7 @@ class KnowledgeCardService:
             self.notify_committed(card)
         return card
 
-    def apply_in_transaction(self, db, action, command, *, token, origin="manual"):
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None):
         """Apply one Knowledge Card write on the caller's open transaction.
 
         ``delete`` and ``archive`` share the public archive semantics and the
@@ -337,6 +343,13 @@ class KnowledgeCardService:
                            "card_id": card_id, "operation_id": command["operation_id"]}, origin)))
             return card, True
         card = self._read(db, command.get("card_id"))
+        now = self.clock() if lock_clock is None else lock_clock
+        locked = db.execute("""SELECT 1 FROM librarian_term_locks AS lock
+            JOIN librarian_term_requests AS request ON request.id=lock.request_id
+            WHERE lock.term_id=? AND request.expires_at>?""",
+                            (card["card_id"], now)).fetchone()
+        if locked:
+            raise CommandError("term_locked", "术语正在等待确认")
         if action == "update":
             fields = self._fields(command)
             if type(command.get("expected_version")) is not int \

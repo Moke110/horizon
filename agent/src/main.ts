@@ -250,6 +250,36 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         emit({ type: "delegate_request", requestId, role: p.role, input: p.input });
       });
     } });
+  const dictionary = defineTool({
+    name: "dictionary", label: "Library dictionary",
+    description: "List or read terms, or propose one create, update or archive for Explorer confirmation in this session. For a create provide title and content in JSON fields. For update/archive provide card_id and expected_version, plus changed fields for update. A pending card has not changed the term.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("view"),
+        Type.Literal("create"), Type.Literal("update"), Type.Literal("archive")]),
+      termId: Type.Optional(Type.String()),
+      fields: Type.Optional(Type.String({maxLength: 24000})),
+    }),
+    execute: async (callId, p, signal) => {
+      const entry = sessionManager.getBranch().findLast((candidate: any) =>
+        candidate.type === "message" && candidate.message.role === "assistant" &&
+        candidate.message.content.some((part: any) => part.type === "toolCall" && part.id === callId));
+      if (!entry || !values["turn-id"]) throw new Error("A persistent Explorer session is required");
+      const requestId = createHash("sha256").update(JSON.stringify([entry.id, callId])).digest("hex");
+      const fields = p.fields ? JSON.parse(p.fields) : {};
+      ensureInputReader();
+      if (ownerInputClosed) throw new Error("The Horizon desktop disconnected");
+      return await new Promise<any>((resolveReply, reject) => {
+        const abort = () => { pending.delete(requestId); reject(new Error("Term request cancelled")); };
+        if (signal?.aborted) return abort();
+        signal?.addEventListener("abort", abort, {once: true});
+        pending.set(requestId, {callId, resolve: value => {
+          signal?.removeEventListener("abort", abort);
+          resolveReply(value);
+        }, reject});
+        emit({type: "term_request", requestId, action: p.action, termId: p.termId, fields});
+      });
+    },
+  });
   if (voyager || editor || keeper) {
     const ownerInput = createInterface({ input: process.stdin, crlfDelay: Infinity });
     const context = await new Promise<string>((accept, reject) => {
@@ -263,9 +293,9 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     process.stdin.pause();
     tools.push(defineTool({ name: keeper ? "keeper_context" : editor ? "editor_context" : "voyager_context", label: "Saved source evidence", description: "Read the bound evidence and limitations.", parameters: Type.Object({}), execute: async () => result(context) }));
   } else if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
-  else tools.push(delegate);
+  else tools.push(delegate, dictionary);
   const allowedTools = keeper ? tools.filter(t => t.name === "keeper_context") : editor ? tools.filter(t => t.name === "editor_context") : voyager ? tools.filter(t => t.name === "voyager_context") :
-    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "dictionary"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -402,7 +432,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
           for (const call of calls) {
             if (after.some(message => message.role === "toolResult" && message.toolCallId === call.id)) continue;
             const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-            if (!tool || !["read_file", "delegate", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
+            if (!tool || !["read_file", "delegate", "dictionary", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
             const output = await tool.execute(call.id, call.arguments, undefined);
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });
           }
