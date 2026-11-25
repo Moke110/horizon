@@ -38,7 +38,7 @@ _REVISE_REQUIRED = {"schema_version", "operation_id", "proposal_id", "revision",
 _KIND_LABEL_FIELDS = {"card": "title", "theme": "judgement",
                       "frontier": "question"}
 _EDITABLE_FIELDS = {
-    "card": ("title", "content", "aliases", "recall_terms", "relations",
+    "card": ("title", "content", "aliases", "relations",
              "questionable"),
     "theme": ("judgement", "conditions", "related_cards", "evidence"),
     "frontier": ("question", "scope", "hard_constraints", "relations",

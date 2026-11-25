@@ -164,7 +164,7 @@ def test_exact_merge_builds_survivor_union_and_redirects_with_read_only_preview(
     assert merged["after"]["content"] == "Survivor body.\n\nDonor body."
     assert set(merged["after"]["aliases"]) == {
         "baseline", "field-notes", donor["title"]}
-    assert set(merged["after"]["recall_terms"]) == {"optics", "donor-recall"}
+    assert "recall_terms" not in merged["after"]
     assert merged["after"]["questionable"] is True
     assert merged["after"]["relations"] == [
         world["other_a"]["card_id"], world["other_b"]["card_id"]]

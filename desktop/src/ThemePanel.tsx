@@ -1,3 +1,5 @@
+import {TextInput, MultilineInput} from './gui/elements/FormElements';
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import React,{useEffect,useRef,useState} from 'react';
 
 export type ThemeSummary={theme_id:string;version:number;judgement:string;status:string;evidence_sufficiency:string;evidence_count:number;related_card_count:number;updated_at:number};
@@ -221,33 +223,33 @@ export function ThemePanel({themes,materials,cards,selected,viewEvent,commandErr
   const locked=!creating&&isFullTheme(selected)&&selected.status==='archived'&&!editing;
   return <div className={`trace${embedded?' workbench-panel':''}`}>{!embedded&&<h2>命题</h2>}<p>命题是跨来源的判断：写明适用条件，用支持或反对的证据记录立场；证据只引用已保存资料的不可变快照。</p>
   {!locked&&!staleDraft&&<form onSubmit={e=>{e.preventDefault();save();}}><fieldset disabled={loading||saving}>
-  <label>判断<textarea required maxLength={4000} value={judgement} onChange={e=>setJudgement(e.target.value)}/></label>
-  <label>适用条件（每行一个）<textarea maxLength={2000} value={conditions} onChange={e=>setConditions(e.target.value)}/></label>
-  <label>关联知识卡片<select multiple value={relatedCards.map(relation=>relation.card_id)} onChange={e=>toggleRelated(Array.from(e.target.selectedOptions,option=>option.value))}>
+  <label>判断<MultilineInput required maxLength={4000} value={judgement} onChange={e=>setJudgement(e.target.value)}/></label>
+  <label>适用条件（每行一个）<MultilineInput maxLength={2000} value={conditions} onChange={e=>setConditions(e.target.value)}/></label>
+  <label>关联知识卡片<FixedSelect multiple value={relatedCards.map(relation=>relation.card_id)} onChange={e=>toggleRelated(Array.from(e.target.selectedOptions,option=>option.value))}>
     {cards.map(card=><option key={card.card_id} value={card.card_id} disabled={card.status==='archived'&&!relatedCards.some(relation=>relation.card_id===card.card_id)}>{card.title}{card.status==='archived'?'（已归档）':''}（v{card.version}）</option>)}
-  </select></label>
+  </FixedSelect></label>
   {!cards.length&&<p>暂无知识卡片；仍可保存不含关联的命题。</p>}
   <fieldset><legend>证据</legend>
   {evidence.map((entry,index)=><div key={index}>
-    <label>方向<select value={entry.stance} onChange={e=>changeEvidence(index,{stance:e.target.value as 'supports'|'opposes'})}><option value="supports">支持</option><option value="opposes">反对</option></select></label>
-    <label>理由<textarea required maxLength={4000} value={entry.reason} onChange={e=>changeEvidence(index,{reason:e.target.value})}/></label>
-    <label>已保存的资料<select required value={entry.source.material_id} onChange={e=>{
+    <label>方向<FixedSelect value={entry.stance} onChange={e=>changeEvidence(index,{stance:e.target.value as 'supports'|'opposes'})}><option value="supports">支持</option><option value="opposes">反对</option></FixedSelect></label>
+    <label>理由<MultilineInput required maxLength={4000} value={entry.reason} onChange={e=>changeEvidence(index,{reason:e.target.value})}/></label>
+    <label>已保存的资料<FixedSelect required value={entry.source.material_id} onChange={e=>{
       const material=materials.find(item=>item.material_id===e.target.value);
       changeSource(index,{material_id:e.target.value,material_version:material?.version,locator:'',excerpt:''});
     }}>
       <option value="">选择资料</option>
       {entry.source.material_id&&!materials.some(m=>m.material_id===entry.source.material_id)&&<option value={entry.source.material_id}>{materialName(entry.source.material_id)}</option>}
       {materials.map(m=><option key={m.material_id} value={m.material_id}>{m.title}{m.version?`（v${m.version}）`:''}</option>)}
-    </select></label>
-    <label>定位<input required maxLength={2000} placeholder="例如第 2 页或 p6" value={entry.source.locator} onChange={e=>changeSource(index,{locator:e.target.value})}/></label>
-    <label>原文摘录<textarea required maxLength={4000} value={entry.source.excerpt} onChange={e=>changeSource(index,{excerpt:e.target.value})}/></label>
+    </FixedSelect></label>
+    <label>定位<TextInput required maxLength={2000} placeholder="例如第 2 页或 p6" value={entry.source.locator} onChange={e=>changeSource(index,{locator:e.target.value})}/></label>
+    <label>原文摘录<MultilineInput required maxLength={4000} value={entry.source.excerpt} onChange={e=>changeSource(index,{excerpt:e.target.value})}/></label>
     <button type="button" onClick={()=>setEvidence(current=>current.filter((_,i)=>i!==index))}>移除证据</button>
   </div>)}
   <button type="button" disabled={evidence.length>=64} onClick={()=>setEvidence(current=>[...current,{stance:'supports',reason:'',source:{material_id:'',locator:'',excerpt:''}}])}>添加证据</button>
   {!materials.length&&!evidence.length&&<p>可在「资料」保存来源，再到这里引用证据。</p>}
   </fieldset>
   <p>证据为空或只有单一方向也可保存，命题会标记为「证据不足」。</p>
-  <label>本次保存理由（可选）<input maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充反对证据"/></label>
+  <label>本次保存理由（可选）<TextInput maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充反对证据"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
   <button type="submit" disabled={loading||saving||!!latest}>{editing?'保存修改':'创建命题'}</button>{editing&&<button type="button" disabled={saving} onClick={()=>load(editing)}>取消修改并重新读取</button>}
   </fieldset></form>}

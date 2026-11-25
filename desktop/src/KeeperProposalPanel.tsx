@@ -1,3 +1,6 @@
+import {MultilineInput} from './gui/elements/FormElements';
+import {Collapsible} from './gui/elements/Collapsible';
+import {Checkbox} from './gui/elements/ChoiceElements';
 import React,{useEffect,useRef,useState} from 'react';
 import {KeeperGroupUndoPanel} from './KeeperGroupUndoPanel';
 
@@ -32,7 +35,7 @@ export type KeeperChange={
 export type KeeperKeepFields={change_index:number;fields:string[]};
 /** Owner-editable fields; only these can be kept at their current value. */
 export const KEEPER_EDITABLE_FIELDS:Record<KeeperKind,string[]>={
-  card:['title','content','aliases','recall_terms','relations','questionable'],
+  card:['title','content','aliases','relations','questionable'],
   theme:['judgement','conditions','related_cards','evidence'],
   frontier:['question','scope','hard_constraints','relations','status'],
 };
@@ -191,7 +194,7 @@ const STATUS_LABEL:Record<string,string>={
 };
 const FIELD_LABEL:Record<string,string>={
   title:'标题',content:'内容',question:'关注问题',judgement:'判断',status:'状态',
-  aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关联',questionable:'存疑',
+  aliases:'别名',sources:'来源',relations:'关联',questionable:'存疑',
   provenance:'来源性质',source_pending:'来源待补充',conditions:'适用条件',
   related_cards:'关联知识卡片',evidence:'证据',evidence_sufficiency:'证据充分性',
   scope:'研究范围',text:'范围文本',alternatives:'替代查询',
@@ -230,7 +233,7 @@ const inlineValue=(value:unknown):string=>{
   if(value===null||value===undefined)return '未记录';
   if(Array.isArray(value))return value.length?value.map(inlineValue).join('、'):'（空）';
   if(isRecord(value)){
-    const entries=Object.entries(value);
+    const entries=Object.entries(value).filter(([key])=>key!=='recall_terms');
     if(!entries.length)return '（空）';
     return entries.map(([key,item])=>`${fieldLabel(key)}：${inlineValue(item)}`).join('；');
   }
@@ -240,7 +243,7 @@ const valueText=(value:unknown):string=>{
   if(value===null||value===undefined)return '';
   if(typeof value==='string')return value.trim()?value:'';
   if(isRecord(value)){
-    const entries=Object.entries(value);
+    const entries=Object.entries(value).filter(([key])=>key!=='recall_terms');
     if(!entries.length)return '';
     return entries.map(([key,item])=>`${fieldLabel(key)}：${inlineValue(item)}`).join('\n');
   }
@@ -468,10 +471,9 @@ function ValueText({value}:{value:unknown}){
   const text=valueText(value);
   if(!text)return <p className="keeper-value-empty">未记录</p>;
   if(text.length<=360)return <p className="keeper-value-text">{text}</p>;
-  return <details className="keeper-value-more">
-    <summary>{text.slice(0,360)}…</summary>
+  return <Collapsible className="keeper-value-more" title={<>{text.slice(0,360)}…</>}>
     <pre>{text}</pre>
-  </details>;
+  </Collapsible>;
 }
 
 function SourceList({sources}:{sources:KeeperSource[]}){
@@ -1115,7 +1117,7 @@ export function KeeperProposalPanel({
       <DecisionTargets changes={changes}/>
       {(!revisionValid||!versionsValid)&&<p className="keeper-decision-warning" role="alert">该提议缺少可绑定的修订或固定版本，暂不能决定；请重新打开提议核对。</p>}
       <label className="keeper-decision-reason">决定理由（可选）
-        <textarea value={reason} maxLength={500} disabled={deciding} onChange={event=>setReason(event.target.value)} placeholder="批准或拒绝这组变更的原因；再次打开时以持久回执为准"/>
+        <MultilineInput value={reason} maxLength={500} disabled={deciding} onChange={event=>setReason(event.target.value)} placeholder="批准或拒绝这组变更的原因；再次打开时以持久回执为准"/>
       </label>
       {decisionError&&<div className="keeper-decision-error" role="alert"><p>{decisionError}</p><p className="keeper-decision-note">决定未确认成功；已填写的理由、调整说明和字段选择仍然保留，可重试。</p></div>}
       <div className="keeper-decision-actions">
@@ -1135,17 +1137,16 @@ export function KeeperProposalPanel({
         <strong>该提议已退回。</strong> 可以结合退回原因再次提交调整要求；重新提交不会写入知识库，只有批准新的待确认修订才会写入。
       </div>}
       <label className="keeper-adjust-feedback">调整说明（必填）
-        <textarea value={feedback} disabled={deciding} onChange={event=>setFeedback(event.target.value)} placeholder="说明调整或重新复核的原因"/>
+        <MultilineInput value={feedback} disabled={deciding} onChange={event=>setFeedback(event.target.value)} placeholder="说明调整或重新复核的原因"/>
       </label>
       <p className={`keeper-feedback-count${feedbackTooLong?' keeper-feedback-over':''}`} aria-live="polite">
         {feedbackBytes} / {KEEPER_FEEDBACK_LIMIT} 字节{feedbackTooLong?' · 超出上限，暂不能提交':''}
       </p>
       <fieldset className="keeper-omit" disabled={deciding||merges.length>0}>
         <legend>本次整项移除的变更（可选）</legend>
-        {changes.map((change,index)=><label className="keeper-omit-row" key={`${change.kind}:${change.id||'new'}:${index}`}>
-          <input type="checkbox" checked={omit.has(index)} onChange={()=>toggleOmit(index)}/>
+        {changes.map((change,index)=><Checkbox className="keeper-omit-row" key={`${change.kind}:${change.id||'new'}:${index}`} checked={omit.has(index)} onChange={()=>toggleOmit(index)}>
           <span>第 {index+1} 项 · {keeperKindLabel(change.kind)} · {keeperActionLabel(change.action)} · {changeHeadline(change)}</span>
-        </label>)}
+        </Checkbox>)}
       </fieldset>
       {merges.length>0&&<p>合并和它的关系调整作为一组复核。</p>}
       <fieldset className="keeper-keep" disabled={deciding}>
@@ -1157,10 +1158,9 @@ export function KeeperProposalPanel({
           return <div className={`keeper-keep-row${omitted?' keeper-keep-row-omitted':''}`} key={`keep:${change.kind}:${change.id||'new'}:${index}`}>
             <p className="keeper-keep-head">第 {index+1} 项 · {keeperKindLabel(change.kind)} · {changeHeadline(change)}</p>
             <div className="keeper-keep-fields">
-              {fields.map(field=><label className="keeper-keep-field" key={field}>
-                <input type="checkbox" checked={!omitted&&keep.has(`${index}:${field}`)} disabled={deciding||omitted||!canAdjust} onChange={()=>toggleKeep(index,field)}/>
+              {fields.map(field=><Checkbox className="keeper-keep-field" key={field} checked={!omitted&&keep.has(`${index}:${field}`)} disabled={deciding||omitted||!canAdjust} onChange={()=>toggleKeep(index,field)}>
                 <span>{fieldLabel(field)}</span>
-              </label>)}
+              </Checkbox>)}
             </div>
           </div>;
         })}

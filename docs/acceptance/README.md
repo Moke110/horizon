@@ -698,3 +698,9 @@ The final native-path review verified no-follow directory and file creation, com
 - The integrated Windows suite passed 1,770 checks across the full run and a separate short-path packaging rerun, with 15 skips. Desktop typecheck and build, and the Agent build and runtime check, passed.
 
 The [Spec 8 issue](https://github.com/Moke110/horizon/issues/259) links the individual acceptance records.
+
+## Term editing and shared desktop controls (#260)
+
+- The renderer audit found the fixed input, select, checkbox, file input, disclosure and table markup in `desktop/src/gui/elements`. Both PDF chooser entry points use the shared file row and retain native Electron selection and import. The Windows smoke failed on the old PDF picker UI and passed after migration, including the selected basename and the unchanged PDF bytes sent through the bridge.
+- The Windows smoke ran the built renderer in an actual BrowserWindow using the installed Electron runtime, an isolated profile and `--disable-gpu`. It exercised the six-line definition input, the three Term lists, draft and cancellation rules, keyboard and mouse, Library navigation and review, file controls, workzone resizing, native caption overlay, PDF canvas, saved HTML and report controls. The smoke uses local fixture responses for the desktop bridge and a deterministic PDF chooser return value. The operating system's chooser dialog and unrelated external services were outside that check.
+- The complete Windows Python suite passed 1,770 tests with 15 skips. Desktop TypeScript checking, the desktop and Agent builds, and 12 Keeper renderer tests also passed. The Term tests cover reading records created with the retired field, alias search, and preserving the existing update, history and Librarian rules.

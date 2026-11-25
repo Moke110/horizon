@@ -1,3 +1,6 @@
+import {TextInput} from './gui/elements/FormElements';
+import {Checkbox} from './gui/elements/ChoiceElements';
+import {Collapsible} from './gui/elements/Collapsible';
 import React, {useEffect, useState} from 'react';
 
 const sources = [
@@ -59,8 +62,7 @@ export function VoyagerSourceSettings() {
   }
 
   return (
-    <details>
-      <summary>检索来源 API</summary>
+    <Collapsible title="检索来源 API">
       <p>密钥和联系邮箱保存在本机。使用来源时验证权限和额度。</p>
       {sources.map(source => (
         <form key={source.id} onSubmit={event => {
@@ -73,7 +75,7 @@ export function VoyagerSourceSettings() {
           }
         }}>
           <label>{source.label} {source.field}
-            <input name="key" type="password" autoComplete="off" maxLength={1024} required disabled={busy || !status} />
+            <TextInput name="key" type="password" autoComplete="off" maxLength={1024} required disabled={busy || !status} />
           </label>
           <p>{source.help}</p>
           {status && <p role="status">{status[source.id] === 'saved' && source.id === 'unpaywall' ? '已保存邮箱' : statusText[status[source.id] ?? 'missing']}</p>}
@@ -91,13 +93,12 @@ export function VoyagerSourceSettings() {
         }}>
           <h3>Tavily 免费预算</h3>
           <p>如果 Tavily 接口未返回上限，可填写控制台中的设置。每次搜索仍会核对免费套餐剩余额度。</p>
-          <label>
-            <input type="checkbox" checked={paygoDisabled} disabled={busy}
-              onChange={event => setPaygoDisabled(event.target.checked)} />
+          <Checkbox checked={paygoDisabled} disabled={busy}
+              onChange={event => setPaygoDisabled(event.target.checked)}>
             我已在 Tavily 控制台关闭按量付费（PAYG）
-          </label>
+          </Checkbox>
           <label>月度上限（credits）
-            <input type="number" min={1} max={Number.MAX_SAFE_INTEGER} step={1} required disabled={busy}
+            <TextInput type="number" min={1} max={Number.MAX_SAFE_INTEGER} step={1} required disabled={busy}
               value={monthlyLimit} onChange={event => setMonthlyLimit(event.target.value)} />
           </label>
           <button disabled={busy || !paygoDisabled}>保存 Tavily 免费预算</button>
@@ -108,6 +109,6 @@ export function VoyagerSourceSettings() {
       )}
       {error && <p role="alert">{error}</p>}
       {error && !status && <button type="button" disabled={busy} onClick={load}>重新读取配置</button>}
-    </details>
+    </Collapsible>
   );
 }

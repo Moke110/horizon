@@ -120,8 +120,6 @@ def survivor_after(survivor, donor, sources):
         "aliases": union_strings(survivor.get("aliases") or [],
                                   donor.get("aliases") or [],
                                   [donor.get("title")] if donor.get("title") else []),
-        "recall_terms": union_strings(survivor.get("recall_terms") or [],
-                                      donor.get("recall_terms") or []),
         "sources": copy.deepcopy(list(sources or [])),
         "relations": merge_relations(survivor, donor),
         "questionable": bool(survivor.get("questionable"))

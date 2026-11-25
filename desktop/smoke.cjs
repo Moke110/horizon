@@ -1,7 +1,9 @@
-const {app} = require('electron');
+const {app, dialog} = require('electron');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
+
+if (process.env.HORIZON_SMOKE_PROFILE) app.setPath('userData', process.env.HORIZON_SMOKE_PROFILE);
 
 const timeout = setTimeout(() => finish('Timed out', 1), 15000);
 function finish(result, code) {
@@ -30,7 +32,36 @@ function blankPdf() {
   return Buffer.from(pdf).toString('base64');
 }
 
+const libraryState = {
+  chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
+  cards:[{card_id:'related-term',version:1,title:'Related term',status:'active',updated_at:1}],
+  children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}],
+  providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
+};
+const pdfFileName = 'chooser-fixture.pdf';
+const pdfFixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), pdfFileName);
+fs.writeFileSync(pdfFixture, Buffer.from(blankPdf(), 'base64'));
+dialog.showOpenDialog = async () => ({canceled:false, filePaths:[pdfFixture]});
+let registeredPdf = false;
 const server = net.createServer(socket => socket.on('data', chunk => {
+  const pdfLine = chunk.toString().split('\n').find(line => line.includes('"action":"materials_pdf_register"'));
+  if (pdfLine) {
+    const command = JSON.parse(pdfLine);
+    registeredPdf = command.title === pdfFileName && command.pdf_base64 === blankPdf();
+  }
+  const questionLine = chunk.toString().split('\n')
+    .find(line => line.includes('"action":"question_create"') || line.includes('"action":"question_confirm"'));
+  if (questionLine) {
+    const command = JSON.parse(questionLine);
+    const confirm = command.action === 'question_confirm';
+    if (confirm && command.choice !== 'confirm') return;
+    const review = {entity:'question', operation_id:command.operation_id,
+      status:confirm ? 'confirmed' : 'pending', expires_at:Date.now()/1000+60,
+      changes:[['create',{prompt:command.prompt, answer:command.answer}]]};
+    socket.write(JSON.stringify({kind:'question_confirmation',data:review}) + '\n');
+    socket.write(JSON.stringify({kind:'state',data:{...libraryState,gui_term_confirmations:[review]}}) + '\n');
+    return;
+  }
   if (chunk.toString().includes('"action":"report_open"')) {
     socket.write(JSON.stringify({kind:'report_view',data:{
       task_id:'smoke', report_id:'report', version:1, title:'Test report',
@@ -56,10 +87,7 @@ const server = net.createServer(socket => socket.on('data', chunk => {
     }}) + '\n');
   }
   if (!chunk.toString().includes('"action":"ready"')) return;
-  socket.write(JSON.stringify({kind:'state', data:{
-    chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
-    children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}], providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
-  }}) + '\n');
+  socket.write(JSON.stringify({kind:'state',data:libraryState}) + '\n');
 }));
 server.listen(0, '127.0.0.1', () => {
   process.env.HORIZON_DESKTOP_PORT = String(server.address().port);
@@ -89,7 +117,116 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       if (navigator.userAgent.includes('Windows') && (!overlay?.height || overlay.width >= innerWidth)) {
         throw Error('The native caption does not reserve space for Windows window buttons');
       }
+      navigation.querySelector('button[aria-label="词典"]').click();
+      (await wait(() => document.querySelector('[aria-label="新建术语"] button'))).click();
+      const termField = await wait(() => Array.from(document.querySelectorAll('form label'))
+        .find(label => label.textContent.trim() === '释义')?.querySelector('textarea'));
+      const singleLineHeight = termField.getBoundingClientRect().height;
+      termField.value = Array(10).fill('A long definition').join(String.fromCharCode(10));
+      const lineHeight = Number.parseFloat(getComputedStyle(termField).lineHeight);
+      if (!Number.isFinite(lineHeight) || Math.abs(termField.getBoundingClientRect().height - singleLineHeight - lineHeight * 5) > 1 ||
+          termField.scrollHeight <= termField.clientHeight) {
+        throw Error('Term definition did not grow to six visible lines and scroll');
+      }
+      const buttonByText = (root, text) => Array.from(root.querySelectorAll('button'))
+        .find(button => button.textContent.trim() === text);
+      const clickNamed = name => document.querySelector('button[aria-label="' + name + '"]').click();
+      const press = (element, key) => element.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles:true}));
+      const setField = (field, value) => {
+        const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
+          field instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(field, value);
+        field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input', {bubbles:true}));
+      };
+      const toggleList = async label => {
+        const toggle = await wait(() => Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
+          .find(button => button.firstElementChild?.textContent === label));
+        toggle.click();
+        return document.getElementById(toggle.getAttribute('aria-controls'));
+      };
+      const termFormTitle = Array.from(termField.form.querySelectorAll('label'))
+        .find(label => label.textContent.trim() === '标题').querySelector('input');
+      setField(termFormTitle, 'Interaction test');
+      setField(termField, 'A definition');
+      const aliases = await toggleList('别名');
+      clickNamed('新增别名');
+      let aliasInput = await wait(() => aliases.querySelector('input'));
+      setField(aliasInput, 'Term alias');
+      press(aliasInput, 'Enter');
+      await wait(() => aliases.textContent.includes('Term alias'));
+      clickNamed('编辑别名 Term alias');
+      aliasInput = await wait(() => aliases.querySelector('input'));
+      setField(aliasInput, 'Discarded');
+      press(aliasInput, 'Escape');
+      await wait(() => aliases.textContent.includes('Term alias'));
+      clickNamed('编辑别名 Term alias');
+      aliasInput = await wait(() => aliases.querySelector('input'));
+      setField(aliasInput, 'Outside saved');
+      termField.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true}));
+      await wait(() => aliases.textContent.includes('Outside saved'));
+      clickNamed('删除别名 Outside saved');
+      await wait(() => !aliases.textContent.includes('Outside saved'));
+      clickNamed('新增别名');
+      aliasInput = await wait(() => aliases.querySelector('input'));
+      press(aliasInput, 'Enter');
+      await wait(() => !aliases.querySelector('input') && !aliases.querySelector('[aria-label^="编辑"]'));
+
+      const sources = await toggleList('来源');
+      const openDialog = async label => {
+        clickNamed('新增' + label);
+        return wait(() => document.querySelector('main [role="dialog"]'));
+      };
+      let dialog = await openDialog('来源');
+      dialog.parentElement.click();
+      if (!dialog.isConnected || !Array.from(document.querySelector('main').children).some(el => el.inert)) {
+        throw Error('Main-panel dialog closed on backdrop or left main-panel controls interactive');
+      }
+      setField(dialog.querySelector('input'), 'Page 1');
+      buttonByText(dialog, '保存').click();
+      await wait(() => dialog.querySelector('[role="alert"]')?.textContent.includes('请选择资料'));
+      setField(dialog.querySelector('select'), 'material');
+      buttonByText(dialog, '保存').click();
+      await wait(() => sources.textContent.includes('Test source'));
+      const termForm = termField.form;
+      buttonByText(termForm, '创建术语').click();
+      await wait(() => termForm.parentElement.querySelector('[role="status"]')?.textContent.includes('定位和原文摘录'));
+      dialog = await openDialog('来源');
+      buttonByText(dialog, '取消').click();
+      await wait(() => !dialog.isConnected && sources.querySelectorAll('[aria-label^="编辑"]').length === 1);
+      const sourceEdit = sources.querySelector('[aria-label^="编辑"]');
+      sourceEdit.click();
+      dialog = await wait(() => document.querySelector('main [role="dialog"]'));
+      setField(dialog.querySelector('select'), '');
+      setField(dialog.querySelector('input'), '');
+      buttonByText(dialog, '保存').click();
+      await wait(() => !sources.textContent.includes('Test source'));
+      const relations = await toggleList('关联术语');
+      dialog = await openDialog('关联术语');
+      setField(dialog.querySelector('select'), 'related-term');
+      buttonByText(dialog, '保存').click();
+      await wait(() => relations.textContent.includes('Related term'));
+      clickNamed('编辑关联术语 Related term');
+      dialog = await wait(() => document.querySelector('main [role="dialog"]'));
+      setField(dialog.querySelector('select'), '');
+      press(dialog.querySelector('select'), 'Escape');
+      await wait(() => !dialog.isConnected && relations.textContent.includes('Related term'));
+      clickNamed('删除关联术语 Related term');
+      await wait(() => !relations.textContent.includes('Related term'));
+      dialog = await openDialog('关联术语');
       navigation.querySelector('button[aria-label="资料"]').click();
+      await wait(() => !dialog.isConnected && !document.querySelector('main > [inert]'));
+
+      const filePicker = document.querySelector('[aria-label="打开 HTML"]');
+      if (!filePicker?.textContent.includes("未选择文件")) throw Error("HTML picker must display its empty file name");
+      const pdfPicker = document.querySelector('[aria-label="导入 PDF"]');
+      if (!pdfPicker?.textContent.includes('选择文件') || !pdfPicker.textContent.includes('未选择文件')) {
+        throw Error('PDF import must use the file chooser row');
+      }
+      pdfPicker.querySelector('button').click();
+      await wait(() => pdfPicker.querySelector('[title="chooser-fixture.pdf"]'));
+      const checkbox = Array.from(document.querySelectorAll("label")).find(label => label.textContent.includes("使用浏览器渲染公开动态页"));
+      checkbox.click();
+      if (!checkbox.querySelector("input").checked) throw Error("Checkbox label did not toggle");
       const material = await wait(() => Array.from(document.querySelectorAll('[aria-label="资料列表"] button'))
         .find(button => button.textContent.includes('Test source')));
       const main = document.querySelector('main');
@@ -108,15 +245,56 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       if (!pdf) throw Error('Missing PDF launcher');
       pdf.click();
       await wait(() => document.querySelector('[aria-label="工作区详情"] canvas')?.height === 300);
+      navigation.querySelector('button[aria-label="百科"]').click();
+      (await wait(() => Array.from(main.querySelectorAll('button')).find(button => button.textContent === '新增问题'))).click();
+      const question = await wait(() => document.querySelector('form.hpedia-form'));
+      const termPicker = question.querySelector('.hpedia-reference-picker select');
+      if (getComputedStyle(termPicker).appearance !== 'base-select') throw Error('Question reference is not a fixed single-select');
+      const fields = question.querySelectorAll('textarea');
+      setField(fields[0], 'Library smoke question');
+      setField(fields[1], 'Library smoke answer');
+      setField(termPicker, 'related-term');
+      (await wait(() => Array.from(question.querySelectorAll('button')).find(button => button.textContent === '引用到题干' && !button.disabled))).click();
+      await wait(() => fields[0].value.includes('[[term:related-term]]'));
+      question.requestSubmit();
+      const review = await wait(() => main.querySelector('[aria-label="百科问题变更确认"]'));
+      if (!review.textContent.includes('Library smoke answer')) throw Error('Question review payload did not reach the confirmation card');
+      Array.from(review.querySelectorAll('button')).find(button => button.textContent === '确认').click();
+      await wait(() => review.textContent.includes('已确认') && !review.querySelector('button'));
+      navigation.querySelector('button[aria-label="白板"]').click();
+      await wait(() => main.innerText.includes('前沿'));
       (await wait(() => navigation.querySelector('.sessions button'))).click();
       const reportsSummary = await wait(() => document.querySelector('.messages details summary'));
+      if (reportsSummary.getBoundingClientRect().width < reportsSummary.parentElement.clientWidth - 1 ||
+          getComputedStyle(reportsSummary).borderTopLeftRadius === '0px' ||
+          getComputedStyle(reportsSummary, '::after').content === 'none') {
+        throw Error('The report launcher needs a full-row rounded disclosure with an end arrow');
+      }
       reportsSummary.click();
+      if (!reportsSummary.parentElement.open) throw Error('The report disclosure did not open');
+      const synthesis = Array.from(reportsSummary.parentElement.querySelectorAll('summary'))
+        .find(summary => summary.textContent === '综合多份资料');
+      synthesis.click();
+      const expand = synthesis.parentElement.querySelector('input[type="checkbox"]');
+      const checked = expand.checked;
+      expand.closest('label').querySelector('span').click();
+      if (checked === expand.checked) throw Error('The report checkbox label did not toggle its value');
       const report = await wait(() => Array.from(document.querySelectorAll('.messages button'))
         .find(button => button.textContent.includes('打开报道')));
       report.click();
       await wait(() => document.querySelector('[aria-label="工作区详情"] article')?.textContent.includes('Report body'));
+      const score = await wait(() => document.querySelector('article[aria-label="报道正文"] select[name="score"]'));
+      setField(score, '4');
+      if (!score.checkValidity() || new FormData(score.form).get('score') !== '4') {
+        throw Error('The report rating did not preserve select validity and form submission');
+      }
+      const page = score.closest('article');
+      const handoff = Array.from(page.querySelectorAll('summary'))
+        .find(summary => summary.textContent === '交给其他流程的反馈');
+      handoff.click();
+      await wait(() => page.querySelector('textarea[name="note"]')?.getBoundingClientRect().height > 0);
       if (!main.contains(report)) throw Error('The report launcher did not stay in the main panel');
-      return 'Desktop smoke passed: caption overlay, navigation, HTML snapshot, PDF rendering, report, panel resize and close';
+      return 'Desktop smoke passed: dictionary input sizing, alias and source editing, related Terms, modal cancellation, Library navigation, question review, caption overlay, HTML snapshot, PDF rendering, report disclosure and form controls, panel resize and close';
     })()`);
     const fixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), 'research-view.html');
     fs.writeFileSync(fixture, '<h1>Saved HTML report</h1><script>throw Error("unsafe")</script><p><strong>Report emphasis</strong></p>');
@@ -139,16 +317,83 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
           if (detail.querySelector('script') || detail.querySelector('strong')?.textContent !== 'Report emphasis') {
             throw Error('Stored HTML formatting or script isolation failed');
           }
+          const fileName = document.querySelector('[aria-label="打开 HTML"] span');
+          if (fileName?.title !== 'research-view.html' || fileName.textContent !== fileName.title) {
+            throw Error('Chosen HTML name is missing from the file picker');
+          }
           return;
         }
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       throw Error('Saved HTML did not open in the detail panel');
     })()`);
+    const mouseClick = async selector => {
+      const bounds = await win.webContents.executeJavaScript(`(() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        if (!element) throw new Error('Missing mouse target: ' + ${JSON.stringify(selector)});
+        element.scrollIntoView({block:'nearest'});
+        const bounds = element.getBoundingClientRect();
+        return {x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2)};
+      })()`);
+      win.webContents.sendInputEvent({type:'mouseMove', ...bounds});
+      win.webContents.sendInputEvent({type:'mouseDown', button:'left', clickCount:1, ...bounds});
+      win.webContents.sendInputEvent({type:'mouseUp', button:'left', clickCount:1, ...bounds});
+      await new Promise(resolve => setTimeout(resolve, 80));
+    };
+    win.show();
+    win.focus();
+    win.webContents.focus();
+    await mouseClick('#workspace-navigation button[aria-label="百科"]');
+    await mouseClick('.hpedia-panel > button');
+    const termPicker = '.hpedia-reference-picker select';
+    await mouseClick(termPicker);
+    if (!await win.webContents.executeJavaScript(`document.querySelector('${termPicker}').matches(':open')`)) {
+      throw Error('Mouse did not open the question reference picker');
+    }
+    const optionPosition = await win.webContents.executeJavaScript(`(() => {
+      const select = document.querySelector('${termPicker}');
+      const selected = select.selectedOptions[0];
+      const marker = getComputedStyle(selected, '::checkmark');
+      if (marker.display === 'none' || marker.order !== '1') {
+        throw Error('The selected option does not have a trailing checkmark');
+      }
+      const rect = select.options[1].getBoundingClientRect();
+      return {x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2)};
+    })()`);
+    win.webContents.sendInputEvent({type:'mouseMove', ...optionPosition});
+    await new Promise(resolve => setTimeout(resolve, 80));
+    if (!await win.webContents.executeJavaScript(`(() => {
+      const option = document.querySelector('${termPicker}').options[1];
+      return option.matches(':hover') && getComputedStyle(option).backgroundColor === 'rgb(55, 55, 66)';
+    })()`)) throw Error('The hovered option did not highlight');
+    win.webContents.sendInputEvent({type:'keyDown', keyCode:'Escape'});
+    win.webContents.sendInputEvent({type:'keyUp', keyCode:'Escape'});
+    await new Promise(resolve => setTimeout(resolve, 80));
+    if (!await win.webContents.executeJavaScript(`document.querySelector('${termPicker}').matches(':not(:open)') &&
+        document.querySelector('${termPicker}').value === ''`)) {
+      throw Error('Escape did not close the picker while keeping the selection');
+    }
+    await mouseClick('#workspace-navigation button[aria-label="词典"]');
+    await mouseClick('[aria-label="新建术语"] button');
+    const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
+      .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
+    if (!sourceToggle) throw Error('Native mouse did not open the Term draft');
+    await mouseClick('button[aria-controls="' + sourceToggle + '"]');
+    await mouseClick('button[aria-label="新增来源"]');
+    if (!await win.webContents.executeJavaScript(`!!document.querySelector('main [role="dialog"]')`)) {
+      throw Error('Native mouse did not open the source dialog');
+    }
+    win.webContents.sendInputEvent({type:'keyDown', keyCode:'Escape'});
+    win.webContents.sendInputEvent({type:'keyUp', keyCode:'Escape'});
+    await new Promise(resolve => setTimeout(resolve, 80));
+    if (await win.webContents.executeJavaScript(`!!document.querySelector('main [role="dialog"]')`)) {
+      throw Error('Native keyboard Escape did not dismiss the source dialog');
+    }
     if (process.env.HORIZON_SMOKE_SCREENSHOT) {
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
-    finish(result + '; saved HTML opened with formatting', 0);
+    if (!registeredPdf) throw Error('PDF chooser did not send the selected PDF through the bridge');
+    finish(result + '; PDF picker filename and registration, saved HTML opened with formatting', 0);
   } catch (error) {
     finish(String(error), 1);
   }

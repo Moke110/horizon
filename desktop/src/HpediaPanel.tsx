@@ -1,3 +1,5 @@
+import {MultilineInput} from './gui/elements/FormElements';
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
@@ -172,14 +174,14 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     sendChange(question?'question_update':'question_create');
   }}>
     <h2>{question?'编辑问题':'新增问题'}</h2>
-    <label>题干<textarea ref={promptInput} value={prompt} required onChange={event=>setPrompt(event.target.value)}/></label>
-    <label>解答<textarea ref={answerInput} value={answer} required onChange={event=>setAnswer(event.target.value)}/></label>
+    <label>题干<MultilineInput ref={promptInput} value={prompt} required onChange={event=>setPrompt(event.target.value)}/></label>
+    <label>解答<MultilineInput ref={answerInput} value={answer} required onChange={event=>setAnswer(event.target.value)}/></label>
     <ConvergenceSelect kind="question" value={convergence} onChange={setConvergence}/>
     <div className="hpedia-reference-picker">
-      <label>引用术语<select value={termChoice} onChange={event=>setTermChoice(event.target.value)}>
+      <label>引用术语<FixedSelect value={termChoice} onChange={event=>setTermChoice(event.target.value)}>
         <option value="">选择有效术语</option>
         {activeTerms.map(term=><option key={term.card_id} value={term.card_id}>{term.title}</option>)}
-      </select></label>
+      </FixedSelect></label>
       <button type="button" disabled={!termChoice} onClick={()=>insertReference('prompt')}>引用到题干</button>
       <button type="button" disabled={!termChoice} onClick={()=>insertReference('answer')}>引用到解答</button>
     </div>

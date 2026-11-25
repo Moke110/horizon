@@ -1,3 +1,5 @@
+import {MultilineInput} from './gui/elements/FormElements';
+import {DataTable} from './gui/elements/DataTable';
 import React,{useEffect,useRef,useState} from 'react';
 import type {KeeperApplied,KeeperGroupUndoPreview,KeeperProposal,KeeperUndoChange,KeeperUndoFieldChange,KeeperUndoReceipt} from './KeeperProposalPanel';
 
@@ -5,7 +7,7 @@ type UndoWork={operation_id:string;proposal_id:string;revision:number};
 const KIND_LABEL:Record<string,string>={card:'知识卡片',theme:'命题',frontier:'关注问题'};
 const ACTION_LABEL:Record<string,string>={restore:'恢复到批准前',archive:'撤销新建并归档',update:'恢复',delete:'删除'};
 const FIELD_LABEL:Record<string,string>={
-  title:'标题',content:'内容',aliases:'别名',recall_terms:'检索词',sources:'来源',
+  title:'标题',content:'内容',aliases:'别名',sources:'来源',
   relations:'关联',questionable:'存疑',provenance:'来源性质',status:'状态',known:'是否计入已知',
   judgement:'判断',conditions:'适用条件',related_cards:'关联知识卡片',evidence:'证据',
   evidence_sufficiency:'证据充分性',question:'关注问题',scope:'研究范围',
@@ -212,7 +214,7 @@ function UndoCell({value}:{value:unknown}){
 
 function UndoFieldTable({changes}:{changes:KeeperUndoFieldChange[]}){
   return <div className="keeper-undo-diff-wrap">
-    <table className="keeper-undo-field-diff">
+    <DataTable className="keeper-undo-field-diff">
       <thead><tr><th>字段</th><th>已应用</th><th>当前</th><th>撤销后（基线）</th><th>冲突</th></tr></thead>
       <tbody>{changes.map((change,index)=><tr key={`${change.field}:${index}`} className={change.conflict?'conflict':''}>
         <th scope="row">{fieldLabel(change.field)}</th>
@@ -221,7 +223,7 @@ function UndoFieldTable({changes}:{changes:KeeperUndoFieldChange[]}){
         <UndoCell value={change.inverse??change.proposed??change.before}/>
         <td className={change.conflict?'conflict-flag':''}>{change.conflict?'冲突：此后已修改':'—'}</td>
       </tr>)}</tbody>
-    </table>
+    </DataTable>
   </div>;
 }
 
@@ -461,7 +463,7 @@ export function KeeperGroupUndoPanel({
       {changes.length?(changes.some(change=>change.field_changes?.length)
         ?<UndoTargetCards changes={changes}/>
         :<div className="keeper-undo-diff-wrap">
-          <table className="keeper-undo-diff">
+          <DataTable className="keeper-undo-diff">
             <thead><tr><th>对象</th><th>目标版本</th><th>当前版本</th><th>变更前</th><th>已应用</th><th>当前</th><th>撤销后</th><th>冲突</th></tr></thead>
             <tbody>{changes.map((change,index)=><tr key={`${change.kind}:${change.id}:${index}`} className={change.conflict?'conflict':''}>
               <th scope="row"><span>{kindLabel(change.kind)}</span><span className="keeper-undo-id">{change.id}</span></th>
@@ -473,12 +475,12 @@ export function KeeperGroupUndoPanel({
               <UndoCell value={change.proposed}/>
               <td className={change.conflict?'conflict-flag':''}>{change.conflict?'冲突：此后已修改':'—'}</td>
             </tr>)}</tbody>
-          </table>
+          </DataTable>
         </div>)
         :<p className="keeper-value-empty">预检没有返回对象差异；确认前请核对当前版本。</p>}
       {canConfirm?<>
         <label className="keeper-undo-reason">撤销理由（可选）
-          <textarea maxLength={500} value={reason} disabled={undoing} onChange={event=>setReason(event.target.value)} aria-invalid={!validReason} placeholder="例如：恢复合并前的卡片与关系"/>
+          <MultilineInput maxLength={500} value={reason} disabled={undoing} onChange={event=>setReason(event.target.value)} aria-invalid={!validReason} placeholder="例如：恢复合并前的卡片与关系"/>
         </label>
         {!validReason&&<p role="status">撤销理由最多 500 个 UTF-8 字节。</p>}
         <div className="keeper-decision-actions">

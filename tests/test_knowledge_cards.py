@@ -173,7 +173,7 @@ def test_edit_persists_fields_and_recomputes_evidence(tmp_path, monkeypatch):
     assert edited["version"] == 2
     assert edited["title"] == "扰动响应预测"
     assert edited["aliases"] == ["扰动预测", "perturbation response"]
-    assert edited["recall_terms"] == ["分布外"]
+    assert "recall_terms" not in edited
     assert edited["sources"][0]["material_id"] == citation["material_id"]
     assert edited["relations"] == [related["card_id"]]
     assert edited["questionable"] is True

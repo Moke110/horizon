@@ -26,7 +26,7 @@ _DECISION_FIELDS = {"schema_version", "operation_id", "proposal_id", "revision",
                     "expected_versions", "decision", "reason"}
 _REQUIRED_FIELDS = _DECISION_FIELDS - {"reason"}
 _KINDS = ("card", "theme", "frontier")
-_CARD_FIELDS = ("title", "content", "aliases", "recall_terms", "relations",
+_CARD_FIELDS = ("title", "content", "aliases", "relations",
                 "questionable")
 _THEME_FIELDS = ("judgement", "conditions", "related_cards", "evidence")
 _FRONTIER_FIELDS = ("question", "scope", "hard_constraints", "relations",

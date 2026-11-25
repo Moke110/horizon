@@ -1,3 +1,6 @@
+import {TextInput, MultilineInput} from './gui/elements/FormElements';
+import {FixedSelect, Checkbox} from './gui/elements/ChoiceElements';
+import {Collapsible} from './gui/elements/Collapsible';
 import {createPortal} from 'react-dom';
 import React, {useEffect, useState} from 'react';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
@@ -47,28 +50,26 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
     }
   }), [taskId, report?.report_id, report?.version, handoff]);
 
-  return <details>
-    <summary>Editor 报道</summary>
+  return <Collapsible title="Editor 报道">
     <CurrentWritingOptions frontiers={frontiers} value={writing} inherited={report?.context_versions?.writing_frontier_id} onChange={setWriting}/>
     <EditorPreferences frontiers={frontiers} taskId={taskId} send={send}/>
-    <label>选择资料 <select value={material} onChange={event=>setMaterial(event.target.value)}>
+    <label>选择资料 <FixedSelect value={material} onChange={event=>setMaterial(event.target.value)}>
       <option value="">请选择</option>
       {materials.map(row=><option key={row.material_id} value={row.material_id}>{row.title}</option>)}
-    </select></label>
+    </FixedSelect></label>
     <button disabled={disabled || !materials.some(row=>row.material_id===material)} onClick={()=>prepare(material,takeWriting())}>准备生成报道</button>
-    <details>
-      <summary>综合多份资料</summary>
-      <label>综合问题 <input value={question} onChange={event=>setQuestion(event.target.value)} maxLength={500}/></label>
-      <label>选择两到四份资料 <select multiple value={materialIds} onChange={event=>
+    <Collapsible title="综合多份资料">
+      <label>综合问题 <TextInput value={question} onChange={event=>setQuestion(event.target.value)} maxLength={500}/></label>
+      <label>选择两到四份资料 <FixedSelect multiple value={materialIds} onChange={event=>
         setSelected(Array.from(event.target.selectedOptions, option=>option.value))}>
         {materials.map(row=><option key={row.material_id} value={row.material_id}>{row.title}</option>)}
-      </select></label>
-      <label><input type="checkbox" checked={expandKnown} onChange={event=>setExpandKnown(event.target.checked)}/> 展开已知背景</label>
+      </FixedSelect></label>
+      <Checkbox checked={expandKnown} onChange={event=>setExpandKnown(event.target.checked)}> 展开已知背景</Checkbox>
       <button disabled={disabled || !question.trim() || materialIds.length<2 || materialIds.length>4}
         onClick={()=>prepareSynthesis({question:question.trim(), material_ids:materialIds, expand_known:expandKnown,...takeWriting()})}>
         准备综合报道
       </button>
-    </details>
+    </Collapsible>
     {children.filter(child=>child.role==='editor' && child.status==='succeeded').map(child=>{
       let saved: {report_id?:string; version?:number; outcome?:string; gaps?:unknown[]};
       try { saved = JSON.parse(child.result || '{}'); } catch { return null; }
@@ -92,15 +93,15 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
               operation_id:crypto.randomUUID(), expected_revision:report.feedback?.revision ?? 0,
               score:Number(data.get('score')), reason:reason || null, claim_index:claim ? Number(claim) : null});
       }}>
-        <label>版本评分 <select name="score" required defaultValue={report.feedback?.score ?? ''}>
+        <label>版本评分 <FixedSelect name="score" required defaultValue={report.feedback?.score ?? ''}>
           <option value="">请选择</option>
           {[1,2,3,4,5].map(score=><option key={score} value={score}>{score}</option>)}
-        </select></label>
-        <label>原因 <input name="reason" maxLength={2000} defaultValue={report.feedback?.reason ?? ''}/></label>
-        <label>段落 <select name="claim" defaultValue={report.feedback?.claim_index ?? ''}>
+        </FixedSelect></label>
+        <label>原因 <TextInput name="reason" maxLength={2000} defaultValue={report.feedback?.reason ?? ''}/></label>
+        <label>段落 <FixedSelect name="claim" defaultValue={report.feedback?.claim_index ?? ''}>
           <option value="">全文</option>
           {report.claims.map((_,index)=><option key={index} value={index}>第 {index+1} 段</option>)}
-        </select></label>
+        </FixedSelect></label>
         <button type="submit">保存评分</button>
         {report.feedback?.score != null && <button type="button" onClick={()=>send({
           action:'report_feedback', report_id:report.report_id, version:report.version, score:null,
@@ -112,10 +113,10 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
         const question = String(new FormData(event.currentTarget).get('question') || '').trim();
         if(question) prepareRewrite(report.report_id, report.version, question, takeWriting());
       }}>
-        <label>追问或纠错 <input name="question" required maxLength={2000}/></label>
+        <label>追问或纠错 <TextInput name="question" required maxLength={2000}/></label>
         <button type="submit" disabled={disabled}>准备改写</button>
       </form>
-      <details><summary>交给其他流程的反馈</summary>
+      <Collapsible title="交给其他流程的反馈">
         <form key={`${report.report_id}:${report.version}`} onSubmit={event=>{
           event.preventDefault();
           const values=new FormData(event.currentTarget);
@@ -124,20 +125,20 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
             version:report.version, note:values.get('note'), claim_index:claim ? Number(claim) : null,
             frontier_id:values.get('frontier') || null});
         }}>
-          <label>反馈类型 <select value={feedbackOwner} onChange={event=>setFeedbackOwner(event.target.value as FeedbackHandoff['owner'])}>
+          <label>反馈类型 <FixedSelect value={feedbackOwner} onChange={event=>setFeedbackOwner(event.target.value as FeedbackHandoff['owner'])}>
             <option value="voyager">来源与检索</option><option value="knowledge">知识库</option><option value="frontier">Frontier 范围</option>
-          </select></label>
-          <label>反馈内容 <textarea name="note" required maxLength={2000}/></label>
-          <label>段落 <select name="claim"><option value="">全文</option>
+          </FixedSelect></label>
+          <label>反馈内容 <MultilineInput name="note" required maxLength={2000}/></label>
+          <label>段落 <FixedSelect name="claim"><option value="">全文</option>
             {report.claims.map((_,index)=><option key={index} value={index}>第 {index+1} 段</option>)}
-          </select></label>
-          {feedbackOwner==='frontier' && <label>要调整的 Frontier <select name="frontier" required defaultValue={report.context_versions?.writing_frontier_id || ''}>
+          </FixedSelect></label>
+          {feedbackOwner==='frontier' && <label>要调整的 Frontier <FixedSelect name="frontier" required defaultValue={report.context_versions?.writing_frontier_id || ''}>
             <option value="">请选择</option>
             {frontiers.filter(row=>row.status==='following').map(row=><option key={row.frontier_id} value={row.frontier_id}>{row.question}</option>)}
-          </select></label>}
+          </FixedSelect></label>}
           <button type="submit">交给对应流程</button>
         </form>
-      </details>
+      </Collapsible>
       {report.limitation && <p>{report.limitation}</p>}
       {report.sources && <ul aria-label="资料范围">{report.sources.map(source=>
         <li key={source.material_id}>{source.title}{source.repost && '（转载，不计独立证据）'} {source.limitation}</li>)}</ul>}
@@ -167,5 +168,5 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
         snapshot_offset:citation.next_offset,
       })}>下一段原文</button>}
     </article>,detailHost)}
-  </details>;
+  </Collapsible>;
 }
