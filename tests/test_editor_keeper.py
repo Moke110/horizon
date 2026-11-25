@@ -57,7 +57,7 @@ def test_production_keeper_only_accepts_a_committed_editor_evidence_request(tmp_
     assert len(owner.cards.query(token=TOKEN)) == 1
 
 
-@pytest.mark.parametrize("outcome", ["approve", "reject", "expire"])
+@pytest.mark.parametrize("outcome", ["approve", "reject", "expire", "removed"])
 def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path, outcome):
     from hostrun.agent_service import CommandError
     from hostrun.librarian import Librarian
@@ -101,12 +101,23 @@ def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path,
     if outcome == "expire":
         clock[0] += 72 * 60 * 60
         assert keeper.view(proposal["proposal_id"], token=TOKEN)["status"] == "expired"
+    elif outcome == "removed":
+        material_id = material["material_id"]
+        owner.materials.archive_material(material_id, token=TOKEN)
+        impact = owner.materials.deletion_impact(material_id, token=TOKEN)
+        owner.materials.delete_material(material_id, impact["confirmation"], token=TOKEN)
     command = {"schema_version": 1, "operation_id": "approve-frontier",
         "decision": "reject" if outcome == "reject" else "approve",
         "proposal_id": proposal["proposal_id"], "revision": 1, "expected_versions": [1]}
     explorer = KeeperPrincipal("explorer", False)
     decision = keeper.decide(command, token=TOKEN, principal=explorer)
-    assert decision["status"] == {"approve": "approved", "reject": "rejected", "expire": "expired"}[outcome]
+    assert decision["status"] == {"approve": "approved", "reject": "rejected",
+                                  "expire": "expired", "removed": "returned"}[outcome]
+    if outcome == "removed":
+        assert decision["applied"] == []
+        assert decision["error"]["code"] == "invalid_evidence"
+        assert keeper.view(proposal["proposal_id"], token=TOKEN)["decision"] == decision
+        assert keeper.audit(proposal["proposal_id"], token=TOKEN)[-1]["status"] == "returned"
     assert keeper.decide({**command, "operation_id": "repeat-frontier"}, token=TOKEN, principal=explorer) == decision
     current = owner.frontiers.view(frontier_id, token=TOKEN)
     assert current["scope"] == frontier["scope"]

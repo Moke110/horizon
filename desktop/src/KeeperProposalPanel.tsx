@@ -6,7 +6,7 @@ export type KeeperAction='create'|'update'|'delete';
 export type KeeperDecisionChoice='approve'|'reject';
 export type KeeperRevisionDecision='adjust'|'cancel';
 export type KeeperProposalStatus='pending'|'revising'|'returned'|'cancelled'|'approved'|'rejected';
-export type KeeperDecisionStatus='approved'|'rejected'|'revising'|'cancelled';
+export type KeeperDecisionStatus='approved'|'rejected'|'revising'|'cancelled'|'returned';
 export type KeeperSource={
   material_id:string;
   material_version?:number|null;
@@ -86,6 +86,7 @@ export type KeeperUndoReceipt={
   [key:string]:unknown;
 };
 export type KeeperDecision={
+  error?:{code:string;message:string};
   operation_id:string;
   decision:KeeperDecisionChoice|KeeperRevisionDecision;
   proposal_id:string;

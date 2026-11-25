@@ -538,7 +538,7 @@ export function KnowledgeWorkbench({
         }
         const resultStatus=asKeeperStatus(event.data?.status);
         const accepted=resultStatus!==null&&(work.action==='keeper_decide'
-          ?resultStatus===work.expectedStatus||resultStatus==='revising'
+          ?resultStatus===work.expectedStatus||resultStatus==='revising'||resultStatus==='returned'
           :work.decision==='adjust'
             ?resultStatus==='revising'||resultStatus==='cancelled'
             :resultStatus==='cancelled');
@@ -572,9 +572,9 @@ export function KnowledgeWorkbench({
               :'已取消本次修订，没有写入知识库。')
             :'';
         if(sameSelection&&selected&&proposal){
-          if(resultStatus==='approved'||resultStatus==='rejected'){
+          if(resultStatus==='approved'||resultStatus==='rejected'||resultStatus==='returned'){
             setDecisionReceipt(result);
-            setDecisionNotice('');
+            setDecisionNotice(result.error?.message||'');
             setDecisionRefreshError('');
             const nextProposal:KeeperProposal={...proposal,status:resultStatus,decision:result};
             pendingProposalRef.current=nextProposal;

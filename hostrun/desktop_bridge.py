@@ -278,6 +278,11 @@ class KeeperCommands:
                                    'Keeper decision receipt has an unexpected status')
         elif result.get('status') == 'expired' and result.get('applied') == []:
             pass
+        elif result.get('status') == 'returned':
+            error = result.get('error')
+            if result['decision'] != 'approve' or result.get('applied') != [] or not isinstance(error, dict) \
+                    or not all(isinstance(error.get(field), str) and error[field] for field in ('code', 'message')):
+                raise CommandError('invalid_response', 'Keeper returned an invalid failure receipt')
         elif result.get('status') != expected_status:
             raise CommandError('invalid_response',
                                'Keeper decision receipt has an unexpected status')

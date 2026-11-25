@@ -22,7 +22,7 @@ import {CleanupEntries,TestCleanupPanel,TestTag,type CleanupPlan} from './TestCl
 import {FeishuSetup} from './FeishuSetup';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
 type Child={child_id:string;session_id:string;parent_session_id:string;role:string;input_version:number;status:string;artifact_ref:string;result?:string;error?:string};
-type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;changes:{kind:string;action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
+type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;decision?:{error?:{code:string;message:string}};changes:{kind:string;action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
 type TermConfirmation={entity?:'question'|'source'|'frontier'|'progress'|'test_cleanup';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][];summaries?:string[];cleanup?:CleanupPlan;error?:{code:string;message:string}};
 
 function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfirmation;terms?:CardSummary[];sources?:ArchiveSource[];decide:(choice:'confirm'|'reject')=>void}){
@@ -219,7 +219,7 @@ ${JSON.stringify(command)}`)}/>}
   decide={choice=>send({action:'agent_term_confirm',task_id:chat.task_id,operation_id:card.operation_id,choice})}/>)}{chat&&state.editor_term_proposals?.map(proposal=>{
   const card:TermConfirmation={operation_id:proposal.proposal_id,expires_at:proposal.term_expires_at,
     entity:proposal.changes.some(change=>change.kind==='frontier')?'frontier':undefined,
-    status:proposal.status==='approved'?'confirmed':proposal.status,
+    status:proposal.status==='approved'?'confirmed':proposal.status,error:proposal.decision?.error,
     changes:proposal.changes.map(change=>[change.action,{
       ...(change.kind==='frontier'?{frontier_id:change.id}:{card_id:change.id}),...change.after,reason:change.reason,
     }])};

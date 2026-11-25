@@ -540,60 +540,72 @@ class KeeperService:
                                    "Keeper proposal has already been decided")
             self.cards.release_reviewed_terms(db, proposal)
             applied = []
+            failure = None
             if command["decision"] == "approve":
-                request, _ = self._load_request(db, proposal["request_id"])
-                drift = []
-                for change in changes:
-                    if change["action"] == "create":
-                        continue
-                    record = self._read_owner(db, change["kind"], change["id"])
-                    if record["version"] != change["expected_version"]:
-                        drift.append({
-                            "kind": change["kind"], "id": change["id"],
-                            "expected_version": change["expected_version"],
-                            "current_version": record["version"],
-                        })
-                if drift:
-                    # The displayed revision still pins the old owner snapshot.
-                    # Record a durable revision job before any owner write; the
-                    # Explorer's approval never silently rebases knowledge.
-                    result, event = self._begin_revision(
-                        db, proposal, command, drift=drift)
-                    db.execute("UPDATE keeper_proposals SET result=? "
-                               "WHERE proposal_id=?",
-                               (json.dumps(proposal), command["proposal_id"]))
-                    db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
-                               (command["operation_id"], encoded,
-                                json.dumps(result)))
-                    self._record_audit(db, proposal["proposal_id"], event)
-                    return result
-                self._check_approval_policy(db, changes, request)
-                self._validate_merge_component(
-                    db,
-                    [{"kind": change["kind"], "id": change["id"],
-                      "before": change.get("before"),
-                      "proposal": change,
-                      "after": change.get("after")} for change in changes],
-                    at_approval=True)
-                validate_relations_against_deletions(changes)
-                validate_material_references(self.materials, db, changes)
-                for change in changes:
-                    if change["action"] == "create" and self._existing_overlap(
-                            db, {"kind": change["kind"], "proposal": change}):
-                        raise CommandError("duplicate_entity", "An equivalent record already exists")
-                results = {}
-                for index, change in apply_order(changes):
-                    action, prepared = owner_command(
-                        change["kind"], change,
-                        owner_operation_id(command["proposal_id"],
-                                           command["revision"], index))
-                    record, changed = self._apply_owner(
-                        db, change["kind"], action, prepared)
-                    results[index] = applied_result(change["kind"], record)
-                    if changed:
-                        notifications.append((change["kind"], record))
-                applied = [results[index] for index in range(len(changes))]
-            status = "approved" if command["decision"] == "approve" else "rejected"
+                db.execute("SAVEPOINT keeper_apply")
+                try:
+                    request, _ = self._load_request(db, proposal["request_id"])
+                    drift = []
+                    for change in changes:
+                        if change["action"] == "create":
+                            continue
+                        record = self._read_owner(db, change["kind"], change["id"])
+                        if record["version"] != change["expected_version"]:
+                            drift.append({
+                                "kind": change["kind"], "id": change["id"],
+                                "expected_version": change["expected_version"],
+                                "current_version": record["version"],
+                            })
+                    if drift:
+                        # The displayed revision still pins the old owner snapshot.
+                        # Record a durable revision job before any owner write; the
+                        # Explorer's approval never silently rebases knowledge.
+                        result, event = self._begin_revision(
+                            db, proposal, command, drift=drift)
+                        db.execute("UPDATE keeper_proposals SET result=? "
+                                   "WHERE proposal_id=?",
+                                   (json.dumps(proposal), command["proposal_id"]))
+                        db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                                   (command["operation_id"], encoded,
+                                    json.dumps(result)))
+                        self._record_audit(db, proposal["proposal_id"], event)
+                        return result
+                    self._check_approval_policy(db, changes, request)
+                    self._validate_merge_component(
+                        db,
+                        [{"kind": change["kind"], "id": change["id"],
+                          "before": change.get("before"),
+                          "proposal": change,
+                          "after": change.get("after")} for change in changes],
+                        at_approval=True)
+                    validate_relations_against_deletions(changes)
+                    validate_material_references(self.materials, db, changes)
+                    for change in changes:
+                        if change["action"] == "create" and self._existing_overlap(
+                                db, {"kind": change["kind"], "proposal": change}):
+                            raise CommandError("duplicate_entity", "An equivalent record already exists")
+                    results = {}
+                    for index, change in apply_order(changes):
+                        action, prepared = owner_command(
+                            change["kind"], change,
+                            owner_operation_id(command["proposal_id"],
+                                               command["revision"], index))
+                        record, changed = self._apply_owner(
+                            db, change["kind"], action, prepared)
+                        results[index] = applied_result(change["kind"], record)
+                        if changed:
+                            notifications.append((change["kind"], record))
+                    applied = [results[index] for index in range(len(changes))]
+                except CommandError as error:
+                    if "term_expires_at" not in proposal:
+                        raise
+                    db.execute("ROLLBACK TO keeper_apply")
+                    proposal = json.loads(row[0])
+                    notifications.clear()
+                    failure = {"code": error.code, "message": str(error)}
+                finally:
+                    db.execute("RELEASE keeper_apply")
+            status = "returned" if failure else ("approved" if command["decision"] == "approve" else "rejected")
             decided_at = int(time.time())
             result = {
                 "operation_id": command["operation_id"],
@@ -604,6 +616,8 @@ class KeeperService:
                 "applied": applied,
                 "decided_at": decided_at,
             }
+            if failure:
+                result["error"] = failure
             if "reason" in command:
                 result["reason"] = command["reason"]
             proposal.update(status=status, decision=result)
@@ -624,6 +638,8 @@ class KeeperService:
                 "applied": applied,
                 "decided_at": decided_at,
             }
+            if failure:
+                event["error"] = failure
             if "reason" in command:
                 event["reason"] = command["reason"]
             db.execute("INSERT INTO keeper_audit(proposal_id,operation_id,event) "
