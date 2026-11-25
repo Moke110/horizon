@@ -15,6 +15,143 @@ class DesktopWorker:
                         turn_id=(getattr(self, 'turn', None) or {}).get('turn_id', ''))
         record_event(self.home, event, **metadata)
 
+    def _term_request(self, event):
+        from hostrun.agent_service import CommandError
+        from hostrun.knowledge_cards import KnowledgeCardService
+        from hostrun.librarian import Librarian
+        token = self.service_token
+        librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
+        operation = event.get("action")
+        if event.get("type") == "source_request":
+            return self._source_request(librarian, operation, event, token=token)
+        if event.get("type") == "tracking_request":
+            return self._tracking_request(librarian, operation, event, token=token)
+        if event.get("type") == "question_request":
+            return self._question_request(librarian, operation, event, token=token)
+        if event.get("type") == "test_cleanup_request":
+            return self._test_cleanup_request(librarian, operation, event, token=token)
+        if operation == "list":
+            return librarian.list(token=token)
+        if operation == "view":
+            return librarian.view(event.get("termId"), token=token)
+        payload = event.get("fields")
+        if not isinstance(payload, dict):
+            raise CommandError("invalid_command", "需要术语变更内容")
+        request_id = event.get("requestId")
+        if not isinstance(request_id, str) or not request_id or len(request_id) > 256:
+            raise CommandError("invalid_command", "无效的术语请求标识")
+        origin = "agent:" + self.task_id
+        if operation == "batch":
+            changes = payload.get("changes")
+            if not isinstance(changes, list) or not 1 <= len(changes) <= 100:
+                raise CommandError("invalid_command", "批量写入需要 1 至 100 项变更")
+            commands = []
+            for index, item in enumerate(changes):
+                if not isinstance(item, list) or len(item) != 2 or not isinstance(item[1], dict):
+                    raise CommandError("invalid_command", "无效的术语变更")
+                action, fields = item
+                commands.append((action, {**self._development_fields(event, action, fields), "operation_id": f"{request_id}:{index}",
+                                          "schema_version": 1}))
+            card = librarian.request_batch(request_id, commands, token=token, origin=origin)
+        elif operation in ("create", "update", "archive"):
+            command = {**self._development_fields(event, operation, payload),
+                       "operation_id": request_id, "schema_version": 1}
+            card = librarian.request(operation, command, token=token, origin=origin)
+        else:
+            raise CommandError("invalid_command", "不支持的术语操作")
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    def _source_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        source_id = event.get("sourceId")
+        if operation == "list":
+            return librarian.list_sources(token=token)
+        if operation == "view":
+            return librarian.view_source(source_id, token=token)
+        if operation == "open":
+            package = librarian.open_source(source_id, token=token, task_id=self.task_id)
+            if "source_url" in package:
+                return package
+            text = package["original_text"]
+            return {"material_id": package["material_id"], "title": package["title"],
+                    "original_text": text[:16000], "original_text_truncated": len(text) > 16000,
+                    "pdf": bool(package.get("pdf"))}
+        fields = event.get("fields")
+        request_id = event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的资料库来源变更")
+        command = {**self._development_fields(event, operation, fields), "operation_id": request_id}
+        if source_id:
+            command["source_id"] = source_id
+        card = librarian.request_source(operation, command, token=token, origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    def _tracking_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        entity = event.get("entity")
+        if entity not in ("frontier", "progress"):
+            raise CommandError("invalid_command", "请选择前沿或进展")
+        frontier_id = event.get("frontierId")
+        if operation == "list":
+            return (librarian.list_frontiers(token=token) if entity == "frontier"
+                    else librarian.list_progress(frontier_id, token=token))
+        if operation == "view" and entity == "frontier":
+            return librarian.view_frontier(frontier_id, token=token)
+        fields, request_id = event.get("fields"), event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的前沿或进展变更")
+        command = {**self._development_fields(event, operation, fields),
+                   "operation_id": request_id, "schema_version": 1}
+        if frontier_id is not None:
+            command["frontier_id"] = frontier_id
+        submit = librarian.request_frontier if entity == "frontier" else librarian.request_progress
+        card = submit(operation, command, token=token, origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    @staticmethod
+    def _development_fields(event, action, fields):
+        if action == "create" and event.get("testData") is True:
+            return {**fields, "test_data": True}
+        return fields
+
+    def _question_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        question_id = event.get("questionId")
+        if operation == "list":
+            return librarian.list_questions(token=token)
+        if operation == "view":
+            return librarian.view_question(question_id, token=token)
+        fields, request_id = event.get("fields"), event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的百科问题变更")
+        command = {**self._development_fields(event, operation, fields),
+                   "operation_id": request_id, "schema_version": 1}
+        if question_id is not None:
+            command["question_id"] = question_id
+        card = librarian.request_question(operation, command, token=token, origin="agent:" + self.task_id)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    def _test_cleanup_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        selection = event.get("selection")
+        if operation == "preview":
+            return librarian.preview_test_cleanup(token=token, selection=selection)
+        request_id = event.get("requestId")
+        if operation != "request" or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的测试内容清理请求")
+        card = librarian.request_test_cleanup(request_id, token=token, origin="agent:" + self.task_id,
+                                             selection=selection)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
     def run_agent(self, task, session_id=None, history=None):
         completed_text = None
         failure = None
@@ -52,6 +189,16 @@ class DesktopWorker:
                 try:
                     event = json.loads(line)
                 except ValueError:
+                    continue
+                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request'):
+                    from hostrun.agent_service import CommandError
+                    try:
+                        result = self._term_request(event)
+                    except CommandError as exc:
+                        result = {"status": "returned", "message": str(exc)}
+                    self.process.stdin.write(json.dumps({"requestId": event["requestId"],
+                                                        "result": result}) + "\n")
+                    self.process.stdin.flush()
                     continue
                 if event.get('type') == 'delegate_request':
                     try:
@@ -148,7 +295,8 @@ class DesktopWorker:
             from hostrun.editor_reports import (DEFAULT_PREFERENCE_VERSION, ReportService, build_editor_context,
                                                 read_report_response, report_evidence)
             from hostrun.editor_synthesis import commit_synthesis, confirmed_knowledge, prepare_synthesis, synthesis_input
-            from hostrun.frontier import FrontierService
+            from hostrun.knowledge_cards import KnowledgeCardService
+            from hostrun.librarian import Librarian
             from hostrun.editor_preferences import PreferenceService
 
             reports = ReportService(self.home, token=self.service_token)
@@ -211,7 +359,8 @@ class DesktopWorker:
                 versions['preferences'] = [{**row, 'key': key} for key, row in effective.items()]
                 if frontier_id:
                     versions['writing_frontier_id'] = frontier_id
-                    frontier = FrontierService(self.home, token=self.service_token).view(frontier_id, token=self.service_token)
+                    frontier = Librarian(KnowledgeCardService(self.home, token=self.service_token),
+                                         token=self.service_token).view_frontier(frontier_id, token=self.service_token)
                     editor_context['frontier'] = {key: frontier[key] for key in ('frontier_id', 'version', 'question')}
                     versions['knowledge'].append({'kind': 'frontier', 'id': frontier_id, 'version': frontier['version']})
             if editor_context is not None and rewrite:

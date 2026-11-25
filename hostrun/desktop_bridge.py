@@ -16,6 +16,7 @@ from hostrun.voyager_materials import MaterialsService
 from hostrun.voyager_service import VoyagerService
 from hostrun.frontier import FrontierService
 from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.knowledge_history import KnowledgeHistoryService
 from hostrun.keeper_group_undo import KeeperGroupUndo
 from hostrun.knowledge_themes import KnowledgeThemeService
@@ -243,12 +244,13 @@ class KeeperCommands:
                 payload['reason'] = reason
         return payload
 
-    def decide(self, command):
+    def decide(self, command, *, origin_task=None):
         """Apply one whole-group Explorer decision under a trusted Explorer principal."""
         payload = self._decide_command(command)
         from hostrun.keeper import KeeperPrincipal
+        service = self._service()
         try:
-            result = self._service().decide(
+            result = service.decide(
                 payload, token=self.token,
                 principal=KeeperPrincipal('explorer', False))
         except CommandError:
@@ -261,17 +263,26 @@ class KeeperCommands:
                                'Keeper decision could not be completed') from error
         if not isinstance(result, dict):
             raise CommandError('invalid_response', 'Keeper decision returned no receipt')
-        for field in ('operation_id', 'proposal_id', 'revision', 'decision'):
-            if result.get(field) != payload[field]:
-                raise CommandError('invalid_response',
-                                   'Keeper decision receipt does not match the request')
-        expected_status = 'approved' if payload['decision'] == 'approve' else 'rejected'
+        if any(result.get(field) != payload[field] for field in ('proposal_id', 'revision')):
+            raise CommandError('invalid_response', 'Keeper decision receipt does not match the request')
+        if any(result.get(field) != payload[field] for field in ('operation_id', 'decision')):
+            proposal = service.view(payload['proposal_id'], token=self.token) if origin_task is not None else {}
+            if not proposal.get('term_expires_at') or proposal.get('task_id') != origin_task or proposal.get('decision') != result:
+                raise CommandError('invalid_response', 'Keeper decision receipt does not match the request')
+        expected_status = 'approved' if result['decision'] == 'approve' else 'rejected'
         if result.get('status') == 'revising':
             review_id = result.get('review_id')
             if payload['decision'] != 'approve' or not isinstance(review_id, str) \
                     or not review_id.strip() or result.get('applied') != []:
                 raise CommandError('invalid_response',
                                    'Keeper decision receipt has an unexpected status')
+        elif result.get('status') == 'expired' and result.get('applied') == []:
+            pass
+        elif result.get('status') == 'returned':
+            error = result.get('error')
+            if result['decision'] != 'approve' or result.get('applied') != [] or not isinstance(error, dict) \
+                    or not all(isinstance(error.get(field), str) and error[field] for field in ('code', 'message')):
+                raise CommandError('invalid_response', 'Keeper returned an invalid failure receipt')
         elif result.get('status') != expected_status:
             raise CommandError('invalid_response',
                                'Keeper decision receipt has an unexpected status')
@@ -518,22 +529,78 @@ def material_command(materials, command, *, token):
     raise CommandError('invalid_command','Unknown materials action')
 
 
-def frontier_command(frontier, command, *, token):
-    """Route desktop Knowledge Base commands through FrontierService's public seam."""
+def frontier_command(librarian, command, *, token):
+    """Route desktop Frontier and progress commands through the Librarian."""
     action = command.get("action")
     if action == "frontier_list":
-        return "frontier_list", frontier.list(token=token)
+        return "frontier_list", librarian.list_frontiers(token=token)
     if action == "frontier_open":
-        value = frontier.view(command.get("frontier_id"), token=token)
+        value = librarian.view_frontier(command.get("frontier_id"), token=token)
         if isinstance(command.get("operation_id"), str):
             value = {**value, "read_operation_id": command["operation_id"]}
         return "frontier_view", value
-    methods = {"frontier_create": frontier.create, "frontier_update": frontier.update,
-               "frontier_delete": frontier.delete}
-    if action not in methods:
-        raise CommandError("invalid_command", "Unknown Frontier action")
-    value = methods[action]({k: v for k, v in command.items() if k != "action"}, token=token)
-    return "frontier_view", value
+    entity, _, operation = (action or "").partition("_")
+    if entity not in ("frontier", "progress"):
+        raise CommandError("invalid_command", "不支持的前沿或进展操作")
+    if operation == "confirm":
+        card = librarian.decide(command.get("operation_id"), command.get("choice"),
+                                token=token, origin="gui", expected_entity=entity)
+    else:
+        submit = librarian.request_frontier if entity == "frontier" else librarian.request_progress
+        card = submit(operation, {key: value for key, value in command.items() if key != "action"},
+                      token=token, origin="gui")
+    return "frontier_confirmation", card
+
+
+def bulletin_board_command(librarian, command, *, token):
+    action = command["action"]
+    if action == "bulletin_list":
+        return "bulletin_list", librarian.bulletin_links(token=token)
+    if action == "bulletin_open":
+        identity = command.get("id")
+        if command.get("kind") == "term":
+            return "bulletin_term", librarian.view(identity, token=token)
+        if command.get("kind") == "question":
+            return "bulletin_question", librarian.view_question(identity, token=token)
+    raise CommandError("invalid_command", "不支持的白板操作")
+
+
+def librarian_question_command(librarian, command, *, token, origin):
+    action = command["action"]
+    if action == "question_list":
+        return "question_list", librarian.list_questions(token=token)
+    if action == "question_open":
+        return "question_view", librarian.view_question(command.get("question_id"), token=token)
+    if action == "question_confirm":
+        card = librarian.decide(command.get("operation_id"), command.get("choice"),
+                                token=token, origin=origin)
+        return "question_confirmation", card
+    if action in ("question_create", "question_update", "question_delete"):
+        payload = {key: value for key, value in command.items() if key != "action"}
+        result = librarian.request_question(action.removeprefix("question_"), payload,
+                                            token=token, origin=origin)
+        return "question_confirmation", result
+    raise CommandError("invalid_command", "不支持的百科操作")
+
+
+def librarian_card_command(librarian, command, *, token, origin):
+    action = command["action"]
+    if action in ("card_create", "card_update", "card_archive"):
+        payload = {key: value for key, value in command.items() if key != "action"}
+        card = librarian.request(action.removeprefix("card_"), payload,
+                                 token=token, origin=origin)
+        return "term_confirmation", card
+    if action == "card_batch":
+        card = librarian.request_batch(command.get("operation_id"), command.get("changes"),
+                                       token=token, origin=origin)
+        return "term_confirmation", card
+    if action == "card_confirm":
+        card = librarian.decide(command["operation_id"], command.get("choice"),
+                                token=token, origin=origin, expected_entity="term")
+        return "term_confirmation", card
+    if action in ("card_list", "card_query", "card_open"):
+        return card_command(librarian, command, token=token)
+    raise CommandError("invalid_command", "不支持的术语操作")
 
 
 def card_command(cards, command, *, token):
@@ -718,8 +785,9 @@ def _serve(resolved, executable, managed):
     voyager = VoyagerService(service.home,token=token,on_change=lambda event:app.events.put(('voyager_changed',event['request_id'])))
     frontier = FrontierService(service.home,token=token,on_change=lambda event:app.events.put(('frontier_changed',event['frontier_id'])))
     knowledge_cards = KnowledgeCardService(service.home,token=token,materials=materials,on_change=lambda event:app.events.put(('card_changed',event['card_id'])))
-    knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=knowledge_cards,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
-    knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=knowledge_cards,themes=knowledge_themes,frontiers=frontier)
+    librarian = Librarian(knowledge_cards, token=token, frontiers=frontier)
+    knowledge_themes = KnowledgeThemeService(service.home,token=token,cards=librarian,materials=materials,on_change=lambda event:app.events.put(('theme_changed',event['theme_id'])))
+    knowledge_workbench = KnowledgeWorkbenchService(service.home,token=token,cards=librarian,themes=knowledge_themes,frontiers=frontier)
     keeper_runtime = KeeperRuntime(service, token=token, code_root=code)
     keeper_service = None
     keeper_test_enabled = keeper_test_requests_enabled()
@@ -784,8 +852,13 @@ def _serve(resolved, executable, managed):
             event[1]['state'] = lark_adapter.status()
         emit(*event)
 
+    def emit_keeper(kind, data):
+        emit(kind, data)
+        if kind in ("keeper_review", "keeper_revision"):
+            app.events.put(("term_confirmation_changed", None))
+
     keeper_commands = KeeperCommands(keeper_service_factory, keeper_runtime, token=token,
-                                     emit=emit)
+                                     emit=emit_keeper)
     def refresh_chats():
         nonlocal current
         with dispatch_lock:
@@ -805,10 +878,27 @@ def _serve(resolved, executable, managed):
                                 'task_id': chats[current]['task_id'], 'expected_version': previous_version if expected_version is None else expected_version, 'role': role, 'text': text}, token=token)
         refresh_chats()
         return result['version'] > previous_version
+    def show_librarian_return(card):
+        if card.get('status') == 'returned' and card.get('error'):
+            emit('command_error', {"operation_id": card['operation_id'], **card['error']})
+
+    def invalidate_cleaned_progress(card):
+        if card.get('entity') == 'test_cleanup' and card['status'] == 'confirmed':
+            frontier_ids = sorted({item['record']['frontier_id'] for item in card['results']
+                                   if item['kind'] == 'progress'})
+            if frontier_ids:
+                emit('frontier_tracking_invalidated', frontier_ids)
+
     def state():
         with dispatch_lock:
             facts = embedded_agent.runtime(app.home, code=code)
-            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':knowledge_cards.list(token=token),'themes':knowledge_themes.list(token=token),
+            emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':librarian.list_frontiers(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'bulletin_links':librarian.bulletin_links(token=token),'themes':knowledge_themes.list(token=token),
+                            'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
+                            'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
+                           'archive_sources':librarian.list_sources(token=token),
+                           'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
+                                for card in librarian.confirmations(token=token,origin=origin)
+                                if card['status']=='pending'],
                            'deliveries':deliveries.list(chats[current]['task_id'],token=token) if chats else [], 'delivery_enabled':deliveries.channel is not None, 'schedules':service.list_schedules(token=token), 'schedule_limits':agent_scheduling.get_limits(service,token=token), 'configuring': configuring.is_set(), 'model': facts['model'], 'provider': facts['provider'], 'configured': facts['configured'], 'models': facts.get('models', []), 'providers': providers(), 'turns': service.list_turns(chats[current]['task_id'], token=token) if chats else [], 'children': service.list_children(chats[current]['task_id'], token=token) if chats else []})
     def start_turn(turn):
         nonlocal current, response
@@ -992,17 +1082,118 @@ def _serve(resolved, executable, managed):
                             fulltext_jobs[cmd['request_id']].set()
                         if kind=='voyager_view':voyager_current=data['request_id']
                         emit(kind,data)
-                    elif action in ('frontier_create','frontier_update','frontier_delete','frontier_open','frontier_list'):
+                    elif action == 'frontier_tracking':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
-                        kind,data=frontier_command(frontier,cmd,token=token)
-                        emit(kind,data)
+                        frontier_id = cmd.get('frontier_id')
+                        emit('frontier_tracking', {"frontier_id": frontier_id,
+                             "progress": librarian.list_progress(frontier_id, token=token),
+                             "history": voyager.recent(token=token, frontier_id=frontier_id)})
+                    elif action in ('frontier_open', 'frontier_list', 'frontier_create', 'frontier_update',
+                                    'frontier_delete', 'progress_create', 'progress_update', 'progress_delete',
+                                    'frontier_confirm', 'progress_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind, data = frontier_command(librarian, cmd, token=token)
+                        emit(kind, data)
+                        if kind == 'frontier_confirmation':
+                            show_librarian_return(data)
+                            if data['status'] == 'confirmed':
+                                for result in data['results']:
+                                    if data['entity'] == 'frontier':
+                                        emit('frontier_view', result)
+                                    else:
+                                        frontier_id = result['frontier_id']
+                                        emit('frontier_tracking', {"frontier_id": frontier_id,
+                                             "progress": librarian.list_progress(frontier_id, token=token),
+                                             "history": voyager.recent(token=token, frontier_id=frontier_id)})
+                            state()
                     elif action in ('card_create','card_update','card_archive',
-                                    'card_open','card_list','card_query'):
+                                    'card_open','card_list','card_query','card_confirm','card_batch'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
-                        kind,data=card_command(knowledge_cards,cmd,token=token)
+                        kind,data=librarian_card_command(librarian,cmd,token=token,origin='gui')
                         emit(kind,data)
-                    elif action in ('theme_create','theme_update','theme_archive',
-                                    'theme_open','theme_list','theme_query','theme_source'):
+                        if kind == 'term_confirmation':
+                            show_librarian_return(data)
+                            if data['status'] == 'confirmed':
+                                for term in data['results']:
+                                    emit('card_view', term)
+                            state()
+                    elif action in ('bulletin_list','bulletin_open'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        emit(*bulletin_board_command(librarian,cmd,token=token))
+                    elif action in ('question_list' ,'question_open','question_create',
+                                    'question_update','question_delete','question_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        kind,data=librarian_question_command(librarian,cmd,token=token,origin='gui:hpedia')
+                        emit(kind,data)
+                        if kind == 'question_confirmation' and data['status'] == 'confirmed':
+                            for question in data['results']:
+                                emit('question_view', question)
+                        if kind == 'question_confirmation':
+                            show_librarian_return(data)
+                            state()
+                    elif action in ('source_create', 'source_update', 'source_delete', 'source_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if action == 'source_confirm':
+                            receipt = librarian.decide(cmd.get('operation_id'), cmd.get('choice'),
+                                                       token=token, origin='gui', expected_entity='source')
+                            show_librarian_return(receipt)
+                        else:
+                            librarian.request_source(action.removeprefix('source_'),
+                                                     {k:v for k,v in cmd.items() if k!='action'},
+                                                     token=token, origin='gui')
+                        state()
+                    elif action == 'source_open':
+                        source_id = cmd.get('source_id')
+                        package, original = librarian.source_original(
+                            source_id, token=token, task_id=cmd.get('task_id'))
+                        if 'source_url' in package:
+                            emit('archive_source_url', {'source_id':source_id, 'url':package['source_url']})
+                        else:
+                            if original is not None:
+                                import base64
+                                emit('private_pdf', {'id':package['material_id'], 'data':base64.b64encode(original).decode('ascii')})
+                            else:
+                                emit('private_pdf', None)
+                            emit('material_package', package)
+                    elif action in ('test_cleanup_preview', 'test_cleanup_request', 'test_cleanup_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if action == 'test_cleanup_request':
+                            librarian.request_test_cleanup(cmd.get('operation_id'), token=token, origin='gui',
+                                                         selection=cmd.get('selection'))
+                            state()
+                        elif action == 'test_cleanup_confirm':
+                            card = librarian.decide(cmd.get('operation_id'), cmd.get('choice'), token=token,
+                                                    origin='gui', expected_entity='test_cleanup')
+                            show_librarian_return(card)
+                            invalidate_cleaned_progress(card)
+                            state()
+                        emit('test_cleanup_preview', librarian.preview_test_cleanup(token=token))
+                    elif action == 'agent_term_confirm':
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if not chats or cmd.get('task_id') != chats[current]['task_id']:
+                            raise CommandError('not_found', '本会话没有该确认请求')
+                        card = librarian.decide(cmd.get('operation_id'),cmd.get('choice'),
+                                                token=token,origin='agent:'+chats[current]['task_id'])
+                        show_librarian_return(card)
+                        invalidate_cleaned_progress(card)
+                        state()
+                    elif action == 'editor_library_confirm':
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        task_id = cmd.get('task_id')
+                        if not chats or task_id != chats[current]['task_id']:
+                            raise CommandError('not_found', '本会话没有该确认请求')
+                        proposal = keeper_service_factory().view(cmd.get('proposal_id'), token=token)
+                        if proposal.get('task_id') != task_id or not proposal.get('term_expires_at'):
+                            raise CommandError('not_found', '本会话没有该确认请求')
+                        payload = {k:v for k,v in cmd.items() if k!='task_id'}
+                        kind, receipt = keeper_commands.decide({**payload, 'action':'keeper_decide'}, origin_task=task_id)
+                        emit(kind, receipt)
+                        state()
+                        if receipt['status'] == 'revising':
+                            keeper_commands.queue_revision(receipt.get('review_id'))
+                    elif action in ('theme_create','theme_update','theme_archive'):
+                        raise CommandError('retired_theme', '请在百科中新增或编辑问题。')
+                    elif action in ('theme_open','theme_list','theme_query','theme_source'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=theme_command(knowledge_themes,cmd,token=token)
                         emit(kind,data)
@@ -1053,6 +1244,8 @@ def _serve(resolved, executable, managed):
                         if result is not None:
                             emit(*result)
                             receipt = result[1]
+                            if action in ('keeper_decide', 'keeper_revise'):
+                                state()
                             if action in ('keeper_decide', 'keeper_revise') \
                                     and isinstance(receipt, dict) \
                                     and receipt.get('status') == 'revising':
@@ -1175,6 +1368,8 @@ def _serve(resolved, executable, managed):
             if kind == 'agent':
                 if data['type'] == 'text': response += data['text']
                 elif data['type'] == 'error': response += '\n错误：' + data['message']
+            elif kind == 'term_confirmation_changed':
+                state()
             elif kind == 'done':
                 if not data or not data.get('durable'):
                     if getattr(app, 'turn', None):

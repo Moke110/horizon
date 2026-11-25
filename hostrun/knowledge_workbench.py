@@ -33,6 +33,7 @@ from pathlib import Path
 
 from hostrun.agent_service import CommandError
 from hostrun.frontier import FrontierService
+from hostrun.librarian import Librarian
 from hostrun.knowledge_cards import KnowledgeCardService
 from hostrun.knowledge_themes import KnowledgeThemeService
 from hostrun.managed_database import database_connection
@@ -214,7 +215,8 @@ class KnowledgeWorkbenchService:
             db.execute("BEGIN")
             cards = self.cards.query_all_in_transaction(db)
             themes = self.themes.query_all_in_transaction(db)
-            frontiers = self.frontiers.query_all_in_transaction(db)
+            frontiers = (self.cards.query_frontiers_in_transaction(db)
+                         if isinstance(self.cards, Librarian) else self.frontiers.query_all_in_transaction(db))
         return ([("card", card) for card in cards]
                 + [("theme", theme) for theme in themes]
                 + [("frontier", frontier) for frontier in frontiers])

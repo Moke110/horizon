@@ -444,3 +444,87 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
   padding-inline: 12px;
   background: var(--sidebar-background);
 }
+
+.navigation-toggle { app-region: no-drag; padding: 5px 10px; font-size: 18px; }
+#workspace-navigation { min-height: 0; }
+.nav button { display: flex; align-items: center; gap: 10px; }
+.nav button[aria-current] { background: #303034; }
+.session-icon { display: none; }
+.navigation-collapsed #workspace-navigation { width: 62px; padding-inline: 8px; }
+.navigation-collapsed :is(.nav-label, .brand small, .section, .workspace) { display: none; }
+.navigation-collapsed :is(.nav button, .new, .sessions button, .settings) {
+  justify-content: center;
+  text-align: center;
+  padding-inline: 6px;
+}
+.navigation-collapsed .session-icon { display: inline; }
+
+.workzone {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+.workzone > main { min-width: min(320px, 100%); overflow: auto; }
+.workspace-detail {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  max-width: max(0px, calc(100cqw - 328px));
+  background: #1d1d20;
+}
+.detail-resize { width: 8px; flex: 0 0 8px; cursor: col-resize; touch-action: none; background: #29292d; }
+.detail-resize:is(:hover, :focus-visible) { background: #7898e8; }
+.detail-toolbar { display: flex; justify-content: flex-end; border-bottom: 1px solid #343437; }
+.detail-body { min-height: 0; overflow: auto; overflow-wrap: anywhere; padding: 16px; }
+.local-html img { display: block; max-width: 100%; height: auto; }
+.html-picker { display: block; margin-block: 8px; }
+.html-picker input { width: auto; margin-left: 8px; }
+
+.dictionary-workbench { grid-template-columns: minmax(0, 1fr); }
+.dictionary-workbench .workbench-list { border-right: 0; }
+.dictionary-detail .workbench-detail-head { padding-inline: 0; }
+
+.hpedia-icon { position: relative; display: inline-block; width: 17px; height: 17px; }
+.hpedia-icon::before, .hpedia-icon::after {
+  content: ""; position: absolute; width: 8px; height: 11px;
+  border: 1px solid currentColor; border-radius: 1px;
+}
+.hpedia-icon::before { top: 1px; right: 1px; }
+.hpedia-icon::after { bottom: 1px; left: 1px; background: var(--sidebar-background); }
+.hpedia-panel { overflow: auto; padding: 24px 30px; }
+.hpedia-panel ul { list-style: none; padding: 0; }
+.hpedia-panel li + li { border-top: 1px solid #44444b; }
+.hpedia-panel li button { text-align: left; overflow-wrap: anywhere; }
+.hpedia-form { display: grid; gap: 12px; }
+.hpedia-form textarea { display: block; width: 100%; min-height: 100px; margin-top: 5px; }
+.hpedia-reference-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hpedia-reference-picker select { margin-left: 6px; max-width: 100%; }
+.hpedia-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.hpedia-term-link { color: #9db9ff; text-decoration: underline; padding: 0 2px; }
+.archive-sources { padding: 20px 30px; border-bottom: 1px solid #343437; }
+.archive-sources ul { list-style: none; padding: 0; }
+.archive-sources li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.archive-sources form { display: grid; gap: 8px; max-width: 620px; }
+.archive-sources, .materials-file-list { flex: 0 0 auto; }
+
+.bulletin-icon { position: relative; display: inline-block; width: 18px; height: 16px; }
+.bulletin-icon::before { content: ""; position: absolute; inset: 5px 2px 2px 1px; border: 1px solid currentColor; border-radius: 1px; }
+.bulletin-icon::after { content: ""; position: absolute; width: 12px; height: 2px; top: 6px; right: -1px; background: currentColor; transform: rotate(-45deg); }
+.bulletin-panel { padding: 24px 30px; overflow: auto; }
+.bulletin-panel ul { list-style: none; padding: 0; }
+.bulletin-panel li + li { border-top: 1px solid #44444b; }
+.bulletin-panel button { text-align: left; overflow-wrap: anywhere; }
+.bulletin-panel small { color: #a3a5ae; margin-left: 8px; }
+
+.frontier-tracking { border-top: 1px solid #343437; margin-top: 18px; }
+.frontier-detail section { margin-top: 18px; }
+.frontier-detail article { border-bottom: 1px solid #343437; padding-block: 8px; }
+.frontier-detail textarea { display: block; width: 100%; }
+.frontier-detail input[type="checkbox"] { width: auto; }
+.frontier-detail fieldset label { display: block; }
+
+.library-test-tag { border: 1px solid #b18455; border-radius: 4px; color: #ffd7a8; padding: 1px 4px; font-size: 12px; }
+.cleanup-entries > li { margin-block: 10px; }
+.cleanup-entries > li > div > span:last-child { margin-left: 8px; }

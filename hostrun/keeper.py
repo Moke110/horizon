@@ -37,7 +37,7 @@ from hostrun.editor_keeper import verify_editor_request
 from hostrun.editor_reports import ReportService
 from hostrun.agent_service import AgentService, CommandError
 from hostrun.frontier import (
-    FrontierService, _validate_constraints, _validate_question,
+    _validate_constraints, _validate_question,
     _validate_relations, _validate_scope, _validate_status,
 )
 from hostrun.keeper_decisions import (
@@ -46,7 +46,7 @@ from hostrun.keeper_decisions import (
     validate_relations_against_deletions,
 )
 from hostrun.keeper_evidence_policy import review_policy
-from hostrun.knowledge_cards import KnowledgeCardService
+from hostrun.librarian import Librarian
 from hostrun.knowledge_cards import _provenance as _card_provenance
 from hostrun.knowledge_themes import KnowledgeThemeService, _MAX_EVIDENCE, _sufficiency
 from hostrun.managed_database import database_connection
@@ -266,12 +266,12 @@ def _receipt_result(receipt):
 class KeeperService:
     """Persistent, authenticated Keeper requests, review and proposal reads."""
 
-    def __init__(self, agent, materials, cards, themes, frontiers, *, token):
+    def __init__(self, agent, materials, cards, themes, frontiers, *, token, clock=time.time):
         if not isinstance(token, str) or not token:
             raise ValueError("A launch token is required")
         self.agent = agent
         self.materials = materials
-        self.cards = cards
+        self.cards = Librarian(cards, token=token, clock=clock, frontiers=frontiers)
         self.themes = themes
         self.frontiers = frontiers
         self.home = Path(agent.home)
@@ -447,14 +447,23 @@ class KeeperService:
                 try:
                     self._check_pins(db, command)
                     plan = self._plan(db, command)
+                    if command.get("report_kind") == "editor":
+                        receipt["review_reason"] = outcome.get("reason", "")
+                    proposals = [self._proposal(receipt, command, group) for group in plan]
+                    db.execute("SAVEPOINT reserve_reviewed_terms")
+                    try:
+                        for proposal in proposals:
+                            self.cards.reserve_reviewed_terms(db, proposal)
+                    except CommandError:
+                        db.execute("ROLLBACK TO reserve_reviewed_terms")
+                        raise
+                    finally:
+                        db.execute("RELEASE reserve_reviewed_terms")
                 except (CommandError, _Returned) as error:
                     outcome = self._returned_outcome(error)
             if outcome["status"] == "reviewed":
                 proposal_ids = []
-                if command.get("report_kind") == "editor":
-                    receipt["review_reason"] = outcome.get("reason", "")
-                for group in plan:
-                    proposal = self._proposal(receipt, command, group)
+                for proposal in proposals:
                     proposal_ids.append(proposal["proposal_id"])
                     db.execute("INSERT INTO keeper_proposals VALUES(?,?,?)",
                                (proposal["proposal_id"], request_id, json.dumps(proposal)))
@@ -502,6 +511,19 @@ class KeeperService:
                                    "Keeper proposal revision changed")
             changes = proposal["changes"]
             check_expected_versions(command, changes)
+            if "term_expires_at" in proposal and "decision" in proposal:
+                return proposal["decision"]
+            if self.cards.reviewed_terms_expired(proposal):
+                self.cards.release_reviewed_terms(db, proposal)
+                result = {"operation_id": command["operation_id"],
+                          "proposal_id": proposal["proposal_id"], "status": "expired",
+                          "revision": proposal["revision"], "decision": command["decision"], "applied": []}
+                proposal.update(status="expired", decision=result)
+                db.execute("UPDATE keeper_proposals SET result=? WHERE proposal_id=?",
+                           (json.dumps(proposal), proposal["proposal_id"]))
+                db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                           (command["operation_id"], encoded, json.dumps(result)))
+                return result
             if proposal.get("status") == "revising" \
                     and command["decision"] == "approve":
                 # A concurrent window approved the same displayed revision while
@@ -516,61 +538,74 @@ class KeeperService:
             if proposal.get("status") != "pending":
                 raise CommandError("already_decided",
                                    "Keeper proposal has already been decided")
+            self.cards.release_reviewed_terms(db, proposal)
             applied = []
+            failure = None
             if command["decision"] == "approve":
-                request, _ = self._load_request(db, proposal["request_id"])
-                drift = []
-                for change in changes:
-                    if change["action"] == "create":
-                        continue
-                    record = self._read_owner(db, change["kind"], change["id"])
-                    if record["version"] != change["expected_version"]:
-                        drift.append({
-                            "kind": change["kind"], "id": change["id"],
-                            "expected_version": change["expected_version"],
-                            "current_version": record["version"],
-                        })
-                if drift:
-                    # The displayed revision still pins the old owner snapshot.
-                    # Record a durable revision job before any owner write; the
-                    # Explorer's approval never silently rebases knowledge.
-                    result, event = self._begin_revision(
-                        db, proposal, command, drift=drift)
-                    db.execute("UPDATE keeper_proposals SET result=? "
-                               "WHERE proposal_id=?",
-                               (json.dumps(proposal), command["proposal_id"]))
-                    db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
-                               (command["operation_id"], encoded,
-                                json.dumps(result)))
-                    self._record_audit(db, proposal["proposal_id"], event)
-                    return result
-                self._check_approval_policy(db, changes, request)
-                self._validate_merge_component(
-                    db,
-                    [{"kind": change["kind"], "id": change["id"],
-                      "before": change.get("before"),
-                      "proposal": change,
-                      "after": change.get("after")} for change in changes],
-                    at_approval=True)
-                validate_relations_against_deletions(changes)
-                validate_material_references(self.materials, db, changes)
-                for change in changes:
-                    if change["action"] == "create" and self._existing_overlap(
-                            db, {"kind": change["kind"], "proposal": change}):
-                        raise CommandError("duplicate_entity", "An equivalent record already exists")
-                results = {}
-                for index, change in apply_order(changes):
-                    action, prepared = owner_command(
-                        change["kind"], change,
-                        owner_operation_id(command["proposal_id"],
-                                           command["revision"], index))
-                    record, changed = self._apply_owner(
-                        db, change["kind"], action, prepared)
-                    results[index] = applied_result(change["kind"], record)
-                    if changed:
-                        notifications.append((change["kind"], record))
-                applied = [results[index] for index in range(len(changes))]
-            status = "approved" if command["decision"] == "approve" else "rejected"
+                db.execute("SAVEPOINT keeper_apply")
+                try:
+                    request, _ = self._load_request(db, proposal["request_id"])
+                    drift = []
+                    for change in changes:
+                        if change["action"] == "create":
+                            continue
+                        record = self._read_owner(db, change["kind"], change["id"])
+                        if record["version"] != change["expected_version"]:
+                            drift.append({
+                                "kind": change["kind"], "id": change["id"],
+                                "expected_version": change["expected_version"],
+                                "current_version": record["version"],
+                            })
+                    if drift:
+                        # The displayed revision still pins the old owner snapshot.
+                        # Record a durable revision job before any owner write; the
+                        # Explorer's approval never silently rebases knowledge.
+                        result, event = self._begin_revision(
+                            db, proposal, command, drift=drift)
+                        db.execute("UPDATE keeper_proposals SET result=? "
+                                   "WHERE proposal_id=?",
+                                   (json.dumps(proposal), command["proposal_id"]))
+                        db.execute("INSERT INTO keeper_operations VALUES(?,?,?)",
+                                   (command["operation_id"], encoded,
+                                    json.dumps(result)))
+                        self._record_audit(db, proposal["proposal_id"], event)
+                        return result
+                    self._check_approval_policy(db, changes, request)
+                    self._validate_merge_component(
+                        db,
+                        [{"kind": change["kind"], "id": change["id"],
+                          "before": change.get("before"),
+                          "proposal": change,
+                          "after": change.get("after")} for change in changes],
+                        at_approval=True)
+                    validate_relations_against_deletions(changes)
+                    validate_material_references(self.materials, db, changes)
+                    for change in changes:
+                        if change["action"] == "create" and self._existing_overlap(
+                                db, {"kind": change["kind"], "proposal": change}):
+                            raise CommandError("duplicate_entity", "An equivalent record already exists")
+                    results = {}
+                    for index, change in apply_order(changes):
+                        action, prepared = owner_command(
+                            change["kind"], change,
+                            owner_operation_id(command["proposal_id"],
+                                               command["revision"], index))
+                        record, changed = self._apply_owner(
+                            db, change["kind"], action, prepared)
+                        results[index] = applied_result(change["kind"], record)
+                        if changed:
+                            notifications.append((change["kind"], record))
+                    applied = [results[index] for index in range(len(changes))]
+                except CommandError as error:
+                    if "term_expires_at" not in proposal:
+                        raise
+                    db.execute("ROLLBACK TO keeper_apply")
+                    proposal = json.loads(row[0])
+                    notifications.clear()
+                    failure = {"code": error.code, "message": str(error)}
+                finally:
+                    db.execute("RELEASE keeper_apply")
+            status = "returned" if failure else ("approved" if command["decision"] == "approve" else "rejected")
             decided_at = int(time.time())
             result = {
                 "operation_id": command["operation_id"],
@@ -581,6 +616,8 @@ class KeeperService:
                 "applied": applied,
                 "decided_at": decided_at,
             }
+            if failure:
+                result["error"] = failure
             if "reason" in command:
                 result["reason"] = command["reason"]
             proposal.update(status=status, decision=result)
@@ -601,6 +638,8 @@ class KeeperService:
                 "applied": applied,
                 "decided_at": decided_at,
             }
+            if failure:
+                event["error"] = failure
             if "reason" in command:
                 event["reason"] = command["reason"]
             db.execute("INSERT INTO keeper_audit(proposal_id,operation_id,event) "
@@ -642,6 +681,9 @@ class KeeperService:
                     or status not in ("pending", "revising", "returned"):
                 raise CommandError("already_decided",
                                    "Keeper proposal has already been decided")
+            if self.cards.reviewed_terms_expired(proposal):
+                raise CommandError("already_decided", "确认已过期")
+            self.cards.release_reviewed_terms(db, proposal)
             if command["decision"] == "cancel":
                 result = self._cancel_revision(db, proposal, command)
             else:
@@ -798,6 +840,16 @@ class KeeperService:
                     return result
                 result = self._revision_receipt(
                     job["request"], "returned", reason="snapshot_changed")
+                self._save_job(db, job, "returned", result)
+                self._persist_returned(db, proposal, job, result)
+                self._audit_revision(db, proposal["proposal_id"],
+                                     "keeper.revision_returned", result,
+                                     **self._revision_audit_details(job, result))
+                return result
+            try:
+                self.cards.reserve_reviewed_terms(db, revised)
+            except CommandError as error:
+                result = self._revision_failure(job["request"], error)
                 self._save_job(db, job, "returned", result)
                 self._persist_returned(db, proposal, job, result)
                 self._audit_revision(db, proposal["proposal_id"],
@@ -1283,14 +1335,17 @@ class KeeperService:
             raise error
 
     def _apply_owner(self, db, kind, action, command):
-        service = {"card": self.cards, "theme": self.themes,
-                   "frontier": self.frontiers}[kind]
+        if kind == "frontier":
+            return self.cards.apply_approved_frontier(db, action, command, token=self._token)
+        service = {"card": self.cards, "theme": self.themes}[kind]
         return service.apply_in_transaction(
             db, action, command, token=self._token, origin="keeper")
 
     def _notify_owner(self, kind, record):
-        service = {"card": self.cards, "theme": self.themes,
-                   "frontier": self.frontiers}[kind]
+        if kind == "frontier":
+            self.cards.notify_frontier(record)
+            return
+        service = {"card": self.cards, "theme": self.themes}[kind]
         service.notify_committed(record)
 
     def audit(self, proposal_id, *, token):
@@ -1443,13 +1498,12 @@ class KeeperService:
             **({"provenance": {"source": "editor"}, "execution_attempt": receipt.get("execution_attempt", 0)} if command.get("report_kind") == "editor" else {}),
         }
 
-    @staticmethod
-    def _read_owner(db, kind, identity):
+    def _read_owner(self, db, kind, identity):
         if kind == "card":
-            return KnowledgeCardService.read_in_transaction(db, identity)
+            return self.cards.read_in_transaction(db, identity)
         if kind == "theme":
             return KnowledgeThemeService.read_in_transaction(db, identity)
-        return FrontierService.read_in_transaction(db, identity)
+        return self.cards.read_frontier_in_transaction(db, identity)
 
     @staticmethod
     def _owner_label(kind, record):
@@ -1548,7 +1602,7 @@ class KeeperService:
                 or entry["proposal"]["action"] != "create":
             return None
         label = _normalized_label(self._creation_label(entry))
-        matches = [record for record in KnowledgeCardService.query_all_in_transaction(db)
+        matches = [record for record in self.cards.query_all_in_transaction(db)
                    if record.get("status") == "active" and record.get("known")
                    and _normalized_label(record.get("title") or "") == label]
         if len(matches) != 1:
@@ -1597,7 +1651,7 @@ class KeeperService:
         kind = entry["kind"]
         label = _normalized_label(self._creation_label(entry))
         if kind == "card":
-            records = KnowledgeCardService.query_all_in_transaction(db)
+            records = self.cards.query_all_in_transaction(db)
             records = [record for record in records
                        if record.get("status") == "active" and record.get("known")]
         elif kind == "theme":
@@ -1605,7 +1659,7 @@ class KeeperService:
             records = [record for record in records
                        if record.get("status") == "active" and record.get("known")]
         else:
-            records = FrontierService.query_all_in_transaction(db)
+            records = self.cards.query_frontiers_in_transaction(db)
             records = [record for record in records
                        if record.get("status") != "deleted"]
         evidence = []
@@ -1721,7 +1775,7 @@ class KeeperService:
                                          change, change["sources"])
         if len(change["sources"]) > 16:
             raise CommandError("invalid_card", "来源数量超出限制")
-        fields = KnowledgeCardService._fields(editable)
+        fields = self.cards.term_fields(editable)
         if action == "create":
             if merge_from is not None or add_sources is not None:
                 raise CommandError(
@@ -1730,7 +1784,7 @@ class KeeperService:
                 raise CommandError("invalid_card", "title and content are required")
             if not citations:
                 raise _Returned("missing_evidence")
-            relations = self.cards._relations(db, None, fields.get("relations", []))
+            relations = self.cards.term_relations(db, None, fields.get("relations", []))
             sources = self._dedupe_card_sources(citations)
             provenance, source_pending = _card_provenance(sources)
             after = {
@@ -1759,7 +1813,7 @@ class KeeperService:
             raise CommandError("invalid_command", "Sources belong on the change")
         relations = card["relations"]
         if "relations" in fields:
-            relations = self.cards._relations(db, card["card_id"], fields["relations"])
+            relations = self.cards.term_relations(db, card["card_id"], fields["relations"])
         requested_sources = [self._card_source(source, reference)
                              for source, reference in citations]
         if merge_from is not None:
@@ -1780,8 +1834,8 @@ class KeeperService:
                 raise CommandError("invalid_card", "来源数量超出限制")
             updated = keeper_merge.survivor_after(card, donor, sources)
             editable_merge = {key: updated[key] for key in _CARD_FIELDS}
-            KnowledgeCardService._fields(editable_merge)
-            self.cards._relations(db, card["card_id"], updated["relations"])
+            self.cards.term_fields(editable_merge)
+            self.cards.term_relations(db, card["card_id"], updated["relations"])
             updated["provenance"], updated["source_pending"] = _card_provenance(sources)
             proposal = self._proposal_change(
                 "card", "update", card["card_id"], change["expected_version"],
@@ -2054,7 +2108,7 @@ class KeeperService:
     def _inbound_redirects(self, db, donor_id, survivor_id, survivor_version):
         """Active Cards and Themes that must explicitly replace the donor."""
         expected = {}
-        for record in KnowledgeCardService.query_all_in_transaction(db):
+        for record in self.cards.query_all_in_transaction(db):
             if record.get("status") != "active" or not record.get("known") \
                     or record.get("card_id") in (donor_id, survivor_id):
                 continue
@@ -2230,6 +2284,20 @@ class KeeperService:
             **{field: command[field] for field in _RECONSIDERATION_FIELDS if field in command},
         }
 
+    def session_term_proposals(self, task_id, *, token):
+        self._authorize(token)
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT result FROM keeper_proposals WHERE json_extract(result,'$.task_id')=?
+                    AND json_extract(result,'$.term_expires_at') IS NOT NULL
+                ORDER BY rowid
+            """, (task_id,)).fetchall()
+        proposals = [json.loads(row[0]) for row in rows]
+        for proposal in proposals:
+            if self.cards.reviewed_terms_expired(proposal):
+                proposal["status"] = "expired"
+        return proposals
+
     def list(self, *, token, status="pending"):
         """List persisted proposals with a stable review status."""
         self._authorize(token)
@@ -2240,7 +2308,8 @@ class KeeperService:
             db.execute("BEGIN")
             rows = db.execute("SELECT result FROM keeper_proposals ORDER BY rowid").fetchall()
         proposals = [json.loads(row[0]) for row in rows]
-        return [proposal for proposal in proposals if proposal["status"] == status]
+        return [proposal for proposal in proposals if proposal["status"] == status
+                and not self.cards.reviewed_terms_expired(proposal)]
 
     def view(self, proposal_id, *, token):
         """Read one persisted proposal with its pinned changes."""
@@ -2252,7 +2321,10 @@ class KeeperService:
                              (proposal_id,)).fetchone()
         if row is None:
             raise CommandError("not_found", "Unknown Keeper proposal")
-        return json.loads(row[0])
+        proposal = json.loads(row[0])
+        if self.cards.reviewed_terms_expired(proposal):
+            proposal["status"] = "expired"
+        return proposal
 
     def receipt(self, request_id, *, token):
         """Read the current persistent request receipt."""

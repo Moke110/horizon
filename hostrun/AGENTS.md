@@ -8,6 +8,7 @@
 | [agent_run.py](agent_run.py) | Run the bundled Horizon Pi agent with bounded execution, events and leases. |
 | [agent_scheduling.py](agent_scheduling.py) | Public persistent schedule commands: explicit development scopes only. |
 | [agent_service.py](agent_service.py) | Agent-owned persistent commands and queries for authenticated desktop clients. |
+| [archive_sources.py](archive_sources.py) | Library source records and references to the existing material store. |
 | [archive_index.py](archive_index.py) | The archive index: a code-directory ledger of the material files. |
 | [audit.py](audit.py) | Existing-data audit: compare the cloud libraries with the migration baseline. |
 | [base.py](base.py) | Config, Base-client factory and executable resolution for host runs. |
@@ -37,6 +38,9 @@
 | [executor.py](executor.py) | Single-executor lease: one host drives one knowledge base at a time. |
 | [facilities.py](facilities.py) | Create or attach the Feishu facilities horizon needs, by confirmed names. |
 | [feedback.py](feedback.py) | Persistent feedback in Feishu: questions, submissions, results, corrections. |
+| [library_cleanup.py](library_cleanup.py) | Previews removal of marked Library records and affected references. |
+| [library_tags.py](library_tags.py) | Defines the marker stored on Agent-generated development records. |
+| [frontier_progress.py](frontier_progress.py) | Stores versioned Frontier progress and Archive source references. |
 | [frontier.py](frontier.py) | Local Frontier (关注问题/方向) knowledge, independent of Feishu. |
 | [initialize.py](initialize.py) | Formal knowledge initialization from literature, requirements and a draft. |
 | [install.py](install.py) | Installation: capability probes, resumable progress, honest report. |

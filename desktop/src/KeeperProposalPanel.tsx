@@ -6,7 +6,7 @@ export type KeeperAction='create'|'update'|'delete';
 export type KeeperDecisionChoice='approve'|'reject';
 export type KeeperRevisionDecision='adjust'|'cancel';
 export type KeeperProposalStatus='pending'|'revising'|'returned'|'cancelled'|'approved'|'rejected';
-export type KeeperDecisionStatus='approved'|'rejected'|'revising'|'cancelled';
+export type KeeperDecisionStatus='approved'|'rejected'|'revising'|'cancelled'|'returned';
 export type KeeperSource={
   material_id:string;
   material_version?:number|null;
@@ -86,6 +86,7 @@ export type KeeperUndoReceipt={
   [key:string]:unknown;
 };
 export type KeeperDecision={
+  error?:{code:string;message:string};
   operation_id:string;
   decision:KeeperDecisionChoice|KeeperRevisionDecision;
   proposal_id:string;
@@ -121,6 +122,7 @@ export type KeeperProposal={
   status?:string|null;
   request_id?:string|null;
   task_id?:string|null;
+  term_expires_at?:number|null;
   task_version?:number|null;
   report_id?:string|null;
   report_version?:number|null;
@@ -984,11 +986,20 @@ export function KeeperProposalPanel({
     group.changes.push(change);
   });
   const effectiveDecision=receipt||keeperDecisionFromProposal(proposal);
-  const rawStatus=proposal?.status||'';
+  const [elapsed,setElapsed]=useState(false);
+  useEffect(()=>{
+    setElapsed(false);
+    if(proposal?.status!=='pending'||!proposal.term_expires_at)return;
+    const delay=proposal.term_expires_at*1000-Date.now();
+    if(delay<=0){setElapsed(true);return;}
+    const timer=window.setTimeout(()=>setElapsed(true),delay);
+    return ()=>window.clearTimeout(timer);
+  },[proposalId,proposal?.status,proposal?.term_expires_at]);
+  const rawStatus=elapsed&&proposal?.status==='pending'?'expired':proposal?.status||'';
   const effectiveStatus=effectiveDecision?.status||rawStatus;
   const terminal=TERMINAL_STATUSES.has(effectiveStatus);
   const revising=!terminal&&(effectiveStatus==='revising'||rawStatus==='revising');
-  const actionable=!!proposal&&!terminal&&!revising&&proposal.status==='pending'&&changes.length>0;
+  const actionable=!!proposal&&!terminal&&!revising&&rawStatus==='pending'&&changes.length>0;
   const revisionValid=!!proposal&&typeof proposal.revision==='number'
     &&Number.isInteger(proposal.revision)&&proposal.revision>0;
   const versionsValid=changes.every(change=>change.action==='create'
@@ -1002,7 +1013,7 @@ export function KeeperProposalPanel({
   const cancellableStatus=effectiveStatus==='pending'||effectiveStatus==='returned'||effectiveStatus==='revising';
   const canCancel=cancellableStatus&&!!proposal&&revisionValid
     &&!loading&&!deciding&&!!onRevise;
-  const status=keeperStatusLabel(effectiveStatus);
+  const status=effectiveStatus==='expired'?'已过期':keeperStatusLabel(effectiveStatus);
   const testBadge=proposal?keeperTestBadge(proposal):null;
   const headline=proposal?keeperProposalTitle(proposal):proposalId;
   const revisionNotes=proposal&&proposal.revision_notes&&typeof proposal.revision_notes==='object'

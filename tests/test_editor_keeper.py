@@ -1,9 +1,10 @@
 import copy
+import time
 
 import pytest
 
 from hostrun.editor_reports import ReportService, report_evidence
-from hostrun.keeper import KeeperPrincipal
+from hostrun.keeper import KeeperPrincipal, KeeperService
 from test_keeper_runtime import Owner, TOKEN
 
 
@@ -56,7 +57,10 @@ def test_production_keeper_only_accepts_a_committed_editor_evidence_request(tmp_
     assert len(owner.cards.query(token=TOKEN)) == 1
 
 
-def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path):
+@pytest.mark.parametrize("outcome", ["approve", "reject", "expire", "removed"])
+def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path, outcome):
+    from hostrun.agent_service import CommandError
+    from hostrun.librarian import Librarian
     owner = Owner(tmp_path)
     material = owner.material()
     task = owner.task["task_id"]
@@ -80,16 +84,47 @@ def test_frontier_proposal_keeps_current_scope_until_explorer_approval(tmp_path)
     reports.save("scoped", task, evidence, {**versions, "writing_frontier_id": frontier_id}, claims,
                  token=TOKEN, task_version=owner.task["version"], keeper_proposals=[proposed])
     request, = reports.pending_keeper_requests(token=TOKEN)
-    keeper = owner.keeper
+    clock = [time.time()]
+    keeper = KeeperService(owner.agent, owner.materials, owner.cards, owner.themes,
+                           owner.frontiers, token=TOKEN, clock=lambda: clock[0])
     queued = keeper.request(request, token=TOKEN, principal=KeeperPrincipal("editor", False))
     reviewed = keeper.review(queued["request_id"], token=TOKEN, dispatch=lambda _: {"status": "reviewed"})
     assert owner.frontiers.view(frontier_id, token=TOKEN) == frontier
     proposal = keeper.view(reviewed["proposal_ids"][0], token=TOKEN)
-    decision = keeper.decide({"schema_version": 1, "operation_id": "approve-frontier", "decision": "approve",
-        "proposal_id": proposal["proposal_id"], "revision": 1, "expected_versions": [frontier["version"]]},
-        token=TOKEN, principal=KeeperPrincipal("explorer", False))
-    assert decision["status"] == "approved"
-    assert owner.frontiers.view(frontier_id, token=TOKEN)["question"] == proposed["fields"]["question"]
+    librarian = Librarian(owner.cards, token=TOKEN, clock=lambda: clock[0])
+    edit = {"schema_version": 1, "operation_id": "pause-editor-frontier", "frontier_id": frontier_id,
+            "expected_version": 1, "status": "paused"}
+    with pytest.raises(CommandError, match="确认"):
+        librarian.request_frontier("update", edit, token=TOKEN, origin="gui")
+    assert keeper.session_term_proposals(task, token=TOKEN) == [proposal]
+    assert keeper.session_term_proposals("different-session", token=TOKEN) == []
+    if outcome == "expire":
+        clock[0] += 72 * 60 * 60
+        assert keeper.view(proposal["proposal_id"], token=TOKEN)["status"] == "expired"
+    elif outcome == "removed":
+        material_id = material["material_id"]
+        owner.materials.archive_material(material_id, token=TOKEN)
+        impact = owner.materials.deletion_impact(material_id, token=TOKEN)
+        owner.materials.delete_material(material_id, impact["confirmation"], token=TOKEN)
+    command = {"schema_version": 1, "operation_id": "approve-frontier",
+        "decision": "reject" if outcome == "reject" else "approve",
+        "proposal_id": proposal["proposal_id"], "revision": 1, "expected_versions": [1]}
+    explorer = KeeperPrincipal("explorer", False)
+    decision = keeper.decide(command, token=TOKEN, principal=explorer)
+    assert decision["status"] == {"approve": "approved", "reject": "rejected",
+                                  "expire": "expired", "removed": "returned"}[outcome]
+    if outcome == "removed":
+        assert decision["applied"] == []
+        assert decision["error"]["code"] == "invalid_evidence"
+        assert keeper.view(proposal["proposal_id"], token=TOKEN)["decision"] == decision
+        assert keeper.audit(proposal["proposal_id"], token=TOKEN)[-1]["status"] == "returned"
+    assert keeper.decide({**command, "operation_id": "repeat-frontier"}, token=TOKEN, principal=explorer) == decision
+    current = owner.frontiers.view(frontier_id, token=TOKEN)
+    assert current["scope"] == frontier["scope"]
+    assert current["hard_constraints"] == frontier["hard_constraints"]
+    assert current["question"] == (proposed["fields"]["question"] if outcome == "approve" else frontier["question"])
+    assert librarian.request_frontier("update", {**edit, "expected_version": current["version"]},
+                                     token=TOKEN, origin="gui")["status"] == "pending"
 
 
 def test_transient_production_review_waits_for_explicit_retry_and_keeps_request(tmp_path):
@@ -165,3 +200,57 @@ def test_keeper_child_recovers_terminal_outcome_before_request_commit(tmp_path, 
     assert len(calls) == 1 and completed["child_id"] != failure.value.child_id
     assert reopened.dispatch(retried) == completed
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("outcome", ["approve", "reject", "expire"])
+def test_editor_keeper_term_confirmation_shares_the_librarian_lock(tmp_path, outcome):
+    from hostrun.librarian import Librarian
+    from hostrun.agent_service import CommandError
+
+    owner = Owner(tmp_path)
+    clock = [time.time()]
+    keeper = KeeperService(owner.agent, owner.materials, owner.cards, owner.themes,
+                           owner.frontiers, token=TOKEN, clock=lambda: clock[0])
+    term = owner.cards.create({"schema_version": 1, "operation_id": "existing",
+                               "title": "辐射传感器", "content": "记录辐射。"}, token=TOKEN)
+    material = owner.material()
+    task = owner.task["task_id"]
+    reports = ReportService(tmp_path, token=TOKEN)
+    evidence = report_evidence(owner.materials, material["material_id"], task, token=TOKEN)
+    reports.save("editor", task, evidence, {"knowledge": [
+        {"kind": "card", "id": term["card_id"], "version": 1}]}, [
+        {"kind": "source", "text": "探测器每日记录辐射。",
+         "citations": [{"excerpt": evidence["locators"][1]["text"], "locator": "p2"}]}],
+        token=TOKEN, task_version=owner.task["version"], keeper_proposals=[
+            {"kind": "card", "id": term["card_id"], "claim_index": 0, "reason": "补充定义",
+             "fields": {"content": "探测器每日记录辐射。"}}])
+    command, = reports.pending_keeper_requests(token=TOKEN)
+    queued = keeper.request(command, token=TOKEN, principal=KeeperPrincipal("editor", False))
+    result = keeper.review(queued["request_id"], token=TOKEN,
+                                 dispatch=lambda _: {"status": "reviewed"})
+    proposal = keeper.view(result["proposal_ids"][0], token=TOKEN)
+    librarian = Librarian(owner.cards, token=TOKEN)
+    update = {"schema_version": 1, "operation_id": "gui-edit", "card_id": term["card_id"],
+              "expected_version": 1, "content": "另一个定义。"}
+    assert librarian.view(term["card_id"], token=TOKEN) == term
+    with pytest.raises(CommandError, match="确认"):
+        librarian.request("update", update, token=TOKEN, origin="gui")
+    assert keeper.session_term_proposals(task, token=TOKEN) == [proposal]
+    decision = {"schema_version": 1, "operation_id": "decision", "revision": 1,
+                "proposal_id": proposal["proposal_id"], "expected_versions": [1],
+                "decision": "reject" if outcome == "reject" else "approve"}
+    if outcome == "expire":
+        clock[0] += 72 * 3600
+        assert keeper.view(proposal["proposal_id"], token=TOKEN)["status"] == "expired"
+    explorer = KeeperPrincipal("explorer", False)
+    result = keeper.decide(decision, token=TOKEN, principal=explorer)
+    assert result["status"] == {"approve": "approved", "reject": "rejected", "expire": "expired"}[outcome]
+    assert keeper.decide(decision, token=TOKEN, principal=explorer) == result
+    if outcome == "approve":
+        assert librarian.view(term["card_id"], token=TOKEN)["content"] == "探测器每日记录辐射。"
+        update["expected_version"] = 2
+        assert keeper.decide({**decision, "operation_id": "another-click"},
+                             token=TOKEN, principal=explorer) == result
+    else:
+        assert librarian.view(term["card_id"], token=TOKEN) == term
+    assert librarian.request("update", update, token=TOKEN, origin="gui")["status"] == "pending"

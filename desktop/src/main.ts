@@ -1,4 +1,4 @@
-import {app,BrowserWindow,dialog,ipcMain,Tray,Menu,nativeImage} from 'electron';
+import {app,BrowserWindow,dialog,ipcMain,Tray,Menu,nativeImage,shell} from 'electron';
 import {join,basename} from 'node:path';
 import {open} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
@@ -30,6 +30,14 @@ function optionsItems(): Electron.MenuItemConstructorOptions[] {
 }
 ipcMain.on('command',async(event,value)=>{
  if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
+ if(value?.action==='open_source_url'){
+  try{
+   const url=new URL(value.url);
+   if((url.protocol==='https:'||url.protocol==='http:')&&!url.username&&!url.password)
+    await shell.openExternal(url.href);
+  }catch{send({kind:'notice',data:'无法打开原始来源链接。'});}
+  return;
+ }
  if(value?.action==='choose_pdf'||value?.action==='choose_pending_pdf'){
   const choice=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'PDF',extensions:['pdf']}]});
   if(choice.canceled)return;

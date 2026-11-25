@@ -206,6 +206,8 @@ class KeeperGroupUndo:
                      command):
         kind, identifier = entry["kind"], entry["id"]
         service = self.services[kind]
+        if kind in ("card", "frontier"):
+            service.check_write_lock(db, identifier)
         meta = service.HISTORY
         operation_id = owner_operation_id(
             proposal["proposal_id"], decision["revision"], index)
@@ -224,7 +226,7 @@ class KeeperGroupUndo:
             raise CommandError("snapshot_conflict",
                                "The approved owner snapshot has an unexpected status")
 
-        current = service._read(db, identifier)
+        current = service.read_in_transaction(db, identifier)
         if current.get(meta["id_field"]) != identifier:
             raise CommandError("snapshot_conflict",
                                "The owner record identity changed")
@@ -304,7 +306,7 @@ class KeeperGroupUndo:
                     elif unchanged:
                         version = relation["version"]
                     else:
-                        card = self.services["card"]._read(db, card_id)
+                        card = self.services["card"].read_in_transaction(db, card_id)
                         if card.get("status") != "active" \
                                 or not card.get("known") \
                                 or card.get("version") != relation.get("version"):
@@ -325,7 +327,7 @@ class KeeperGroupUndo:
                     elif card_id in existing:
                         continue
                     else:
-                        related = self.services["card"]._read(db, card_id)
+                        related = self.services["card"].read_in_transaction(db, card_id)
                     if related.get("status") != "active" or not related.get("known"):
                         raise CommandError(
                             "invalid_relation",
@@ -428,18 +430,19 @@ class KeeperGroupUndo:
         return result
 
     @staticmethod
-    def _changes(target, editable, removed, project):
+    def _changes(target, meta, removed, project):
         approved = project(target["approved"], removed)
         current = project(target["current"], removed)
         inverse = project(target["projected"], removed)
-        paths = list(editable)
+        paths = list(meta['editable'])
+        defaults = meta.get('defaults')
         if ("status",) not in paths:
             paths.append(("status",))
         changes = []
         for path in paths:
-            approved_value = get_path(approved, path)
-            current_value = get_path(current, path)
-            inverse_value = get_path(inverse, path)
+            approved_value = get_path(approved, path, defaults)
+            current_value = get_path(current, path, defaults)
+            inverse_value = get_path(inverse, path, defaults)
             if approved_value == current_value == inverse_value:
                 continue
             changes.append({
@@ -455,7 +458,7 @@ class KeeperGroupUndo:
             service = self.services[target["kind"]]
             project = service.history_project
             target["changes"] = self._changes(
-                target, service.HISTORY["editable"],
+                target, service.HISTORY,
                 removed[target["kind"]], project)
             # The display honours removed material snapshots; the raw projected
             # snapshot keeps the historical citation that commit restores.
@@ -567,6 +570,9 @@ class KeeperGroupUndo:
                     key=lambda item: (order[item[1]["kind"]], item[0])):
                 target = plan["targets"][index]
                 record = copy.deepcopy(target["projected"])
+                if target["kind"] == "card" and record["status"] == "archived":
+                    from hostrun.hpedia import check_term_removal
+                    check_term_removal(db, target["id"])
                 owner_operation_id_value = (
                     f"group-undo:{command['operation_id']}:{index}")
                 record["operation_id"] = owner_operation_id_value

@@ -17,6 +17,7 @@ from hostrun.managed_database import database_connection
 from hostrun.voyager_relevance import candidate_change, candidate_identity, scope_identity, selection_reason
 from hostrun.voyager_sources import valid_candidate_timestamps
 from hostrun.frontier import FrontierService
+from hostrun.librarian import Librarian
 from common import file_lock
 
 DEFAULT_LIMITS={'seconds':900,'queries':20,'candidates':100,'fulltexts':20}
@@ -51,7 +52,7 @@ class KnowledgeScopeProvider:
         expected = value.get('expected_version')
         if 'expected_version' in value and type(expected) is not int:
             raise CommandError('version_conflict', 'Frontier 版本无效，请刷新后重试')
-        return FrontierService.resolve_in_transaction(db, frontier_id, expected_version=expected)
+        return Librarian.resolve_frontier_in_transaction(db, frontier_id, expected_version=expected)
 
 
 class VoyagerService:
@@ -212,7 +213,7 @@ class VoyagerService:
             event = action
             if action in ('execution_started', 'query_reserved') and value['scope']['kind']=='frontier':
                 try:
-                    FrontierService.resolve_in_transaction(db, value['scope']['frontier_id'])
+                    Librarian.resolve_frontier_in_transaction(db, value['scope']['frontier_id'])
                 except CommandError as exc:
                     if action == 'execution_started' or exc.code not in ('frontier_inactive', 'not_found'):
                         raise
@@ -490,12 +491,19 @@ class VoyagerService:
         self._notify(current)
         return current
 
-    def recent(self,*,token,before=None):
+    def recent(self,*,token,before=None,frontier_id=None):
         self._authorize(token)
         with self._connect() as db:
             boundary=db.execute('SELECT rowid FROM voyager_requests WHERE request_id=?',(before,)).fetchone() if before else None
             if before and not boundary:raise CommandError('not_found','Unknown retrieval page')
-            rows=db.execute('SELECT result FROM voyager_requests WHERE rowid<? ORDER BY rowid DESC LIMIT 50',(boundary[0] if boundary else 9223372036854775807,)).fetchall()
+            boundary_row = boundary[0] if boundary else 9223372036854775807
+            if frontier_id is None:
+                rows = db.execute("SELECT result FROM voyager_requests WHERE rowid<? ORDER BY rowid DESC LIMIT 50",
+                                  (boundary_row,)).fetchall()
+            else:
+                rows = db.execute("""SELECT result FROM voyager_requests WHERE rowid<?
+                    AND json_extract(result,'$.scope.frontier_id')=? ORDER BY rowid DESC LIMIT 50""",
+                                  (boundary_row, frontier_id)).fetchall()
         return [{'request_id':v['request_id'],'version':v['version'],'status':v['status'],
                  'delivery_status':self._delivery_status(v),'scope_text':v['scope']['text'][:256],
                  'stop_reason':v.get('stop_reason')} for v in map(lambda r:json.loads(r[0]),rows)]

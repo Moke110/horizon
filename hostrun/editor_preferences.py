@@ -7,7 +7,7 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
-from hostrun.frontier import FrontierService
+from hostrun.librarian import Librarian
 from hostrun.managed_database import database_connection
 
 
@@ -101,7 +101,7 @@ class PreferenceService:
         with database_connection(self.home) as db, db:
             db.execute("BEGIN")
             if frontier_id is not None:
-                FrontierService.resolve_in_transaction(db, frontier_id)
+                Librarian.resolve_frontier_in_transaction(db, frontier_id)
             scopes = ["", frontier_id] if frontier_id else [""]
             for scope in scopes:
                 rows = db.execute("SELECT name,result FROM editor_writing_preferences WHERE scope=?", (scope,))
@@ -135,9 +135,9 @@ class PreferenceService:
                 return json.loads(prior[1])
             if scope is not None:
                 if action == "save" or action == "adopt" or action == "enable":
-                    FrontierService.resolve_in_transaction(db, scope)
+                    Librarian.resolve_frontier_in_transaction(db, scope)
                 else:
-                    FrontierService.read_in_transaction(db, scope)
+                    Librarian.read_frontier_in_transaction(db, scope)
             result = self._change(db, command, action, scope, task_id)
             db.execute("INSERT INTO editor_writing_operations VALUES(?,?,?)",
                        (operation, digest, json.dumps(result)))

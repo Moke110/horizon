@@ -26,6 +26,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hostrun.agent_service import CommandError
+from hostrun.library_tags import new_test_tags, visible_tags
+from hostrun.convergence import current as current_convergence, validate as validate_convergence
 from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 from hostrun.voyager_materials import MaterialsService
@@ -116,7 +118,8 @@ class KnowledgeCardService:
         "event_type": "knowledge_card.undo",
         "editable": (("title",), ("content",), ("aliases",),
                      ("recall_terms",), ("sources",), ("relations",),
-                     ("questionable",)),
+                     ("questionable",), ("convergence",)),
+        "defaults": {("convergence",): current_convergence},
     }
 
     def __init__(self, home, *, token, clock=time.time, on_change=None, materials=None):
@@ -137,6 +140,12 @@ class KnowledgeCardService:
         db.execute("CREATE TABLE IF NOT EXISTS knowledge_cards(card_id TEXT PRIMARY KEY,result TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS knowledge_card_operations(operation_id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS knowledge_card_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT UNIQUE NOT NULL,event TEXT NOT NULL)")
+
+        db.execute("""CREATE TABLE IF NOT EXISTS librarian_term_requests(
+            id TEXT PRIMARY KEY, origin TEXT NOT NULL, request TEXT NOT NULL,
+            expires_at REAL NOT NULL, result TEXT NOT NULL)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS librarian_term_locks(
+            term_id TEXT PRIMARY KEY, request_id TEXT NOT NULL)""")
 
     @contextmanager
     def _connect(self):
@@ -207,8 +216,18 @@ class KnowledgeCardService:
     def history_undoable(record):
         return record.get("status") == "active"
 
+    def _check_term_lock(self, db, term_id, lock_clock=None):
+        now = self.clock() if lock_clock is None else lock_clock
+        locked = db.execute("""SELECT 1 FROM librarian_term_locks AS lock
+            JOIN librarian_term_requests AS request ON request.id=lock.request_id
+            WHERE lock.term_id=? AND request.expires_at>?""",
+                            (term_id, now)).fetchone()
+        if locked:
+            raise CommandError("term_locked", "术语正在等待确认")
+
     def apply_history_undo(self, db, record, fields):
         """Apply trusted historical editable fields, reusing pinned citations."""
+        self._check_term_lock(db, record["card_id"])
         updated = json.loads(json.dumps(record))
         for path, value in fields.items():
             set_path(updated, path, value)
@@ -240,6 +259,9 @@ class KnowledgeCardService:
                                                    max_items=_MAX_RELATIONS)
         if "questionable" in command:
             fields["questionable"] = _validate_questionable(command["questionable"])
+        if "convergence" in command:
+            fields["convergence"] = validate_convergence(command["convergence"])
+            fields["questionable"] = fields["convergence"] != "resolved"
         return fields
 
     def _resolve_sources(self, db, card_id, sources, previous=()):
@@ -281,7 +303,7 @@ class KnowledgeCardService:
             self.notify_committed(card)
         return card
 
-    def apply_in_transaction(self, db, action, command, *, token, origin="manual"):
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None):
         """Apply one Knowledge Card write on the caller's open transaction.
 
         ``delete`` and ``archive`` share the public archive semantics and the
@@ -324,9 +346,12 @@ class KnowledgeCardService:
                 "known": True,
                 "origin": "keeper" if origin == "keeper" else "manual",
                 "status": "active",
+                **new_test_tags(command),
                 "created_at": now,
                 "updated_at": now,
             }
+            if "convergence" in fields:
+                card["convergence"] = fields["convergence"]
             db.execute("INSERT INTO knowledge_cards VALUES(?,?)",
                        (card_id, json.dumps(card)))
             db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
@@ -337,8 +362,13 @@ class KnowledgeCardService:
                            "card_id": card_id, "operation_id": command["operation_id"]}, origin)))
             return card, True
         card = self._read(db, command.get("card_id"))
+        self._check_term_lock(db, card["card_id"], lock_clock)
         if action == "update":
             fields = self._fields(command)
+            if "questionable" in fields and "convergence" not in fields and "convergence" in card:
+                fields["convergence"] = (
+                    "resolved" if not fields["questionable"] else
+                    "unresolved" if card["convergence"] == "resolved" else card["convergence"])
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, fields)
@@ -358,6 +388,8 @@ class KnowledgeCardService:
             updated["known"] = True
             event_type = "knowledge_card.updated"
         else:
+            from hostrun.hpedia import check_term_removal
+            check_term_removal(db, card["card_id"])
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, {})
@@ -436,6 +468,8 @@ class KnowledgeCardService:
             "source_pending": card["source_pending"],
             "source_removed": any(source.get("status") == "removed" for source in card["sources"]),
             "questionable": card["questionable"],
+            **({"convergence": card["convergence"]} if "convergence" in card else {}),
+            **visible_tags(card),
             "updated_at": card["updated_at"],
         }
 
@@ -464,7 +498,7 @@ class KnowledgeCardService:
         submitted = {}
         changed = []
         for name in ("title", "content", "aliases", "recall_terms", "sources",
-                     "relations", "questionable"):
+                     "relations", "questionable", "convergence"):
             if name not in fields:
                 continue
             submitted[name] = fields[name]
