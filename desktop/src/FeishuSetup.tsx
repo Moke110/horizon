@@ -1,3 +1,5 @@
+import {TextInput} from './gui/elements/FormElements';
+import {Collapsible} from './gui/elements/Collapsible';
 import React, {useEffect, useState} from 'react';
 
 type State = {
@@ -54,7 +56,7 @@ export function FeishuSetup({send, close}: {send:(command:unknown)=>void; close:
       {install && <p>版本 {install.version} · {installed?'文件和启动自检通过':filesVerified
         ? install.runtime==='failed'?'文件完整，启动自检失败':'文件完整，启动待校验'
         : install.status==='invalid'?'本地安装校验失败':'未安装'}</p>}
-      {install && <details><summary>来源与校验值</summary><p>{install.source}</p><p>ZIP SHA-256 <code>{install.archive_sha256}</code></p></details>}
+      {install && <Collapsible title="来源与校验值"><p>{install.source}</p><p>ZIP SHA-256 <code>{install.archive_sha256}</code></p></Collapsible>}
       <button disabled={busy} onClick={()=>run('feishu_install')}>{filesVerified?'校验启动':'安装或重试'}</button>
     </section>
     <section>
@@ -69,8 +71,8 @@ export function FeishuSetup({send, close}: {send:(command:unknown)=>void; close:
         setAuthorization(undefined);
         run('feishu_configure',{app_id:String(data.get('appId') || '').trim(), secret:String(data.get('secret') || '')});
       }}>
-        <label>App ID <input name="appId" required autoComplete="off" disabled={!installed || busy}/></label>
-        <label>App Secret <input name="secret" required type="password" autoComplete="off" disabled={!installed || busy}/></label>
+        <label>App ID <TextInput name="appId" required autoComplete="off" disabled={!installed || busy}/></label>
+        <label>App Secret <TextInput name="secret" required type="password" autoComplete="off" disabled={!installed || busy}/></label>
         <button type="submit" disabled={!installed || busy}>保存应用凭据</button>
       </form>
     </section>
