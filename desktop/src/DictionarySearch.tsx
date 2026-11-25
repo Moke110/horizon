@@ -1,13 +1,14 @@
+import {Button} from './gui/elements/Button';
 import React, {useRef, useState} from 'react';
 import {TextInput} from './gui/elements/FormElements';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import './dictionary-search.css';
 
 type Term = {card_id: string; title: string; aliases?: string[]};
-type Scope = 'active' | 'inactive' | 'pending';
 
-export function DictionarySearch({query, setQuery, scope, changeScope, cards, selected, changeSelected, submit}: {
-  query: string; setQuery: (value: string) => void; scope: Scope; changeScope: (value: Scope) => void;
+export function DictionarySearch<S extends string>({query, setQuery, scope, changeScope, cards, selected, changeSelected, submit, scopeOptions, extraFilter, placeholder='搜索术语和释义'}: {
+  extraFilter?: React.ReactNode; scopeOptions?: Record<string,string>; placeholder?: string;
+  query: string; setQuery: (value: string) => void; scope: S; changeScope: (value: S) => void;
   cards: Term[]; selected: string[]; changeSelected: (ids: string[]) => void; submit: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -29,25 +30,26 @@ export function DictionarySearch({query, setQuery, scope, changeScope, cards, se
     onSubmit={event => {event.preventDefault(); setOpen(false); submit();}}>
     <div><label htmlFor="dictionary-query">搜索</label>
       <div className="dictionary-query-row">
-        <TextInput id="dictionary-query" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索术语和释义"/>
-        <button className="search-icon" type="submit" aria-label="搜索" title="搜索">
+        <TextInput id="dictionary-query" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder={placeholder}/>
+        <Button className="search-icon" type="submit" aria-label="搜索" title="搜索">
           <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
-        </button>
+        </Button>
       </div>
     </div>
     <div className="dictionary-filter-row">
-      <label>范围<FixedSelect className="dictionary-scope" value={scope} onChange={e => {setOpen(false); changeScope(e.target.value as Scope);}}>
-        <option value="active">当前有效</option><option value="inactive">归档与停用</option><option value="pending">待确认</option>
+      <label>{scopeOptions ? '状态' : '范围'}<FixedSelect className="dictionary-scope" value={scope} onChange={e => {setOpen(false); changeScope(e.target.value as S);}}>
+        {Object.entries(scopeOptions || {active:'当前有效',inactive:'归档与停用',pending:'待确认'}).map(([value,label])=><option key={value} value={value}>{label}</option>)}
       </FixedSelect></label>
+      {extraFilter}
       <div className="term-picker" onBlur={e => {if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);}}>
         <label htmlFor="relation-term-input">关联术语</label>
         <div className="term-field" onClick={() => {if (scope !== 'pending') input.current?.focus();}}>
           {selected.map(id => {
             const title = cards.find(term => term.card_id === id)?.title ?? id;
-            return <button type="button" className="term-chip chosen" key={id} disabled={scope === 'pending'}
-              aria-label={'移除' + title} onClick={() => changeSelected(selected.filter(value => value !== id))}>{title}<span aria-hidden="true">×</span></button>;
+            return <Button type="button" className="term-chip chosen" key={id} disabled={scope === 'pending'}
+              aria-label={'移除' + title} onClick={() => changeSelected(selected.filter(value => value !== id))}>{title}<span aria-hidden="true">×</span></Button>;
           })}
-          <input ref={input} id="relation-term-input" role="combobox" autoComplete="off" aria-autocomplete="list"
+          <TextInput ref={input} id="relation-term-input" role="combobox" autoComplete="off" aria-autocomplete="list"
             aria-expanded={open} aria-controls="relation-term-options" disabled={scope === 'pending'} value={text}
             placeholder="输入术语或同义词" aria-activedescendant={open && matches[activeIndex] ? 'term-opt-' + activeIndex : undefined}
             onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
@@ -65,8 +67,8 @@ export function DictionarySearch({query, setQuery, scope, changeScope, cards, se
             }}/>
         </div>
         <div ref={list} className="term-options" id="relation-term-options" role="listbox" aria-label="候选术语" hidden={!open}>
-          {matches.map((term, index) => <button id={'term-opt-' + index} key={term.card_id} role="option" aria-selected={index === activeIndex}
-            className="term-chip" type="button" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => choose(term)}>{term.title}</button>)}
+          {matches.map((term, index) => <Button id={'term-opt-' + index} key={term.card_id} role="option" aria-selected={index === activeIndex}
+            className="term-chip" type="button" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => choose(term)}>{term.title}</Button>)}
           {!matches.length && <span role="status">没有匹配的术语</span>}
         </div>
       </div>

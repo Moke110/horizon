@@ -16,7 +16,7 @@ The authenticated read-only desktop action `knowledge_search` searches persisted
 
 The optional `kind` narrows the search to `card`, `theme` or `frontier`. `scope=active`, the default, returns active known Cards and Themes and following Frontiers. `scope=inactive` returns archived Cards and Themes and paused, resolved or deleted Frontiers. The workbench reads pending Keeper proposals through their separate query. A known Card marked questionable or awaiting a source remains active. An optional `related_to` containing `kind` and `id` filters to direct relations in either direction. An array of typed targets matches any direct neighbor, counting each result once before pagination; an empty array leaves results unfiltered. This includes Card-to-Card and Theme-to-Card relationships. There are no Frontier relations at this stage.
 
-Search is local and lexical. Unicode compatibility normalization and case folding allow different forms of the same letters and digits to match. One-character, two-character and longer Chinese text matches as a substring, including when it is mixed with English. An empty or whitespace-only query lists the chosen scope. Results are paged using a zero-based `offset` and a bounded `limit`.
+Search is local and lexical. Unicode compatibility normalization and case folding allow different forms of the same letters and digits to match. One-character, two-character and longer Chinese text matches as a substring, including when it is mixed with English. An empty or whitespace-only query lists the chosen scope. Results are paged using a zero-based `offset` and a bounded `limit`. The Dictionary passes `kind=card` and `all_terms=true` at offset zero to read all matching terms in one snapshot for its scrollable list.
 
 ## Keeper review requests
 
@@ -85,6 +85,7 @@ A committed Frontier carries `schema_version: 1`, the `operation_id` that produc
 Every mutation requires `schema_version: 1` and a nonempty `operation_id`; after creation it also requires `frontier_id` and integer `expected_version`.
 
 - `frontier_create` accepts a question alone. The default is following, with a query derived from the title and arXiv as the initial source. A caller may also supply status, scope, hard constraints and relations. Confirmation commits version 1.
+- The Bulletin Board link projection includes the source definition or answer in `summary` and the linked term IDs in `term_ids`. Frontier list entries expose explicit term references from the full question and scope for the board filter.
 - `frontier_open` reads the full committed Frontier. The list projection truncates `scope_text` for display; it is never an edit source.
 - `frontier_list` returns bounded summaries: id, version, question, status, truncated scope text and update time.
 - `frontier_update` changes supplied fields, increments `version` exactly once and rejects stale `expected_version` with `version_conflict`. A deleted Frontier rejects edits with `invalid_transition`.

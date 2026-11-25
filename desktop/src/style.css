@@ -473,13 +473,6 @@ select{font:inherit;background:#202024;color:#eee;border:1px solid #44444d;borde
 .dictionary-workbench .workbench-list { border-right: 0; }
 .dictionary-detail .workbench-detail-head { padding-inline: 0; }
 
-.hpedia-icon { position: relative; display: inline-block; width: 17px; height: 17px; }
-.hpedia-icon::before, .hpedia-icon::after {
-  content: ""; position: absolute; width: 8px; height: 11px;
-  border: 1px solid currentColor; border-radius: 1px;
-}
-.hpedia-icon::before { top: 1px; right: 1px; }
-.hpedia-icon::after { bottom: 1px; left: 1px; background: var(--sidebar-background); }
 .hpedia-panel { overflow: auto; padding: 24px 30px; }
 .hpedia-panel ul { list-style: none; padding: 0; }
 .hpedia-panel li + li { border-top: 1px solid #44444b; }
@@ -642,15 +635,7 @@ label.gui-checkbox {
   border-radius: 8px;
   background: #181a23;
 }
-.gui-collapsible > summary::after {
-  content: '';
-  flex: 0 0 7px;
-  height: 7px;
-  border: solid currentColor;
-  border-width: 0 1px 1px 0;
-  transform: rotate(-45deg);
-}
-.gui-collapsible[open] > summary::after { transform: rotate(45deg); }
+
 .gui-table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
 .gui-data-table { width: 100%; border-collapse: collapse; }
 .gui-data-table thead { background: #181a23; }
@@ -663,3 +648,191 @@ label.gui-checkbox {
   overflow-wrap: anywhere;
 }
 .gui-data-table tbody tr:is([tabindex], [role="button"]):hover { background: #282b37; }
+
+.shell > aside .sessions { min-height: 0; flex: 1 1 0; overflow-y: auto; overscroll-behavior: contain; }
+
+.messages article.user { padding: 8px 14px; }
+.messages article.user > :first-child { margin-top: 0; }
+.messages article.user > :last-child { margin-bottom: 0; }
+
+.compose-wrap .composer { padding: 8px 10px; }
+
+.compose-wrap .composer textarea { background: transparent; border: 0; }
+
+.composer .compose-footer select { background-color: transparent; border: 0; }
+.composer .compose-footer option { color: #eee; background-color: #28292f; }
+
+.compose-footer button[aria-label="刷新模型列表"] { display: inline-grid; place-items: center; padding: 0; }
+
+/* Shared action buttons, including icon-only controls. */
+.shell button.gui-button {
+  border: 1px solid #727b90;
+}
+.shell button.gui-button:is(.selected,.chosen,[aria-selected=true],[aria-current=true]) {
+  border-color: #91a7d2;
+}
+.shell button.gui-button:disabled { border-color: #697081; opacity: 1; color: #92959e; }
+.shell button.gui-button-primary {
+  border-color: #95acd6;
+  border-radius: 7px;
+  background: #405980;
+  color: #fff;
+  padding-inline: 12px;
+}
+.shell button.gui-button-primary:hover:enabled { background: #4b6999; }
+.shell button.gui-button-primary:disabled { background: #303746; color: #a0a4ae; border-color: #697081; }
+.shell button.gui-button-archive { border-color: #a3816c; background: #382f2b; color: #e2c7b6; }
+.shell button.gui-button-archive:hover:enabled { background: #493a32; }
+.shell button.gui-button:focus-visible { outline: 2px solid var(--control-focus); outline-offset: -2px; }
+
+.dictionary-workbench .workbench-list { container-type: inline-size; min-width: 0; }
+.dictionary-workbench .workbench-results button[data-result] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 9px clamp(4px,1.4cqi,12px) !important;
+  background: #24252a;
+}
+.dictionary-workbench .workbench-results button:is(:hover,.selected) { background: #30384b; }
+.dictionary-workbench .workbench-result-meta { margin-top: 3px; gap: 3px; overflow: hidden; }
+
+.dictionary-detail .workbench-detail-head { height: auto; min-height: 0; align-items: center; margin: 0 0 12px; padding: 4px 0; top: 0; }
+
+.gui-variable-toggle,
+.dictionary-detail .workbench-panel form select.convergence-picker {
+  padding-inline-end: 13px;
+}
+.dictionary-detail .workbench-panel form select.convergence-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* All actions share typography and height; result cards size to their contents. */
+:root {
+  --button-font: 14px;
+  --button-height: 36px;
+  --button-gap: 8px;
+}
+button {
+  box-sizing: border-box;
+  font-family: inherit !important;
+  font-size: var(--button-font) !important;
+  font-weight: 400 !important;
+  line-height: 20px !important;
+  height: var(--button-height) !important;
+  min-height: var(--button-height) !important;
+  max-height: var(--button-height) !important;
+  margin: 0 !important;
+  padding-block: 0 !important;
+}
+:is(.detail-toolbar,.gui-dialog-actions,.gui-variable-actions,.keeper-decision-actions,
+.keeper-proposal-actions,.keeper-revision-progress-actions,.knowledge-history-actions,
+.modal-actions,.tabs,.workbench-actions,.workbench-detail-actions,.workbench-filter-actions,
+.workbench-keeper-tabs,.compose-footer,.suggestions,.workbench-create,.nav,.term-options) {
+  gap: var(--button-gap) !important;
+}
+.sessions { display: flex; flex-direction: column; gap: var(--button-gap); }
+.sessions > button { flex-shrink: 0; }
+.gui-variable-list li:has(button) { column-gap: var(--button-gap); }
+.workbench-panel form > button + button { margin-inline-start: var(--button-gap) !important; }
+.dictionary-workbench .workbench-results button[data-result] {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+.workbench-results button:not([data-result]), .workbench:not(.dictionary-workbench) button[data-result] {
+  min-height: var(--button-height) !important;
+  height: auto !important;
+  max-height: none !important;
+}
+.compose-footer button:is(.send,[aria-label="刷新模型列表"]) { width: var(--button-height); }
+
+.disclosure-indicator::after,
+.gui-select:not([multiple])::picker-icon,
+details > summary::after,
+.term-field::after,
+button[aria-expanded]:not(.gui-variable-toggle)::after,
+button[popovertarget]::after {
+  content: "";
+  display: inline-block;
+  box-sizing: border-box;
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  vertical-align: 2px;
+  border: solid currentColor;
+  border-width: 1.5px 1.5px 0 0;
+  background: none;
+  rotate: none;
+  transform: rotate(45deg);
+  transition: none;
+}
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+button[aria-expanded]:not(.gui-variable-toggle,.navigation-toggle)::after,
+button[popovertarget]::after { margin-inline-start: 8px; }
+.shell .navigation-toggle { display: inline-grid; place-items: center; }
+.compose-footer select.gui-select[aria-label="选择模型"] {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: right;
+  gap: 5px;
+}
+.compose-footer select.gui-select[aria-label="选择模型"]::picker-icon { margin-inline-start: 0; }
+
+.shell > aside .section { font-size: var(--button-font); align-items: center; }
+
+.section button[aria-label="搜索会话"] { width: 36px; padding: 0; display: inline-grid; place-items: center; }
+.session-search { margin-block-end: 8px; }
+
+.dictionary-card-alias { display: block; color: #b1b4be; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+.dictionary-workbench .workbench-results {
+  column-gap: 8px;
+  overscroll-behavior: contain;
+  --term-columns: 3;
+  display: block;
+  position: relative;
+  scrollbar-gutter: stable;
+}
+.dictionary-workbench .workbench-results > li { position: absolute; min-width: 0; margin: 0; }
+
+.dictionary-heading { display: flex; align-items: center; justify-content: space-between; flex: none; height: auto; padding: 10px 18px; gap: 8px; border-bottom: 1px solid #303035; }
+.dictionary-heading h1 { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; line-height: 24px; margin: 0; }
+.dictionary-heading h1 span { display: inline-flex; color: inherit; }
+
+:is(.hpedia-panel,.bulletin-panel) { padding: 0; min-height: 0; flex: 1; overflow: auto; }
+:is(.hpedia-panel,.bulletin-panel) > ul, .bulletin-panel > .frontier-tracking { margin: 8px 18px; }
+
+.bulletin-panel .dictionary-filter-row { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.bulletin-panel .dictionary-filter-row .term-picker { grid-column: 1 / -1; }
+.bulletin-panel .frontier-tracking { margin: 8px 18px; }
+
+.bulletin-panel .dictionary-search :is(input[type=search],select.gui-select,.term-field) { box-sizing: border-box; height: 38px; min-height: 38px; }
+.bulletin-panel .dictionary-search select.gui-select { display: flex; align-items: center; justify-content: space-between; min-width: 0; }
+.bulletin-panel .dictionary-search select.gui-select::picker-icon { margin-inline-start: auto; }
+.bulletin-panel .dictionary-search .term-field { height: auto; }
+
+.module-card-container { container-type: inline-size; min-width: 0; margin: 8px 18px 0; }
+.module-card-container .module-card-list { --term-columns: 3; position: relative; column-gap: 8px; padding: 0; margin: 0; list-style: none; }
+@container (min-width: 600px) { .module-card-container .module-card-list, .dictionary-workbench .workbench-results { --term-columns: 4; } }
+@container (min-width: 800px) { .module-card-container .module-card-list, .dictionary-workbench .workbench-results { --term-columns: 5; } }
+@container (min-width: 1000px) { .module-card-container .module-card-list, .dictionary-workbench .workbench-results { --term-columns: 6; } }
+.module-card-container .module-card-list > li { position: absolute; border: 0; margin: 0; min-width: 0; }
+.module-card-list button[data-result] { display: grid; gap: 5px; width: 100%; height: auto !important; max-height: none !important; text-align: left; padding: 9px 10px !important; border: 1px solid #727b90; background: #24252a; overflow-wrap: anywhere; }
+.module-card-list button[data-result]:is(:hover,[aria-current=true]) { background: #30384b; border-color: #91a7d2; }
+.module-card-summary { font-size: 12px; line-height: 1.5; color: #b1b4be; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.module-card-list .workbench-result-meta { margin-top: 0; }
+.frontier-tracking .module-card-container { margin-inline: 0; }
+
+.shell > aside button.settings {
+  height: 48px !important;
+  min-height: 48px !important;
+  max-height: 48px !important;
+  flex: 0 0 48px;
+  align-items: center;
+}

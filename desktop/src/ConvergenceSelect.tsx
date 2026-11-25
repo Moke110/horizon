@@ -8,7 +8,7 @@ export const convergenceLabel = (value:Convergence,kind:'term'|'question') =>
 
 export function ConvergenceSelect({value,kind,onChange}:{value:Convergence;kind:'term'|'question';onChange:(value:Convergence)=>void}) {
   const states:Convergence[]=['resolved','unresolved','conflicted'];
-  return <label>收敛状态<FixedSelect value={value} onChange={event=>onChange(event.target.value as Convergence)}>
+  return <label>收敛状态<FixedSelect className={kind==='term'?'convergence-picker':undefined} value={value} onChange={event=>onChange(event.target.value as Convergence)}>
     {states.map(state=><option key={state} value={state}>{convergenceLabel(state,kind)}</option>)}
   </FixedSelect></label>;
 }

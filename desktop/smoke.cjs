@@ -5,7 +5,7 @@ const path = require('node:path');
 
 if (process.env.HORIZON_SMOKE_PROFILE) app.setPath('userData', process.env.HORIZON_SMOKE_PROFILE);
 
-const timeout = setTimeout(() => finish('Timed out', 1), 15000);
+const timeout = setTimeout(() => finish('Timed out', 1), 30000);
 function finish(result, code) {
   clearTimeout(timeout);
   fs.writeFileSync(process.env.HORIZON_SMOKE_RESULT, result);
@@ -131,7 +131,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       await wait(() => picker.getAttribute('aria-expanded') === 'true');
       picker.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
       await wait(() => picker.getAttribute('aria-expanded') === 'false');
-      (await wait(() => document.querySelector('[role="group"][aria-label="搜索导航栏"] button'))).click();
+      (await wait(() => document.querySelector('.dictionary-heading button'))).click();
       const termField = await wait(() => Array.from(document.querySelectorAll('form label'))
         .find(label => label.textContent.trim() === '释义')?.querySelector('textarea'));
       const singleLineHeight = termField.getBoundingClientRect().height;
@@ -309,6 +309,47 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       if (!main.contains(report)) throw Error('The report launcher did not stay in the main panel');
       return 'Desktop smoke passed: dictionary input sizing, alias and source editing, related Terms, modal cancellation, Library navigation, question review, caption overlay, HTML snapshot, PDF rendering, report disclosure and form controls, panel resize and close';
     })()`);
+    const renderer = script => win.webContents.executeJavaScript(script);
+    await renderer("document.querySelector('button[aria-label=白板]').click()");
+    const boardType = ".bulletin-panel select[aria-label=类型]";
+    const currentType = () => renderer(`document.querySelector('${boardType}').value`);
+    const chooseType = value => renderer(`(() => {
+      const select = document.querySelector('${boardType}');
+      select.value = ${JSON.stringify(value)};
+      select.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+    if (await currentType() !== 'frontier') throw Error('Board must start on frontiers');
+    for (const kind of ['term', 'question', 'frontier']) {
+      await chooseType(kind);
+      await renderer("document.querySelector('.bulletin-panel .dictionary-heading button').click()");
+      if (!await renderer("!!document.querySelector('.detail-body .frontier-detail form')")) {
+        throw Error('New frontier form missing from board type ' + kind);
+      }
+      await renderer("document.querySelector('[aria-label=关闭详情]').click()");
+    }
+    await chooseType('term');
+    await renderer("document.querySelector('button[aria-label=百科]').click()");
+    await renderer("document.querySelector('button[aria-label=白板]').click()");
+    if (await currentType() !== 'term') throw Error('Board lost type during navigation');
+    const realNow = Date.now;
+    try {
+      for (const duration of [3599999, 3600000]) {
+        let now = realNow();
+        Date.now = () => now;
+        const minimized = new Promise(resolve => win.once('minimize', resolve));
+        win.minimize();
+        await minimized;
+        now += duration;
+        const restored = new Promise(resolve => win.once('restore', resolve));
+        win.restore();
+        await restored;
+        if (await currentType() !== (duration < 3600000 ? 'term' : 'frontier')) {
+          throw Error('Incorrect board type after native restore at ' + duration + 'ms');
+        }
+      }
+    } finally {
+      Date.now = realNow;
+    }
     const fixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), 'research-view.html');
     fs.writeFileSync(fixture, '<h1>Saved HTML report</h1><script>throw Error("unsafe")</script><p><strong>Report emphasis</strong></p>');
     await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="资料"]').click()`);
@@ -357,7 +398,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     win.focus();
     win.webContents.focus();
     await mouseClick('#workspace-navigation button[aria-label="百科"]');
-    await mouseClick('.hpedia-panel > button');
+    await mouseClick('.hpedia-panel .dictionary-heading button');
     const termPicker = '.hpedia-reference-picker select';
     await mouseClick(termPicker);
     if (!await win.webContents.executeJavaScript(`document.querySelector('${termPicker}').matches(':open')`)) {
@@ -387,7 +428,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       throw Error('Escape did not close the picker while keeping the selection');
     }
     await mouseClick('#workspace-navigation button[aria-label="词典"]');
-    await mouseClick('[role="group"][aria-label="搜索导航栏"] button');
+    await mouseClick('.dictionary-heading button');
     const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
       .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
     if (!sourceToggle) throw Error('Native mouse did not open the Term draft');
@@ -406,7 +447,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
     if (!registeredPdf) throw Error('PDF chooser did not send the selected PDF through the bridge');
-    finish(result + '; PDF picker filename and registration, saved HTML opened with formatting', 0);
+    finish(result + '; PDF picker and registration, saved HTML formatting, all board creation routes and native minimize/restore threshold', 0);
   } catch (error) {
     finish(String(error), 1);
   }

@@ -1,3 +1,6 @@
+import {HpediaIcon} from './HpediaIcon';
+import {DictionaryIcon} from './DictionaryIcon';
+import {Button} from './gui/elements/Button';
 import {TextInput, MultilineInput} from './gui/elements/FormElements';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import React,{useEffect,useState,useRef} from 'react';
@@ -14,7 +17,7 @@ import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
 import {ThemePanel,type ThemeSummary,type Theme,type ThemeViewEvent,type ThemeCommandError} from './ThemePanel';
 import {FrontierTracking} from './FrontierTracking';
-import {BulletinBoard,type BulletinLink} from './BulletinBoard';
+import {BulletinBoard,type BulletinLink,type BoardKind} from './BulletinBoard';
 import {convergenceLabel,type Convergence} from './ConvergenceSelect';
 import {HpediaPanel,type Question} from './HpediaPanel';
 import {KnowledgeWorkbench} from './KnowledgeWorkbench';
@@ -78,7 +81,16 @@ const childRoleLabel=(role:string)=>role==='voyager'?'Voyager 子会话':role===
 function App(){
 const [state,setState]=useState<{web_jobs?:string[];archive_sources?:ArchiveSource[];subscriptions?:Subscription[];subscription_busy?:string[];voyager_requests?:VoyagerSummary[];voyager_busy?:string[];materials?:(MaterialSummary&{version?:number})[];frontiers?:FrontierSummary[];cards?:CardSummary[];questions?:Question[];bulletin_links?:BulletinLink[];term_confirmations?:TermConfirmation[];gui_term_confirmations?:TermConfirmation[];editor_term_proposals?:EditorTermProposal[];themes?:ThemeSummary[];deliveries?:{delivery_id:string;version:number;status:string;attempts:unknown[];receipts:unknown[];checked?:boolean}[];delivery_enabled?:boolean;schedules?:Schedule[];schedule_limits?:{main:number;children:number};chats:Chat[];current:number;busy:boolean;model:string;provider:string;turns:{turn_id:string;status:string;version:number;error?:string;failure?:{category:string;retryable:boolean;attempts:number;message:string}}[];children:Child[];configured:boolean;configuring:boolean;providers:{id:string;label:string}[];models:string[]}>({chats:[],current:0,busy:false,model:'',provider:'',turns:[],children:[],configured:false,configuring:false,providers:[],models:[]});
 const [text,setText]=useState(''),[stream,setStream]=useState(''),[tab,setTab]=useState('chat'),[tools,setTools]=useState<string[]>([]),[settings,setSettings]=useState(false),[notice,setNotice]=useState('');
+const [boardKind,setBoardKind]=useState<BoardKind>('frontier');
+useEffect(()=>window.horizon.subscribe(event=>{
+  if(event.kind==='board_reset_type')setBoardKind('frontier');
+}),[]);
 const [navCollapsed,setNavCollapsed]=useState(false);
+const [sessionSearchOpen,setSessionSearchOpen]=useState(false);
+const [sessionQuery,setSessionQuery]=useState('');
+const sessionSearchButton=useRef<HTMLButtonElement>(null);
+const sessionNeedle=sessionQuery.trim().toLocaleLowerCase();
+const matchingSessions=state.chats.map((chat,index)=>({chat,index})).filter(({chat})=>!sessionNeedle||chat.title.toLocaleLowerCase().includes(sessionNeedle));
 const requestedSource=useRef<string|null>(null);
 const [sourceUrl,setSourceUrl]=useState<string|null>(null);
 const [selectedMaterial,setSelectedMaterial]=useState<MaterialPackage|null>(null);
@@ -150,15 +162,13 @@ const frontierCommand=(command:Record<string,unknown>)=>{
   }else send(command);
 };
 const navigation:[string,React.ReactNode,string][]=[
-  ['dictionary',<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
-    {[2,11].flatMap(y=>[2,11].map(x=><rect key={x+':'+y} x={x} y={y} width="7" height="7" rx="1.8"/>))}
-  </svg>,'词典'],['hpedia','','百科'],['bulletin',<span className="bulletin-icon"/>,'白板'],['voyager','⌕','范围检索'],
+  ['dictionary',<DictionaryIcon/>,'词典'],['hpedia',<HpediaIcon/>,'百科'],['bulletin',<span className="bulletin-icon"/>,'白板'],['voyager','⌕','范围检索'],
   ['materials','▱','资料'],['schedules','◷','自动任务'],
 ];
 return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   <div className="window-bar">
     <button className="navigation-toggle" aria-controls="workspace-navigation" aria-expanded={!navCollapsed}
-      aria-label={navCollapsed?'展开导航':'折叠导航'} onClick={()=>setNavCollapsed(value=>!value)}>☰</button>
+      aria-label={navCollapsed?'展开导航':'折叠导航'} onClick={()=>setNavCollapsed(value=>!value)}></button>
   </div>
   <aside id="workspace-navigation">
     <div className="brand"><span className="mark">◈</span><span className="nav-label">horizon</span><small>RESEARCH</small></div>
@@ -166,19 +176,24 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
     <nav className="nav" aria-label="工作区">
       {navigation.map(([id,icon,label])=><button key={id} title={label} aria-label={label}
         aria-current={tab===id||undefined} onClick={()=>navigate(id)}>
-        {id==='hpedia'?<span className="hpedia-icon" aria-hidden="true"/>:<span aria-hidden="true">{icon}</span>}<span className="nav-label">{label}</span>
+        <span aria-hidden="true">{icon}</span><span className="nav-label">{label}</span>
       </button>)}
     </nav>
-    <div className="section">工作区 <span>⌕</span></div>
-    <div className="workspace">▾ &nbsp; Horizon 研究工作区</div>
-    <div className="sessions">{state.chats.map((c,i)=><button disabled={state.busy} key={c.task_id} aria-label={c.title}
+    <div className="section">会话
+      <Button type="button" ref={sessionSearchButton} aria-label="搜索会话" aria-pressed={sessionSearchOpen}
+        title="按标题搜索会话" onClick={()=>{setSessionSearchOpen(!sessionSearchOpen);setSessionQuery('');}}>
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/></svg>
+      </Button></div>
+    {sessionSearchOpen&&!navCollapsed&&<TextInput className="session-search" autoFocus type="search" aria-label="按会话标题搜索" placeholder="搜索会话标题" value={sessionQuery} onChange={e=>setSessionQuery(e.target.value)}
+      onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();setSessionSearchOpen(false);setSessionQuery('');sessionSearchButton.current?.focus();}}}/>}
+    <div className="sessions">{matchingSessions.length===0&&<p role="status">没有匹配的会话</p>}{matchingSessions.map(({chat:c,index:i})=><button disabled={state.busy} key={c.task_id} aria-label={c.title}
       aria-current={conversationOpen && i===state.current || undefined} title={c.title}
       className={conversationOpen && i===state.current?'selected':''}
       onClick={()=>{send({action:'select',task_id:c.task_id});navigate('chat');}}>
       <span className="session-icon" aria-hidden="true">◌</span><span className="nav-label">{c.title}</span>
     </button>)}</div>
     <button className="settings" aria-label="选项" title="选项" aria-haspopup="menu" popoverTarget="horizon-options">
-      <span>⚙ <span className="nav-label">选项</span></span><span className={'nav-label '+(state.configured?'online':'offline')}>●</span>
+      <span>⚙ <span className="nav-label">选项</span></span>
     </button>
 <div id="horizon-options" popover="auto" ref={optionsMenu} role="menu" aria-label="选项"
   onToggle={event=>{
@@ -197,16 +212,16 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   <button role="menuitem" onClick={()=>chooseOption(()=>navigate('test-cleanup'))}>清理测试内容</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'export_diagnostics'}))}>导出诊断</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'exit'}))}>退出Horizon</button>
-</div></aside><div className="workzone" ref={workzone}><main>{conversationOpen && <><header><strong>{chat?.title||'新会话'}</strong><span>研究助手</span></header><div className="tabs"><button className={tab==='chat'?'active':''} onClick={()=>navigate('chat')}>对话</button><button className={tab==='trace'?'active':''} onClick={()=>navigate('trace')}>轨迹</button></div></>}{notice&&<div className="notice" role="alert">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
+</div></aside><div className="workzone" ref={workzone}><main>{conversationOpen && <><header><strong>{chat?.title||'新会话'}</strong></header><div className="tabs"><button className={tab==='chat'?'active':''} onClick={()=>navigate('chat')}>对话</button><button className={tab==='trace'?'active':''} onClick={()=>navigate('trace')}>轨迹</button></div></>}{notice&&<div className="notice" role="alert">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
 {state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
   decide={choice=>send({action:card.entity==='question'?'question_confirm':card.entity==='source'?'source_confirm':card.entity==='frontier'?'frontier_confirm':card.entity==='progress'?'progress_confirm':card.entity==='test_cleanup'?'test_cleanup_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
-{tab==='test-cleanup'?<TestCleanupPanel send={send} pending={Boolean(state.gui_term_confirmations?.some(card=>card.entity==='test_cleanup'))}/>:tab==='bulletin'?<BulletinBoard links={state.bulletin_links||[]} terms={state.cards||[]} send={send}
+{tab==='test-cleanup'?<TestCleanupPanel send={send} pending={Boolean(state.gui_term_confirmations?.some(card=>card.entity==='test_cleanup'))}/>:tab==='bulletin'?<BulletinBoard kind={boardKind} changeKind={setBoardKind} links={state.bulletin_links||[]} terms={state.cards||[]} send={send}
   detailHost={detail==='bulletin'?detailHost:null} openDetail={()=>{closeDetail();setDetail('bulletin');}}>
-  <FrontierTracking frontiers={state.frontiers||[]} sources={state.archive_sources||[]} frontier={frontierView}
+  {(matches,createRequest)=><FrontierTracking terms={state.cards||[]} matches={matches} createRequest={createRequest} frontiers={state.frontiers||[]} sources={state.archive_sources||[]} frontier={frontierView}
     viewEvent={frontierViewEvent} error={frontierError} detailHost={detail==='frontier'?detailHost:null}
     openDetail={()=>{closeDetail();setDetail('frontier');}} send={frontierCommand} openSource={openArchiveSource}
     openVoyager={requestId=>{navigate('voyager');send({action:'voyager_open',request_id:requestId});}}/>
-  </BulletinBoard>:tab==='hpedia'?<HpediaPanel questions={state.questions||[]} terms={state.cards||[]} send={send}
+  }</BulletinBoard>:tab==='hpedia'?<HpediaPanel questions={state.questions||[]} terms={state.cards||[]} send={send}
   detailHost={detail==='hpedia'?detailHost:null} openDetail={()=>{closeDetail();setDetail('hpedia');}}/>:tab==='feishu'?<FeishuSetup send={send} close={()=>setTab('chat')}/>:tab==='voyager'?<><SubscriptionPanel rows={state.subscriptions||[]} busy={state.subscription_busy||[]} send={send}/><VoyagerPanel editorFeedback={ownerFeedback?.owner==='voyager'?ownerFeedback:null} closeEditorFeedback={closeOwnerFeedback} requests={state.voyager_requests||[]} busy={state.voyager_busy||[]} selected={voyagerView} history={voyagerHistory} taskId={chat?.task_id} onPrepare={id=>{setText(current=>current||`请调用 delegate 工具，将检索 ${id} 交给 voyager 子会话，返回来源依据和限制。`);setTab('chat');}} onCommand={command=>{if(command.action==='materials_open')requestedMaterial.current=String(command.material_id);send(['voyager_create','materials_open'].includes(command.action)?{...command,task_id:chat?.task_id}:command);}}/></>:['dictionary','knowledge','themes'].includes(tab)?<KnowledgeWorkbench key={tab==='dictionary'?'dictionary':'knowledge'} termDetail={tab==='dictionary'?{host:detail==='term'?detailHost:null,visible:detail==='term',open:()=>{closeDetail();setDetail('term');},close:closeDetail}:undefined} editorFeedback={ownerFeedback?.owner==='voyager'?null:ownerFeedback} closeEditorFeedback={closeOwnerFeedback} initialType={tab==='dictionary'?'card':tab==='themes'?'theme':'all'} frontiers={state.frontiers||[]} cards={state.cards||[]} themes={state.themes||[]} materials={state.materials||[]} cardSelected={cardView} cardViewEvent={cardViewEvent} cardError={cardError} frontierSelected={frontierView} frontierViewEvent={frontierViewEvent} frontierError={frontierError} themeSelected={themeView} themeViewEvent={themeViewEvent} themeError={themeError} onPendingCount={count=>setKeeperCount(count)} openPendingNonce={openPendingNonce} onCommand={command=>{const value=command as {action?:string;operation_id?:string};if(value.action==='voyager_create'){createPending.current=value.operation_id||null;send(chat?.task_id?{...value,task_id:chat.task_id}:command);}else send(command);}}/>:tab==='materials'?null:tab==='schedules'?<SchedulePanel schedules={state.schedules||[]} limits={state.schedule_limits||{main:2,children:4}} onCommand={send}/>:tab==='trace'?<section aria-label="轨迹" />:<><div className="messages">{chat && <EditorReports key={chat.task_id} taskId={chat.task_id} detailHost={detail==='report'?detailHost:null} onOpenDetail={()=>{closeDetail();setDetail('report');}}
   materials={state.materials || []} children={state.children} disabled={state.busy || !state.configured}
   frontiers={state.frontiers || []} handoff={(draft:FeedbackHandoff)=>{
@@ -217,7 +232,7 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   prepareRewrite={(report_id,base_version,question,options)=>setText(`请调用 delegate，将此 JSON 原样交给 editor 子会话核对来源并生成新版本。 ${JSON.stringify({report_id,base_version,question,...options})}`)}
   prepareSynthesis={command=>setText(`请调用 delegate，将以下 JSON 原样交给 editor 子会话生成综合报道。
 ${JSON.stringify(command)}`)}/>}
-{!chat?.messages.length&&!state.busy?<div className="welcome"><div className="hero">◈</div><h1>从一个问题，开始研究</h1><p>与 Horizon 一起阅读文献、整理知识、探索新的发现。</p><div className="suggestions">{['总结当前知识库的研究进展','帮我梳理一个研究问题','查看可用的研究工作流'].map(t=><button key={t} onClick={()=>setText(t)}>{t} ↗</button>)}</div></div>:chat?.messages.map((m,i)=><article key={i} className={m.role==='You'?'user':'assistant'}><div className="author">{m.role==='You'?'探索者':'◈ Horizon'}</div><Markdown>{m.text}</Markdown></article>)}{chat&&state.term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
+{!chat?.messages.length&&!state.busy?<div className="welcome"><div className="hero">◈</div><h1>从一个问题，开始研究</h1><p>与 Horizon 一起阅读文献、整理知识、探索新的发现。</p><div className="suggestions">{['总结当前知识库的研究进展','帮我梳理一个研究问题','查看可用的研究工作流'].map(t=><button key={t} onClick={()=>setText(t)}>{t} ↗</button>)}</div></div>:chat?.messages.map((m,i)=><article key={i} className={m.role==='You'?'user':'assistant'}>{m.role!=='You'&&<div className="author">◈ Horizon</div>}<Markdown>{m.text}</Markdown></article>)}{chat&&state.term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
   decide={choice=>send({action:'agent_term_confirm',task_id:chat.task_id,operation_id:card.operation_id,choice})}/>)}{chat&&state.editor_term_proposals?.map(proposal=>{
   const card:TermConfirmation={operation_id:proposal.proposal_id,expires_at:proposal.term_expires_at,
     entity:proposal.changes.some(change=>change.kind==='frontier')?'frontier':undefined,
@@ -230,7 +245,7 @@ ${JSON.stringify(command)}`)}/>}
       proposal_id:proposal.proposal_id,revision:proposal.revision,
       expected_versions:proposal.changes.map(change=>change.expected_version??null),
       decision:choice==='confirm'?'approve':'reject'})}/>;
-})}{state.busy&&<article className="assistant"><div className="author">◈ Horizon <span className="pulse">●</span></div><Markdown>{stream||'正在思考…'}</Markdown></article>}<div ref={bottom}/></div><div className="compose-wrap">{tools.length>0&&<div className="activity">⌁ {tools[tools.length-1]}</div>}<div className="composer"><MultilineInput aria-label="发送消息" placeholder="发送消息，开始你的研究…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit();}}}/><div className="compose-footer"><span>◈ 研究助手</span>{state.configured?<><FixedSelect aria-label="选择模型" value={state.model} disabled={state.busy||state.configuring||configuring} onChange={e=>send({action:'select_model',model:e.target.value})}>{Array.from(new Set([state.model,...(state.models||[])])).filter(Boolean).map(m=><option key={m} value={m}>{m}</option>)}</FixedSelect><button disabled={state.busy||state.configuring||configuring} title="刷新模型列表" aria-label="刷新模型列表" onClick={()=>send({action:'refresh_models'})}>↻</button></>:<button onClick={openSettings}>配置模型⌄</button>}{state.busy?<button className="send" aria-label="停止" onClick={()=>send({action:'stop'})}>■</button>:<button className="send" aria-label="发送" disabled={!text.trim()||state.configuring} onClick={submit}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button>}</div></div><footer>{state.busy?'Agent 正在运行':'就绪'} · Enter 发送 · Shift + Enter 换行</footer></div></>}
+})}{state.busy&&<article className="assistant"><div className="author">◈ Horizon <span className="pulse">●</span></div><Markdown>{stream||'正在思考…'}</Markdown></article>}<div ref={bottom}/></div><div className="compose-wrap">{tools.length>0&&<div className="activity">⌁ {tools[tools.length-1]}</div>}<div className="composer"><MultilineInput aria-label="发送消息" placeholder="发送消息，开始你的研究…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit();}}}/><div className="compose-footer"><span>◈ 研究助手</span>{state.configured?<><FixedSelect aria-label="选择模型" value={state.model} disabled={state.busy||state.configuring||configuring} onChange={e=>send({action:'select_model',model:e.target.value})}>{Array.from(new Set([state.model,...(state.models||[])])).filter(Boolean).map(m=><option key={m} value={m}>{m}</option>)}</FixedSelect><button disabled={state.busy||state.configuring||configuring} title="刷新模型列表" aria-label="刷新模型列表" onClick={()=>send({action:'refresh_models'})}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.34 5.66M20 12a8 8 0 0 0-2.34-5.66"/></svg></button></>:<button onClick={openSettings}>配置模型 <span aria-hidden="true" className="disclosure-indicator"/></button>}{state.busy?<button className="send" aria-label="停止" onClick={()=>send({action:'stop'})}>■</button>:<button className="send" aria-label="发送" disabled={!text.trim()||state.configuring} onClick={submit}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button>}</div></div><footer>{state.busy?'Agent 正在运行':'就绪'} · Enter 发送 · Shift + Enter 换行</footer></div></>}
 {tab==='materials'&&<ArchiveSourcesPanel sources={state.archive_sources||[]} materials={state.materials||[]} send={send} onOpen={openArchiveSource}/>}
 <MaterialsPanel showList={tab==='materials'} onOpenHtml={openHtml} jobs={state.web_jobs||[]} materials={state.materials||[]} selectedPackage={detail==='material'?selectedMaterial:null} detailHost={detailHost} taskId={chat?.task_id} onCommand={materialsCommand}/></main>
   {detail && <>
@@ -242,7 +257,7 @@ ${JSON.stringify(command)}`)}/>}
         event.preventDefault();resizeDetail(event.currentTarget.nextElementSibling!.getBoundingClientRect().width+(event.key==='ArrowLeft'?24:-24));
       }}}/>
     <section className="workspace-detail" aria-label="工作区详情" style={{width:detailWidth}}>
-      <div className="detail-toolbar"><button aria-label="关闭详情" onClick={closeDetail}>×</button></div>
+      <div className="detail-toolbar"><Button aria-label="关闭详情" onClick={closeDetail}>×</Button></div>
       <div className="detail-body" ref={setDetailHost}>
         {detail==='source-url'&&sourceUrl&&<section aria-label="原始来源链接">
           <p>{sourceUrl}</p>

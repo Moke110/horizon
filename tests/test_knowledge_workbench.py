@@ -426,3 +426,19 @@ def test_desktop_bridge_is_authenticated_and_echoes_operation_id(tmp_path):
 
     # The bridge output is plain JSON, so the desktop can serialize it as is.
     assert json.loads(json.dumps(default_page)) == default_page
+
+
+def test_dictionary_reads_all_terms_through_bridge(tmp_path):
+    from hostrun.desktop_bridge import workbench_command
+
+    workbench, cards, _, _ = owners(tmp_path)
+    expected = {add_card(cards, f"term-{i}", f"术语 {i}")["card_id"] for i in range(101)}
+    _, page = workbench_command(workbench, {
+        "action": "knowledge_search", "kind": "card", "all_terms": True,
+    }, token="s")
+    assert page["total"] == 101
+    assert {row["id"] for row in page["results"]} == expected
+    assert len(search(workbench, kind="card", limit=100)["results"]) == 100
+    for invalid in ({"kind": "theme"}, {"offset": 10}, {"all_terms": "true"}):
+        with pytest.raises(CommandError):
+            search(workbench, **({"kind": "card", "all_terms": True} | invalid))

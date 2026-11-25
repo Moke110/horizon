@@ -1,3 +1,7 @@
+import {useMasonry} from './ResultCards';
+import {ModuleHeading} from './ModuleHeading';
+import {DictionaryIcon} from './DictionaryIcon';
+import {Button} from './gui/elements/Button';
 import {TextInput} from './gui/elements/FormElements';
 import {DictionarySearch} from './DictionarySearch';
 import {FixedSelect} from './gui/elements/ChoiceElements';
@@ -295,7 +299,7 @@ export function KnowledgeWorkbench({
       scope:values.scope,
       ...(target?{related_to:target}:{}),
       ...(Array.isArray(values.relationTarget) && values.relationTarget.length ? {related_to:values.relationTarget.map(id=>({kind:'card',id}))} : {}),
-      offset,limit:PAGE_SIZE,
+      ...(dictionary ? {kind:'card',all_terms:true} : {offset,limit:PAGE_SIZE}),
     });
   };
 
@@ -858,7 +862,7 @@ export function KnowledgeWorkbench({
     }
   },[termDetail?.visible]);
 
-  const pageCount=Math.max(1,Math.ceil((pageData?.total||0)/PAGE_SIZE));
+  const pageCount=dictionary?1:Math.max(1,Math.ceil((pageData?.total||0)/PAGE_SIZE));
   const currentPage=Math.min(page,pageCount-1);
   const rows=pageData?.results||[];
   const loadingBlocking=loading&&!pageData&&!searchError;
@@ -882,7 +886,8 @@ export function KnowledgeWorkbench({
     ?((active.mode==='open'?frontierSelected?.frontier_id===active.id:frontierViewEvent?.nonce!==active.previousView)?frontierSelected:null)
     :null;
   const activeSelected=activeCard||activeTheme||activeFrontier;
-  const activeCardSummary=active?.type==='card'?cards.find(card=>card.card_id===active.id):undefined;
+  const cardsById=useMemo(()=>new Map(cards.map(card=>[card.card_id,card])),[cards]);
+  const activeCardSummary=active?.type==='card' && active.id?cardsById.get(active.id):undefined;
   const activeThemeSummary=active?.type==='theme'?themes.find(theme=>theme.theme_id===active.id):undefined;
   const activeFrontierSummary=active?.type==='frontier'?frontiers.find(frontier=>frontier.frontier_id===active.id):undefined;
   const activeTitle=active?.mode==='create'?`新建${kindLabel(active.type)}`
@@ -1154,12 +1159,17 @@ export function KnowledgeWorkbench({
     });
   };
 
+  useMasonry(results,dictionary && scope!=='pending' && !loadingBlocking && !searchError,pageData);
+
   const listContent=
     <section className="workbench-list" aria-label={dictionary?'词典搜索':'知识库搜索'}>
+      {dictionary && <ModuleHeading icon={<DictionaryIcon/>} title="词典">
+        <Button variant="primary" type="button" onClick={()=>startCreate('card')}>创建术语</Button>
+      </ModuleHeading>}
       {editorFeedback && closeEditorFeedback && <EditorFeedbackPreview draft={editorFeedback} onClose={closeEditorFeedback}>
-        {editorFeedback.owner==='knowledge' && <button type="button"
+        {editorFeedback.owner==='knowledge' && <Button type="button"
           disabled={new TextEncoder().encode(editorFeedback.note).length>4096}
-          onClick={()=>setQuery(editorFeedback.note)}>填入知识库搜索草稿</button>}
+          onClick={()=>setQuery(editorFeedback.note)}>填入知识库搜索草稿</Button>}
       </EditorFeedbackPreview>}
       <KeeperReviewRetry/>
       {dictionary ? <DictionarySearch query={query} setQuery={setQuery} scope={scope} changeScope={changeScope}
@@ -1185,30 +1195,28 @@ export function KnowledgeWorkbench({
           {cards.length>0&&<optgroup label={dictionary?'术语':'知识卡片'}>{cards.map(card=><option key={card.card_id} value={`card:${card.card_id}`}>{truncate(card.title)}{card.status==='archived'?'（已归档）':''} · v{card.version}</option>)}</optgroup>}
           {!dictionary&&themes.length>0&&<optgroup label="命题">{themes.map(theme=><option key={theme.theme_id} value={`theme:${theme.theme_id}`}>{truncate(theme.judgement)}{theme.status==='archived'?'（已归档）':''} · v{theme.version}</option>)}</optgroup>}
         </FixedSelect></label>
-        <div className="workbench-filter-actions"><span>{scope==='pending'?'待确认按 Keeper 持久状态筛选；在右侧批准、拒绝、要求调整或取消提议':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</button></div>
+        <div className="workbench-filter-actions"><span>{scope==='pending'?'待确认按 Keeper 持久状态筛选；在右侧批准、拒绝、要求调整或取消提议':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><Button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</Button></div>
       </form>}
-      <div className={dictionary?'workbench-create dictionary-create':'workbench-create'} role="group" aria-label={dictionary?'搜索导航栏':'新建知识库记录'}>
-        {!dictionary && <span>新建</span>}
-        <button type="button" onClick={()=>startCreate('card')}>{dictionary?'术语':'知识卡片'}</button>
-        {!dictionary&&<>
-          <button type="button" onClick={()=>startCreate('theme')}>命题</button>
-          <button type="button" onClick={()=>startCreate('frontier')}>关注问题</button>
-        </>}
-      </div>
+      {!dictionary && <div className="workbench-create" role="group" aria-label="新建知识库记录">
+        <span>新建</span>
+        <Button type="button" onClick={()=>startCreate('card')}>知识卡片</Button>
+        <Button type="button" onClick={()=>startCreate('theme')}>命题</Button>
+        <Button type="button" onClick={()=>startCreate('frontier')}>关注问题</Button>
+      </div>}
       {scope==='pending'&&<div className="workbench-keeper-tabs" role="tablist" aria-label="确认卡状态">
-        {KEEPER_STATUSES.map(item=><button key={item} type="button" role="tab" aria-selected={keeperStatus===item} className={keeperStatus===item?'selected':''} onClick={()=>changeKeeperStatus(item)}>
+        {KEEPER_STATUSES.map(item=><Button key={item} type="button" role="tab" aria-selected={keeperStatus===item} className={keeperStatus===item?'selected':''} onClick={()=>changeKeeperStatus(item)}>
           {KEEPER_STATUS_LABEL[item]}
           {item==='pending'&&keeperData.pending?` ${keeperData.pending.proposals.length}`:''}
-        </button>)}
+        </Button>)}
       </div>}
       <p className="workbench-count" aria-live="polite">{scope==='pending'
         ?(keeperLoading?(keeperList?`正在刷新${currentKeeperStatusLabel}提议…`:`正在读取${currentKeeperStatusLabel}提议…`):keeperError&&!keeperList?`${currentKeeperStatusLabel}提议未完成`:`共 ${statusProposals.length} 条${currentKeeperStatusLabel}提议${statusRows.length!==statusProposals.length?` · 当前筛选 ${statusRows.length} 条`:''}`)
         :<>{loading?'正在搜索…':searchError?'搜索未完成':`共 ${pageData?.total||0} 条`}{!loading&&!searchError&&pageCount>1?` · 第 ${currentPage+1}/${pageCount} 页`:''}</>}</p>
       {scope==='pending'
         ?(keeperLoadingBlocking?<p className="workbench-status" role="status">正在读取 Keeper {currentKeeperStatusLabel}提议…</p>
-          :keeperError&&!keeperList?<div className="workbench-error" role="alert"><p>{keeperError}</p><button type="button" onClick={retry}>重试</button></div>
+          :keeperError&&!keeperList?<div className="workbench-error" role="alert"><p>{keeperError}</p><Button type="button" onClick={retry}>重试</Button></div>
           :<>
-            {keeperError&&<div className="workbench-error workbench-error-inline" role="alert"><p>{keeperError}</p><button type="button" onClick={retry}>重试</button></div>}
+            {keeperError&&<div className="workbench-error workbench-error-inline" role="alert"><p>{keeperError}</p><Button type="button" onClick={retry}>重试</Button></div>}
             {keeperList&&statusProposals.length===0?<div className="workbench-empty workbench-pending" role="status">
               <h3>{currentKeeperStatusLabel}：当前为空</h3>
               <p>{keeperStatus==='pending'?'Keeper 返回的待确认提议为 0 条；这里不会显示未经确认的提议。'
@@ -1230,7 +1238,7 @@ export function KnowledgeWorkbench({
                 const badge=keeperTestBadge(proposal);
                 const savedSelection=pendingSelection?.proposal_id===proposal.proposal_id&&pendingSelection.status===keeperStatus;
                 return <li key={proposal.proposal_id}>
-                  <button type="button" data-pending-result data-proposal-id={proposal.proposal_id} className={savedSelection?'selected':''} aria-current={savedSelection?true:undefined} onClick={()=>openProposal(proposal)}>
+                  <Button type="button" data-pending-result data-proposal-id={proposal.proposal_id} className={savedSelection?'selected':''} aria-current={savedSelection?true:undefined} onClick={()=>openProposal(proposal)}>
                     <span className="workbench-result-title">{keeperProposalTitle(proposal)}</span>
                     <span className="workbench-result-summary">{reason||`${changes.length} 项变更`}</span>
                     <span className="workbench-result-meta">
@@ -1241,33 +1249,35 @@ export function KnowledgeWorkbench({
                       {badge&&<span className="workbench-badge-test">{badge}</span>}
                       {typeof proposal.report_version==='number'&&<span>报道 v{proposal.report_version}</span>}
                     </span>
-                  </button>
+                  </Button>
                 </li>;
               })}
             </ul>}
           </>)
         :loadingBlocking?<p className="workbench-status" role="status">{dictionary?'正在读取术语…':'正在读取知识卡片、命题与关注问题…'}</p>
-        :searchError?<div className="workbench-error" role="alert"><p>{searchError}</p><button type="button" onClick={retry}>重试</button></div>
+        :searchError?<div className="workbench-error" role="alert"><p>{searchError}</p><Button type="button" onClick={retry}>重试</Button></div>
         :rows.length===0?<div className="workbench-empty" role="status"><p>{target?'所选关联记录在当前范围与类型下没有直接关联记录。':query.trim()?`没有匹配「${query.trim()}」的记录。`:dictionary?'当前范围没有术语。':'当前范围没有知识卡片、命题或关注问题。可在左侧新建。'}</p></div>
         :<ul className="workbench-results" ref={results} aria-label="搜索结果">
           {rows.map(row=><li key={`${row.kind}:${row.id}`}>
-            <button type="button" data-result className={active?.mode==='open'&&active.type===row.kind&&active.id===row.id?'selected':''} aria-current={active?.mode==='open'&&active.type===row.kind&&active.id===row.id?true:undefined} onClick={()=>openResult(row)}>
-              <span className="workbench-result-title">{row.title||'（无标题）'} {row.kind==='card'&&<TestTag tags={cards.find(card=>card.card_id===row.id)?.tags}/>}</span>
-              {row.summary&&<span className="workbench-result-summary">{row.summary}</span>}
+            <Button type="button" data-result className={active?.mode==='open'&&active.type===row.kind&&active.id===row.id?'selected':''} aria-current={active?.mode==='open'&&active.type===row.kind&&active.id===row.id?true:undefined} onClick={()=>openResult(row)}>
+              <span className="workbench-result-title">{row.title||'（无标题）'} {row.kind==='card'&&<TestTag tags={cardsById.get(row.id)?.tags}/>}</span>
+              {dictionary ? (cardsById.get(row.id)?.aliases || []).slice(0,5).map((alias,index)=>
+                <span className="dictionary-card-alias" key={index}>{alias}</span>
+              ) : row.summary&&<span className="workbench-result-summary">{row.summary}</span>}
               <span className="workbench-result-meta">
-                <span>{kindLabel(row.kind)}</span>
+                {!dictionary&&<span>{kindLabel(row.kind)}</span>}
                 <span>{scopeStatus(scope,row)}</span>
-                <span>版本 v{row.version}</span>
+                {!dictionary&&<span>版本 v{row.version}</span>}
                 {row.questionable&&<span className="workbench-badge-questionable">存疑</span>}
                 {row.source_pending&&<span>来源待补充</span>}
               </span>
-            </button>
+            </Button>
           </li>)}
         </ul>}
       {scope!=='pending'&&!loadingBlocking&&!searchError&&pageCount>1&&<nav className="workbench-paging" aria-label="搜索结果分页">
-        <button type="button" disabled={currentPage===0} onClick={()=>goPage(currentPage-1)}>上一页</button>
+        <Button type="button" disabled={currentPage===0} onClick={()=>goPage(currentPage-1)}>上一页</Button>
         <span>第 {currentPage+1} / {pageCount} 页</span>
-        <button type="button" disabled={currentPage>=pageCount-1} onClick={()=>goPage(currentPage+1)}>下一页</button>
+        <Button type="button" disabled={currentPage>=pageCount-1} onClick={()=>goPage(currentPage+1)}>下一页</Button>
       </nav>}
     </section>;
 
@@ -1294,8 +1304,8 @@ export function KnowledgeWorkbench({
               <p>{active.mode==='create'?(active.type==='card'?'提交后需要确认':'保存会直接创建并提交'):`${STATUS_LABEL[activeStatus]||activeStatus||'已提交'}${activeVersion?` · 版本 v${activeVersion}`:''}`}</p>
             </div>
             <div className="workbench-detail-actions">
-              {active.mode==='open'&&active.id&&<button ref={historyButton} type="button" aria-expanded={historyOpen} aria-controls="knowledge-history" onClick={()=>{if(historyOpen)closeHistory();else setHistoryOpen(true);}}>{historyOpen?'收起版本历史':'版本历史'}</button>}
-              {!dictionary&&<button type="button" onClick={()=>{setHistoryOpen(false);setActive(null);}}>关闭</button>}
+              {active.mode==='open'&&active.id&&<Button ref={historyButton} type="button" aria-expanded={historyOpen} aria-controls="knowledge-history" onClick={()=>{if(historyOpen)closeHistory();else setHistoryOpen(true);}}>{historyOpen?'收起版本历史':'版本历史'}</Button>}
+              {!dictionary&&<Button type="button" onClick={()=>{setHistoryOpen(false);setActive(null);}}>关闭</Button>}
             </div>
           </header>
           {active.type==='card'&&<KnowledgeCardPanel key={active.nonce} cards={cards} materials={materials} selected={activeCard} viewEvent={cardViewEvent} commandError={cardError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('card')} termMode={dictionary} onCommitted={committed('card')}/>}
@@ -1309,7 +1319,7 @@ export function KnowledgeWorkbench({
         </div>}
     </section>;
 
-  return <div className={dictionary&&scope!=='pending'?'workbench dictionary-workbench':'workbench'}>
+  return <div className={dictionary&&scope!=='pending'?'workbench dictionary-workbench':dictionary?'workbench dictionary-pending':'workbench'}>
     {listContent}
     {dictionary&&scope!=='pending'
       ?(termDetail?.host&&active?createPortal(detailContent,termDetail.host):null)

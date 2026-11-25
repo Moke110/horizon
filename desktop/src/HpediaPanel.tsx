@@ -1,3 +1,8 @@
+import {ResultCard,ResultCards} from './ResultCards';
+import {HpediaIcon} from './HpediaIcon';
+import {useModuleSearch} from './ModuleSearch';
+import {ModuleHeading} from './ModuleHeading';
+import {Button} from './gui/elements/Button';
 import {MultilineInput} from './gui/elements/FormElements';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
@@ -165,6 +170,8 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     send({action:'card_open',card_id:id,operation_id:crypto.randomUUID()});
   };
 
+  const filter=useModuleSearch();
+  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && filter.matches(termLinkLabels(item.prompt+' '+item.answer,terms),item.convergence||'resolved',item.term_ids||[]));
   const activeTerms=terms.filter(term=>term.status==='active');
   const detail=selectedTerm?<article aria-label="词典术语">
     <button type="button" onClick={()=>setSelectedTerm(null)}>返回问题</button>
@@ -194,11 +201,12 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
   </article>:null;
 
   return <section className="hpedia-panel" aria-label="百科">
-    <h1>百科</h1>
-    <button type="button" disabled={waiting} onClick={()=>start(null)}>新增问题</button>
-    {questions.length?<ul>{questions.map(row=><li key={row.question_id}>
-      <button type="button" onClick={()=>show(row.question_id)}>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></button>
-    </li>)}</ul>:<p>暂无百科问题。</p>}
+    <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>start(null)}>新增问题</Button></ModuleHeading>
+    {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},'搜索题干和解答')}
+    <ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
+      title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}
+      summary={termLinkLabels(row.answer,terms)} selected={!!detailHost && row.question_id===question?.question_id}
+      onOpen={()=>show(row.question_id)}/>)}</ResultCards>
     {detailHost&&createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost)}
   </section>;
 }

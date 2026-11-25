@@ -1,7 +1,8 @@
+import {Button} from './Button';
 import React, {useEffect, useId, useLayoutEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 
-export function TextInput({className, ...props}: React.ComponentPropsWithoutRef<'input'>) {
+export function TextInput({className, ...props}: React.ComponentPropsWithRef<'input'>) {
   return <input {...props} className={['gui-text', className].filter(Boolean).join(' ')}/>;
 }
 
@@ -38,25 +39,25 @@ export function VariableList({label, items, onAdd, onEdit, onDelete, adding, edi
     };
   }, [onOutside]);
   return <div className="gui-variable-list" ref={ref}>
-    <button type="button" className="gui-variable-toggle" aria-controls={id}
+    <Button type="button" className="gui-variable-toggle" aria-controls={id}
       aria-expanded={expanded} onClick={() => {
         if (expanded) onOutside?.();
         setExpanded(!expanded);
       }}>
-      <span>{label}</span><span>{items.length ? `${items.length} 项` : '未添加'} <span aria-hidden="true">{expanded ? '⌄' : '›'}</span></span>
-    </button>
+      <span>{label}</span><span>{items.length ? `${items.length} 项` : '未添加'} <span aria-hidden="true" className="disclosure-indicator"/></span>
+    </Button>
     <ul id={id} hidden={!expanded} aria-label={label}>
       {items.map((item, index) => <li key={index}>
         {editing === index ? editor : <>
           <span>{item}</span>
           <div className="gui-variable-actions">
-            <button type="button" aria-label={`编辑${label} ${item}`} disabled={editingInline} onClick={() => onEdit(index)}>编辑</button>
-            <button type="button" aria-label={`删除${label} ${item}`} disabled={editingInline} onClick={() => onDelete(index)}>删除</button>
+            <Button type="button" aria-label={`编辑${label} ${item}`} disabled={editingInline} onClick={() => onEdit(index)}>编辑</Button>
+            <Button type="button" aria-label={`删除${label} ${item}`} disabled={editingInline} onClick={() => onDelete(index)}>删除</Button>
           </div>
         </>}
       </li>)}
       {adding && <li>{editor}</li>}
-      <li><button type="button" aria-label={`新增${label}`} disabled={addDisabled || editingInline} onClick={onAdd}>+</button></li>
+      <li><Button type="button" aria-label={`新增${label}`} disabled={addDisabled || editingInline} onClick={onAdd}>+</Button></li>
     </ul>
   </div>;
 }
@@ -102,8 +103,8 @@ export function MainPanelDialog({title, onCancel, onSave, children}: {
       <h3 id={titleId}>{title}</h3>
       {children}
       <div className="gui-dialog-actions">
-        <button type="button" onClick={onCancel}>取消</button>
-        <button type="submit">保存</button>
+        <Button type="button" onClick={onCancel}>取消</Button>
+        <Button type="submit">保存</Button>
       </div>
     </form>
   </div>, host);

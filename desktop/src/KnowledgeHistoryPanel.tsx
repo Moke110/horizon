@@ -1,3 +1,4 @@
+import {Button} from './gui/elements/Button';
 import {TextInput} from './gui/elements/FormElements';
 import {DataTable} from './gui/elements/DataTable';
 import {Collapsible} from './gui/elements/Collapsible';
@@ -337,12 +338,12 @@ export function KnowledgeHistoryPanel({
         <p>当前版本 v{page?.current_version??currentVersion??'未知'} · 每一条都是已提交历史；撤销会创建新版本，不会抹去已有版本。</p>
       </div>
       <div className="knowledge-history-actions">
-        <button type="button" disabled={loading} onClick={()=>requestHistory(pageOffset)}>刷新</button>
-        <button type="button" onClick={onClose}>收起版本历史</button>
+        <Button type="button" disabled={loading} onClick={()=>requestHistory(pageOffset)}>刷新</Button>
+        <Button type="button" onClick={onClose}>收起版本历史</Button>
       </div>
     </header>
     {message&&<p ref={success?successHeading:undefined} tabIndex={success?-1:undefined} className={success?'knowledge-history-success':'knowledge-history-message'} role={success?'status':'alert'}>{message}</p>}
-    {error?<div className="workbench-error" role="alert"><p>{error}</p><button type="button" onClick={()=>requestHistory(pageOffset)}>重试</button></div>
+    {error?<div className="workbench-error" role="alert"><p>{error}</p><Button type="button" onClick={()=>requestHistory(pageOffset)}>重试</Button></div>
       :loading&&!page?<p className="knowledge-history-message" role="status">正在读取版本历史…</p>
       :!rows.length?<p className="knowledge-history-message" role="status">尚无版本历史。创建、编辑、归档或撤销后会在这里记录。</p>
       :<>
@@ -361,13 +362,13 @@ export function KnowledgeHistoryPanel({
             </div>
           </Collapsible>
           {entry.can_preview
-            ?<div className="knowledge-history-actions"><button type="button" disabled={previewing||undoing} onClick={()=>requestPreview(entry)}>{previewing?'正在预览…':`预览撤销版本 v${entry.version} 的变更`}</button></div>
+            ?<div className="knowledge-history-actions"><Button type="button" disabled={previewing||undoing} onClick={()=>requestPreview(entry)}>{previewing?'正在预览…':`预览撤销版本 v${entry.version} 的变更`}</Button></div>
             :<p className="knowledge-history-note">该历史记录当前不可预览撤销，只能查看完整内容。</p>}
         </article>)}
         <nav className="workbench-paging" aria-label="版本历史分页">
-          <button type="button" disabled={loading||pageOffset<=0} onClick={()=>requestHistory(Math.max(0,pageOffset-pageLimit))}>上一页</button>
+          <Button type="button" disabled={loading||pageOffset<=0} onClick={()=>requestHistory(Math.max(0,pageOffset-pageLimit))}>上一页</Button>
           <span>第 {currentPage} / {pageCount} 页</span>
-          <button type="button" disabled={loading||pageOffset+pageLimit>=total} onClick={()=>requestHistory(pageOffset+pageLimit)}>下一页</button>
+          <Button type="button" disabled={loading||pageOffset+pageLimit>=total} onClick={()=>requestHistory(pageOffset+pageLimit)}>下一页</Button>
         </nav>
       </>}
     {preview&&<section className="knowledge-history-preview" aria-label="撤销预览">
@@ -394,17 +395,17 @@ export function KnowledgeHistoryPanel({
           <label>撤销理由（可选）<TextInput maxLength={500} value={undoReason} onChange={event=>setUndoReason(event.target.value)} placeholder="例如：恢复此前的判断"/></label>
         </div>
         <div className="knowledge-history-actions">
-          <button type="button" disabled={undoing} onClick={confirmUndo}>{undoing?'正在撤销…':'确认撤销并创建新版本'}</button>
-          <button type="button" disabled={undoing} onClick={()=>{setPreview(null);setLastTarget(null);setUndoReason('');setMessage('已取消本次撤销；没有写入任何版本。');}}>取消撤销</button>
+          <Button type="button" disabled={undoing} onClick={confirmUndo}>{undoing?'正在撤销…':'确认撤销并创建新版本'}</Button>
+          <Button type="button" disabled={undoing} onClick={()=>{setPreview(null);setLastTarget(null);setUndoReason('');setMessage('已取消本次撤销；没有写入任何版本。');}}>取消撤销</Button>
         </div>
         <p className="knowledge-history-note">确认后会重新载入编辑器。未保存的表单修改会丢失。</p>
       </>:<div className="knowledge-history-actions">
-        <button type="button" disabled={previewing||undoing||lastTarget===null} onClick={previewAgain}>{previewing?'正在重新预览…':'重新读取并重新预览'}</button>
-        <button type="button" disabled={undoing} onClick={()=>{setPreview(null);setLastTarget(null);setUndoReason('');setMessage('已关闭预览；没有写入任何版本。');}}>关闭预览</button>
+        <Button type="button" disabled={previewing||undoing||lastTarget===null} onClick={previewAgain}>{previewing?'正在重新预览…':'重新读取并重新预览'}</Button>
+        <Button type="button" disabled={undoing} onClick={()=>{setPreview(null);setLastTarget(null);setUndoReason('');setMessage('已关闭预览；没有写入任何版本。');}}>关闭预览</Button>
       </div>}
     </section>}
     {!preview&&!previewing&&lastTarget!==null&&<div className="knowledge-history-actions">
-      <button type="button" disabled={undoing} onClick={previewAgain}>重新读取并重新预览版本 v{lastTarget}</button>
+      <Button type="button" disabled={undoing} onClick={previewAgain}>重新读取并重新预览版本 v{lastTarget}</Button>
     </div>}
   </section>;
 }

@@ -124,7 +124,10 @@ class Library:
             questions = hpedia.list_questions(db)
         return [
             {"kind": kind, "id": row[id_field], "title": row[title_field],
-             "convergence": convergence.current(row), **visible_tags(row)}
+             "convergence": convergence.current(row),
+             "summary": row["content"] if kind == "term" else row["answer"],
+             "term_ids": ([row[id_field], *row.get("relations", [])] if kind == "term"
+                          else row.get("term_ids", [])), **visible_tags(row)}
             for kind, records, id_field, title_field in (
                 ("term", terms, "card_id", "title"),
                 ("question", questions, "question_id", "prompt"))
