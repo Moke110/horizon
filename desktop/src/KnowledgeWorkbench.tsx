@@ -1,4 +1,5 @@
 import {TextInput} from './gui/elements/FormElements';
+import {DictionarySearch} from './DictionarySearch';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import {createPortal} from 'react-dom';
@@ -47,7 +48,7 @@ type SearchPage={
   offset:number;
   limit:number;
 };
-type SearchValues={query:string;type:TypeFilter;scope:ScopeFilter;relationTarget:string};
+type SearchValues={query:string;type:TypeFilter;scope:ScopeFilter;relationTarget:string|string[]};
 type SearchRequest={operation_id:string;values:SearchValues;offset:number};
 
 const PAGE_SIZE=20;
@@ -133,7 +134,8 @@ const proposalSearchText=(proposal:KeeperProposal)=>[
     JSON.stringify(change.before??''),JSON.stringify(change.after??''),
   ]),
 ].filter(Boolean).join(' ').toLowerCase();
-const targetOf=(value:string):RelationTarget|null=>{
+const targetOf=(value:string|string[]):RelationTarget|null=>{
+  if(Array.isArray(value))return null;
   const index=value.indexOf(':');
   if(index<1)return null;
   const kind=value.slice(0,index);
@@ -188,7 +190,7 @@ export function KnowledgeWorkbench({
   const [query,setQuery]=useState('');
   const [type,setType]=useState<TypeFilter>(initialType);
   const [scope,setScope]=useState<ScopeFilter>('active');
-  const [relationTarget,setRelationTarget]=useState('');
+  const [relationTarget,setRelationTarget]=useState<string|string[]>('');
   const [page,setPage]=useState(0);
   const [active,setActive]=useState<ActiveSelection|null>(null);
   const [historyOpen,setHistoryOpen]=useState(false);
@@ -292,6 +294,7 @@ export function KnowledgeWorkbench({
       ...(values.type==='all'?{}:{kind:values.type}),
       scope:values.scope,
       ...(target?{related_to:target}:{}),
+      ...(Array.isArray(values.relationTarget) && values.relationTarget.length ? {related_to:values.relationTarget.map(id=>({kind:'card',id}))} : {}),
       offset,limit:PAGE_SIZE,
     });
   };
@@ -981,7 +984,7 @@ export function KnowledgeWorkbench({
     if(keeperData[next])setKeeperLoading(false);
     requestKeeperList(next,{silent:!!keeperData[next]});
   };
-  const changeRelation=(next:string)=>{focusAfterSearch.current=false;setRelationTarget(next);setPage(0);if(scope!=='pending')searchNow({query,type,scope,relationTarget:next},0);};
+  const changeRelation=(next:string|string[])=>{focusAfterSearch.current=false;setRelationTarget(next);setPage(0);if(scope!=='pending')searchNow({query,type,scope,relationTarget:next},0);};
   const submit=()=>{
     setPage(0);
     if(scope==='pending'){
@@ -1159,7 +1162,10 @@ export function KnowledgeWorkbench({
           onClick={()=>setQuery(editorFeedback.note)}>填入知识库搜索草稿</button>}
       </EditorFeedbackPreview>}
       <KeeperReviewRetry/>
-      <form className="workbench-filters" role="search" onSubmit={event=>{event.preventDefault();submit();}}>
+      {dictionary ? <DictionarySearch query={query} setQuery={setQuery} scope={scope} changeScope={changeScope}
+        cards={cards} selected={Array.isArray(relationTarget) ? relationTarget : []}
+        changeSelected={changeRelation} submit={submit}/>
+      : <form className="workbench-filters" role="search" onSubmit={event=>{event.preventDefault();submit();}}>
         <label>搜索<TextInput type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder={dictionary?'搜索术语和释义':'标题、判断、问题或范围'}/></label>
         <div className="workbench-filter-row">
           {!dictionary&&<label>类型<FixedSelect value={type} onChange={event=>changeType(event.target.value as TypeFilter)}>
@@ -1180,9 +1186,9 @@ export function KnowledgeWorkbench({
           {!dictionary&&themes.length>0&&<optgroup label="命题">{themes.map(theme=><option key={theme.theme_id} value={`theme:${theme.theme_id}`}>{truncate(theme.judgement)}{theme.status==='archived'?'（已归档）':''} · v{theme.version}</option>)}</optgroup>}
         </FixedSelect></label>
         <div className="workbench-filter-actions"><span>{scope==='pending'?'待确认按 Keeper 持久状态筛选；在右侧批准、拒绝、要求调整或取消提议':target?'只显示与该记录直接关联的记录（双向）':'不筛选关联记录'}</span><button type="submit">{scope==='pending'?`刷新${currentKeeperStatusLabel}`:'搜索'}</button></div>
-      </form>
-      <div className="workbench-create" role="group" aria-label={dictionary?'新建术语':'新建知识库记录'}>
-        <span>新建</span>
+      </form>}
+      <div className={dictionary?'workbench-create dictionary-create':'workbench-create'} role="group" aria-label={dictionary?'搜索导航栏':'新建知识库记录'}>
+        {!dictionary && <span>新建</span>}
         <button type="button" onClick={()=>startCreate('card')}>{dictionary?'术语':'知识卡片'}</button>
         {!dictionary&&<>
           <button type="button" onClick={()=>startCreate('theme')}>命题</button>

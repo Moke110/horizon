@@ -6,7 +6,7 @@ import {TestTag} from './TestCleanupPanel';
 
 import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
-export type CardSummary={tags?:string[];card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
+export type CardSummary={aliases?:string[];tags?:string[];card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
 type SavedSource=SourceInput&{title:string;material_version:number;content_hash:string;status?:'removed'};
 type MaterialSummary={material_id:string;title:string};
 export type KnowledgeCard={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};

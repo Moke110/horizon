@@ -251,7 +251,10 @@ class KnowledgeWorkbenchService:
             raise CommandError("invalid_query", "query exceeds its bound")
         selected_kind = self._kind(kind)
         selected_scope = self._scope(scope)
-        target = self._related(related_to)
+        targets = related_to if isinstance(related_to, list) else [related_to]
+        if isinstance(related_to, list) and None in targets:
+            raise CommandError("invalid_query", "relation targets must contain kind and id")
+        targets = {self._related(item) for item in targets if item is not None}
         self._page_bounds(limit, offset)
         terms = _query_terms(query)
         if query.strip() and not terms:
@@ -261,14 +264,16 @@ class KnowledgeWorkbenchService:
             return {"results": [], "total": 0, "offset": offset, "limit": limit}
 
         rows = self._rows()
-        edges = _related_edges(rows) if target is not None else None
+        if targets:
+            edges = _related_edges(rows)
+            neighbors = {neighbor for target in targets for neighbor in edges.get(target, ())}
         matched = []
         for kind, row in rows:
             if selected_kind is not None and kind != selected_kind:
                 continue
             if not _in_scope(kind, row, selected_scope):
                 continue
-            if edges is not None and (kind, _id(kind, row)) not in edges.get(target, ()):
+            if targets and (kind, _id(kind, row)) not in neighbors:
                 continue
             if terms:
                 haystack = _haystack(kind, row)
