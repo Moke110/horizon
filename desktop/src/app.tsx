@@ -6,6 +6,7 @@ import './window-caption.css';
 import {SubscriptionPanel,type Subscription} from './SubscriptionPanel';
 import {VoyagerPanel,type VoyagerSummary} from './VoyagerPanel';
 import {SchedulePanel,type Schedule} from './SchedulePanel';
+import {ArchiveSourcesPanel,type ArchiveSource} from './ArchiveSourcesPanel';
 import {MaterialsPanel,type MaterialSummary,type MaterialPackage} from './MaterialsPanel';
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
@@ -18,9 +19,9 @@ import {FeishuSetup} from './FeishuSetup';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
 type Child={child_id:string;session_id:string;parent_session_id:string;role:string;input_version:number;status:string;artifact_ref:string;result?:string;error?:string};
 type EditorTermProposal={proposal_id:string;revision:number;status:string;term_expires_at:number;changes:{action:string;id?:string;expected_version?:number;after?:Record<string,unknown>;reason?:string}[]};
-type TermConfirmation={entity?:'question';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][]};
+type TermConfirmation={entity?:'question'|'source';operation_id:string;status:string;expires_at:number;changes:[string,Record<string,unknown>][]};
 
-function TermConfirmationCard({card,decide,terms=[]}:{card:TermConfirmation;terms?:CardSummary[];decide:(choice:'confirm'|'reject')=>void}){
+function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfirmation;terms?:CardSummary[];sources?:ArchiveSource[];decide:(choice:'confirm'|'reject')=>void}){
   const [elapsed,setElapsed]=useState(false);
   useEffect(()=>{
     if(card.status!=='pending')return;
@@ -31,13 +32,13 @@ function TermConfirmationCard({card,decide,terms=[]}:{card:TermConfirmation;term
   },[card.status,card.expires_at]);
   const status=elapsed&&card.status==='pending'?'expired':card.status;
   const labels:Record<string,string>={aliases:'别名',recall_terms:'检索词',sources:'来源',relations:'关系',
-    questionable:'存疑',reason:'修改理由'};
+    questionable:'存疑',reason:'修改理由',label:'来源说明',url:'原始链接',material_id:'原文文件'};
   const previewText=(value:unknown)=>typeof value==='string'?value.replace(
     /\[\[term:([^\[\]\s]+)\]\]/g,(_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语'):'';
-  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':'术语变更确认'}>
+  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':card.entity==='source'?'来源变更确认':'术语变更确认'}>
     <div className="author">图书管理员</div>
     {card.changes.map(([action,change],index)=><div key={index}>
-      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(change.prompt??change.title??change.question_id??change.card_id)}</strong>
+      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(change.prompt??change.title??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id)}</strong>
       {previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
       <dl>{Object.entries(change).filter(([field])=>field in labels).map(([field,value])=><React.Fragment key={field}>
         <dt>{labels[field]}</dt><dd>{typeof value==='string'?value:JSON.stringify(value)}</dd>
@@ -53,12 +54,14 @@ type Chat={task_id:string;version:number;title:string;messages:{role:string;text
 declare global {interface Window {horizon:{send:(c:unknown)=>void;subscribe:(f:(e:any)=>void)=>()=>void}}}
 const childRoleLabel=(role:string)=>role==='voyager'?'Voyager 子会话':role==='keeper'?'Keeper 知识确认子会话':`开发工具 · ${role}`;
 function App(){
-const [state,setState]=useState<{web_jobs?:string[];subscriptions?:Subscription[];subscription_busy?:string[];voyager_requests?:VoyagerSummary[];voyager_busy?:string[];materials?:(MaterialSummary&{version?:number})[];frontiers?:FrontierSummary[];cards?:CardSummary[];questions?:Question[];term_confirmations?:TermConfirmation[];gui_term_confirmations?:TermConfirmation[];editor_term_proposals?:EditorTermProposal[];themes?:ThemeSummary[];deliveries?:{delivery_id:string;version:number;status:string;attempts:unknown[];receipts:unknown[];checked?:boolean}[];delivery_enabled?:boolean;schedules?:Schedule[];schedule_limits?:{main:number;children:number};chats:Chat[];current:number;busy:boolean;model:string;provider:string;turns:{turn_id:string;status:string;version:number;error?:string;failure?:{category:string;retryable:boolean;attempts:number;message:string}}[];children:Child[];configured:boolean;configuring:boolean;providers:{id:string;label:string}[];models:string[]}>({chats:[],current:0,busy:false,model:'',provider:'',turns:[],children:[],configured:false,configuring:false,providers:[],models:[]});
+const [state,setState]=useState<{web_jobs?:string[];archive_sources?:ArchiveSource[];subscriptions?:Subscription[];subscription_busy?:string[];voyager_requests?:VoyagerSummary[];voyager_busy?:string[];materials?:(MaterialSummary&{version?:number})[];frontiers?:FrontierSummary[];cards?:CardSummary[];questions?:Question[];term_confirmations?:TermConfirmation[];gui_term_confirmations?:TermConfirmation[];editor_term_proposals?:EditorTermProposal[];themes?:ThemeSummary[];deliveries?:{delivery_id:string;version:number;status:string;attempts:unknown[];receipts:unknown[];checked?:boolean}[];delivery_enabled?:boolean;schedules?:Schedule[];schedule_limits?:{main:number;children:number};chats:Chat[];current:number;busy:boolean;model:string;provider:string;turns:{turn_id:string;status:string;version:number;error?:string;failure?:{category:string;retryable:boolean;attempts:number;message:string}}[];children:Child[];configured:boolean;configuring:boolean;providers:{id:string;label:string}[];models:string[]}>({chats:[],current:0,busy:false,model:'',provider:'',turns:[],children:[],configured:false,configuring:false,providers:[],models:[]});
 const [text,setText]=useState(''),[stream,setStream]=useState(''),[tab,setTab]=useState('chat'),[tools,setTools]=useState<string[]>([]),[settings,setSettings]=useState(false),[notice,setNotice]=useState('');
 const [navCollapsed,setNavCollapsed]=useState(false);
+const requestedSource=useRef<string|null>(null);
+const [sourceUrl,setSourceUrl]=useState<string|null>(null);
 const [selectedMaterial,setSelectedMaterial]=useState<MaterialPackage|null>(null);
 const [detailHost,setDetailHost]=useState<HTMLDivElement|null>(null);
-const [detail,setDetail]=useState<'material'|'report'|'html'|'term'|'hpedia'|null>(null);
+const [detail,setDetail]=useState<'material'|'report'|'html'|'term'|'hpedia'|'source-url'|null>(null);
 const [localHtml,setLocalHtml]=useState<{name:string;content:React.ReactNode}|null>(null);
 const htmlRequest=useRef(0);
 const [detailWidth,setDetailWidth]=useState(440);
@@ -66,7 +69,7 @@ const workzone=useRef<HTMLDivElement>(null);
 const dragStart=useRef<{x:number;width:number}|null>(null);
 const requestedMaterial=useRef<string|null>(null);
 const resizeDetail=(width:number)=>setDetailWidth(Math.max(240,Math.min(width,(workzone.current?.clientWidth||900)-320)));
-const closeDetail=()=>{htmlRequest.current++;requestedMaterial.current=null;setDetail(null);setLocalHtml(null);};
+const closeDetail=()=>{htmlRequest.current++;requestedMaterial.current=null;requestedSource.current=null;setDetail(null);setLocalHtml(null);setSourceUrl(null);};
 const [feedbackHandoff,setFeedbackHandoff]=useState<FeedbackHandoff|null>(null);
 const [provider,setProvider]=useState(''),[configuring,setConfiguring]=useState(false),[configError,setConfigError]=useState('');
 const [voyagerView,setVoyagerView]=useState<any>(null),[voyagerHistory,setVoyagerHistory]=useState<any>(null),[frontierView,setFrontierView]=useState<Frontier|null>(null),[frontierViewEvent,setFrontierViewEvent]=useState<FrontierViewEvent|null>(null),[frontierError,setFrontierError]=useState<FrontierCommandError|null>(null);
@@ -77,7 +80,7 @@ const pending=useRef<Record<string,string>>({});
 const createPending=useRef<string|null>(null);
 const bottom=useRef<HTMLDivElement>(null);
 const send=window.horizon.send;
-useEffect(()=>{const unsubscribe=window.horizon.subscribe(e=>{if(e.kind==='material_package' && requestedMaterial.current && (!e.data || e.data.material_id===requestedMaterial.current)){setSelectedMaterial(e.data);setDetail(e.data?'material':null);}if(e.kind==='voyager_view'){setVoyagerView(e.data);setVoyagerHistory(null);if(createPending.current&&e.data?.operation_id===createPending.current){createPending.current=null;setTab(current=>current==='knowledge'||current==='themes'?'voyager':current);}}if(e.kind==='voyager_history')setVoyagerHistory(e.data);if(e.kind==='frontier_view'){setFrontierView(e.data);setFrontierViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setFrontierError(null);}if(e.kind==='card_view'){setCardView(e.data);setCardViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setCardError(null);}if(e.kind==='theme_view'){setThemeView(e.data);setThemeViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setThemeError(null);}if(e.kind==='keeper_review'){setKeeperCount(null);setKeeperReview(n=>n+1);}if(e.kind==='configuration_saved'){setConfiguring(false);setSettings(false);setConfigError('');}if(e.kind==='configuration_error'){setConfiguring(false);setConfigError(e.data);}if(e.kind==='state'){setState(e.data);if(e.data.busy)pending.current={};if(!e.data.busy)setStream('');} if(e.kind==='agent'){if(e.data.type==='retry')setNotice(`请求暂时失败，正在重试 ${e.data.attempt}/3，等待 ${Math.ceil(e.data.delayMs/1000)} 秒`);if(e.data.type==='text')setStream(s=>s+e.data.text);if(e.data.type==='error')setStream(s=>s+'\n错误：'+e.data.message);if(e.data.type==='tool_call'||e.data.type==='tool_result')setTools(s=>[...s,`${e.data.type==='tool_call'?'调用':'完成'} · ${e.data.name}${e.data.isError?' · 失败':''}`]);}if(e.kind==='command_error'){setNotice(e.data.code==='unfinished_turn'?'请先继续或放弃未完成的轮次，再发送新消息。':e.data.message);setFrontierError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message});setCardError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});setThemeError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});if(createPending.current&&e.data.operation_id===createPending.current)createPending.current=null;const saved=pending.current[e.data.operation_id];if(saved!==undefined){setText(current=>current||saved);delete pending.current[e.data.operation_id];}}if(e.kind==='notice')setNotice(e.data);});send({action:'ready'});return unsubscribe;},[]);
+useEffect(()=>{const unsubscribe=window.horizon.subscribe(e=>{if(e.kind==='archive_source_url'&&e.data.source_id===requestedSource.current){setSourceUrl(e.data.url);setDetail('source-url');}if(e.kind==='material_package' && requestedMaterial.current && (!e.data || e.data.material_id===requestedMaterial.current)){setSelectedMaterial(e.data);setDetail(e.data?'material':null);}if(e.kind==='voyager_view'){setVoyagerView(e.data);setVoyagerHistory(null);if(createPending.current&&e.data?.operation_id===createPending.current){createPending.current=null;setTab(current=>current==='knowledge'||current==='themes'?'voyager':current);}}if(e.kind==='voyager_history')setVoyagerHistory(e.data);if(e.kind==='frontier_view'){setFrontierView(e.data);setFrontierViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setFrontierError(null);}if(e.kind==='card_view'){setCardView(e.data);setCardViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setCardError(null);}if(e.kind==='theme_view'){setThemeView(e.data);setThemeViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setThemeError(null);}if(e.kind==='keeper_review'){setKeeperCount(null);setKeeperReview(n=>n+1);}if(e.kind==='configuration_saved'){setConfiguring(false);setSettings(false);setConfigError('');}if(e.kind==='configuration_error'){setConfiguring(false);setConfigError(e.data);}if(e.kind==='state'){setState(e.data);if(e.data.busy)pending.current={};if(!e.data.busy)setStream('');} if(e.kind==='agent'){if(e.data.type==='retry')setNotice(`请求暂时失败，正在重试 ${e.data.attempt}/3，等待 ${Math.ceil(e.data.delayMs/1000)} 秒`);if(e.data.type==='text')setStream(s=>s+e.data.text);if(e.data.type==='error')setStream(s=>s+'\n错误：'+e.data.message);if(e.data.type==='tool_call'||e.data.type==='tool_result')setTools(s=>[...s,`${e.data.type==='tool_call'?'调用':'完成'} · ${e.data.name}${e.data.isError?' · 失败':''}`]);}if(e.kind==='command_error'){setNotice(e.data.code==='unfinished_turn'?'请先继续或放弃未完成的轮次，再发送新消息。':e.data.message);setFrontierError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message});setCardError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});setThemeError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});if(createPending.current&&e.data.operation_id===createPending.current)createPending.current=null;const saved=pending.current[e.data.operation_id];if(saved!==undefined){setText(current=>current||saved);delete pending.current[e.data.operation_id];}}if(e.kind==='notice')setNotice(e.data);});send({action:'ready'});return unsubscribe;},[]);
 useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth'});},[stream,state.chats,tab]);
 const openSettings=()=>{setProvider(state.provider||state.providers[0]?.id||'deepseek');setConfigError('');setSettings(true);};
 useEffect(()=>window.horizon.subscribe(event=>{
@@ -160,8 +163,8 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'export_diagnostics'}))}>导出诊断</button>
   <button role="menuitem" onClick={()=>chooseOption(()=>send({action:'exit'}))}>退出Horizon</button>
 </div></aside><div className="workzone" ref={workzone}><main>{conversationOpen && <><header><strong>{chat?.title||'新会话'}</strong><span>研究助手</span></header><div className="tabs"><button className={tab==='chat'?'active':''} onClick={()=>navigate('chat')}>对话</button><button className={tab==='trace'?'active':''} onClick={()=>navigate('trace')}>轨迹</button></div></>}{notice&&<div className="notice" role="alert">{notice}<button onClick={()=>setNotice('')}>×</button></div>}
-{state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]}
-  decide={choice=>send({action:card.entity==='question'?'question_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
+{state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
+  decide={choice=>send({action:card.entity==='question'?'question_confirm':card.entity==='source'?'source_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
 {tab==='hpedia'?<HpediaPanel questions={state.questions||[]} terms={state.cards||[]} send={send}
   detailHost={detail==='hpedia'?detailHost:null} openDetail={()=>{closeDetail();setDetail('hpedia');}}/>:tab==='feishu'?<FeishuSetup send={send} close={()=>setTab('chat')}/>:tab==='voyager'?<><SubscriptionPanel rows={state.subscriptions||[]} busy={state.subscription_busy||[]} send={send}/><VoyagerPanel editorFeedback={ownerFeedback?.owner==='voyager'?ownerFeedback:null} closeEditorFeedback={closeOwnerFeedback} requests={state.voyager_requests||[]} busy={state.voyager_busy||[]} selected={voyagerView} history={voyagerHistory} taskId={chat?.task_id} onPrepare={id=>{setText(current=>current||`请调用 delegate 工具，将检索 ${id} 交给 voyager 子会话，返回来源依据和限制。`);setTab('chat');}} onCommand={command=>{if(command.action==='materials_open')requestedMaterial.current=String(command.material_id);send(['voyager_create','materials_open'].includes(command.action)?{...command,task_id:chat?.task_id}:command);}}/></>:['dictionary','knowledge','themes'].includes(tab)?<KnowledgeWorkbench key={tab==='dictionary'?'dictionary':'knowledge'} termDetail={tab==='dictionary'?{host:detail==='term'?detailHost:null,visible:detail==='term',open:()=>{closeDetail();setDetail('term');},close:closeDetail}:undefined} editorFeedback={ownerFeedback?.owner==='voyager'?null:ownerFeedback} closeEditorFeedback={closeOwnerFeedback} initialType={tab==='dictionary'?'card':tab==='themes'?'theme':'all'} frontiers={state.frontiers||[]} cards={state.cards||[]} themes={state.themes||[]} materials={state.materials||[]} cardSelected={cardView} cardViewEvent={cardViewEvent} cardError={cardError} frontierSelected={frontierView} frontierViewEvent={frontierViewEvent} frontierError={frontierError} themeSelected={themeView} themeViewEvent={themeViewEvent} themeError={themeError} onPendingCount={count=>setKeeperCount(count)} openPendingNonce={openPendingNonce} onCommand={command=>{const value=command as {action?:string;operation_id?:string};if(value.action==='voyager_create'){createPending.current=value.operation_id||null;send(chat?.task_id?{...value,task_id:chat.task_id}:command);}else send(command);}}/>:tab==='materials'?null:tab==='schedules'?<SchedulePanel schedules={state.schedules||[]} limits={state.schedule_limits||{main:2,children:4}} onCommand={send}/>:tab==='trace'?<section aria-label="轨迹" />:<><div className="messages">{chat && <EditorReports key={chat.task_id} taskId={chat.task_id} detailHost={detail==='report'?detailHost:null} onOpenDetail={()=>{closeDetail();setDetail('report');}}
   materials={state.materials || []} children={state.children} disabled={state.busy || !state.configured}
@@ -184,6 +187,12 @@ ${JSON.stringify(command)}`)}/>}
       expected_versions:proposal.changes.map(change=>change.expected_version??null),
       decision:choice==='confirm'?'approve':'reject'})}/>;
 })}{state.busy&&<article className="assistant"><div className="author">◈ Horizon <span className="pulse">●</span></div><Markdown>{stream||'正在思考…'}</Markdown></article>}<div ref={bottom}/></div><div className="compose-wrap">{tools.length>0&&<div className="activity">⌁ {tools[tools.length-1]}</div>}<div className="composer"><textarea aria-label="发送消息" placeholder="发送消息，开始你的研究…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit();}}}/><div className="compose-footer"><span>◈ 研究助手</span>{state.configured?<><select aria-label="选择模型" value={state.model} disabled={state.busy||state.configuring||configuring} onChange={e=>send({action:'select_model',model:e.target.value})}>{Array.from(new Set([state.model,...(state.models||[])])).filter(Boolean).map(m=><option key={m} value={m}>{m}</option>)}</select><button disabled={state.busy||state.configuring||configuring} title="刷新模型列表" aria-label="刷新模型列表" onClick={()=>send({action:'refresh_models'})}>↻</button></>:<button onClick={openSettings}>配置模型⌄</button>}{state.busy?<button className="send" aria-label="停止" onClick={()=>send({action:'stop'})}>■</button>:<button className="send" aria-label="发送" disabled={!text.trim()||state.configuring} onClick={submit}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button>}</div></div><footer>{state.busy?'Agent 正在运行':'就绪'} · Enter 发送 · Shift + Enter 换行</footer></div></>}
+{tab==='materials'&&<ArchiveSourcesPanel sources={state.archive_sources||[]} materials={state.materials||[]} send={send} onOpen={source=>{
+  closeDetail();
+  requestedSource.current=source.source_id;
+  requestedMaterial.current=source.material_id;
+  send({action:'source_open',source_id:source.source_id,task_id:chat?.task_id});
+}}/>}
 <MaterialsPanel showList={tab==='materials'} onOpenHtml={openHtml} jobs={state.web_jobs||[]} materials={state.materials||[]} selectedPackage={detail==='material'?selectedMaterial:null} detailHost={detailHost} taskId={chat?.task_id} onCommand={materialsCommand}/></main>
   {detail && <>
     <div className="detail-resize" role="separator" tabIndex={0} aria-label="调整详情宽度" aria-orientation="vertical"
@@ -196,6 +205,10 @@ ${JSON.stringify(command)}`)}/>}
     <section className="workspace-detail" aria-label="工作区详情" style={{width:detailWidth}}>
       <div className="detail-toolbar"><button aria-label="关闭详情" onClick={closeDetail}>×</button></div>
       <div className="detail-body" ref={setDetailHost}>
+        {detail==='source-url'&&sourceUrl&&<section aria-label="原始来源链接">
+          <p>{sourceUrl}</p>
+          <button type="button" onClick={()=>send({action:'open_source_url',url:sourceUrl})}>在浏览器打开原文</button>
+        </section>}
         {detail==='html'&&localHtml&&<article className="local-html" aria-label={localHtml.name}>{localHtml.content}</article>}
       </div>
     </section>

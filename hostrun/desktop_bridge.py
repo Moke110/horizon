@@ -856,6 +856,7 @@ def _serve(resolved, executable, managed):
             emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':frontier.list(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
+                           'archive_sources':librarian.list_sources(token=token),
                            'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
                                 for card in librarian.confirmations(token=token,origin=origin)
                                 if card['status']=='pending'],
@@ -1066,6 +1067,29 @@ def _serve(resolved, executable, managed):
                                 emit('question_view', question)
                         if kind == 'question_confirmation':
                             state()
+                    elif action in ('source_create', 'source_update', 'source_delete', 'source_confirm'):
+                        if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
+                        if action == 'source_confirm':
+                            librarian.decide(cmd.get('operation_id'), cmd.get('choice'),
+                                             token=token, origin='gui')
+                        else:
+                            librarian.request_source(action.removeprefix('source_'),
+                                                     {k:v for k,v in cmd.items() if k!='action'},
+                                                     token=token, origin='gui')
+                        state()
+                    elif action == 'source_open':
+                        source_id = cmd.get('source_id')
+                        package, original = librarian.source_original(
+                            source_id, token=token, task_id=cmd.get('task_id'))
+                        if 'source_url' in package:
+                            emit('archive_source_url', {'source_id':source_id, 'url':package['source_url']})
+                        else:
+                            if original is not None:
+                                import base64
+                                emit('private_pdf', {'id':package['material_id'], 'data':base64.b64encode(original).decode('ascii')})
+                            else:
+                                emit('private_pdf', None)
+                            emit('material_package', package)
                     elif action == 'agent_term_confirm':
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if not chats or cmd.get('task_id') != chats[current]['task_id']:

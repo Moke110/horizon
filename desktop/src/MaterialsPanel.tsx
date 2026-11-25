@@ -29,7 +29,7 @@ export function MaterialsPanel({jobs,materials,selectedPackage,taskId,onCommand,
  },[]);
  const materialId=selectedPackage?.material_id;
  const confirmation=impact?.material_id===materialId&&impact?.version===selectedPackage?.version?impact:null;
- return <>{showList&&<div className="trace"><h2>资料</h2><p>粘贴原文可离线登记，不会自动联网或生成摘要。</p>
+ return <>{showList&&<div className="trace materials-file-list"><h2>原文文件</h2><p>粘贴原文可离线登记，不会自动联网或生成摘要。</p>
  <form onSubmit={e=>{e.preventDefault();onCommand({action:'materials_web',schema_version:1,operation_id:crypto.randomUUID(),url,dynamic});}}>
  <label>网页原链接<input required type="url" pattern="https://.+" value={url} onChange={e=>setUrl(e.target.value)}/></label>
  <label><input type="checkbox" checked={dynamic} onChange={e=>setDynamic(e.target.checked)}/>使用浏览器渲染公开动态页</label>

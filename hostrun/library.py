@@ -1,4 +1,8 @@
-"""Library dictionary storage boundary for the Librarian."""
+"""Library storage boundary for the Librarian."""
+
+from functools import cached_property
+
+from hostrun.archive_sources import ArchiveSources
 
 from hostrun import hpedia
 from hostrun.agent_service import CommandError
@@ -7,6 +11,10 @@ from hostrun.agent_service import CommandError
 class Library:
     def __init__(self, cards):
         self._cards = cards
+
+    @cached_property
+    def archive(self):
+        return ArchiveSources(self.connect, self._cards.materials)
 
     def authorize(self, token):
         self._cards._authorize(token)

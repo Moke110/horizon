@@ -22,6 +22,8 @@ class DesktopWorker:
         token = self.service_token
         librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
         operation = event.get("action")
+        if event.get("type") == "source_request":
+            return self._source_request(librarian, operation, event, token=token)
         if operation == "list":
             return librarian.list(token=token)
         if operation == "view":
@@ -50,6 +52,33 @@ class DesktopWorker:
             card = librarian.request(operation, command, token=token, origin=origin)
         else:
             raise CommandError("invalid_command", "不支持的术语操作")
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    def _source_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        source_id = event.get("sourceId")
+        if operation == "list":
+            return librarian.list_sources(token=token)
+        if operation == "view":
+            return librarian.view_source(source_id, token=token)
+        if operation == "open":
+            package = librarian.open_source(source_id, token=token, task_id=self.task_id)
+            if "source_url" in package:
+                return package
+            text = package["original_text"]
+            return {"material_id": package["material_id"], "title": package["title"],
+                    "original_text": text[:16000], "original_text_truncated": len(text) > 16000,
+                    "pdf": bool(package.get("pdf"))}
+        fields = event.get("fields")
+        request_id = event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_command", "需要有效的资料库来源变更")
+        command = {**fields, "operation_id": request_id}
+        if source_id:
+            command["source_id"] = source_id
+        card = librarian.request_source(operation, command, token=token, origin="agent:" + self.task_id)
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
@@ -91,7 +120,7 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') == 'term_request':
+                if event.get('type') in ('term_request', 'source_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)
