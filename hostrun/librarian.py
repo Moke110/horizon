@@ -3,7 +3,7 @@
 import json
 import time
 
-from hostrun import frontier_progress, library_cleanup
+from hostrun import frontier_progress, hpedia_migration, library_cleanup
 from hostrun.agent_service import CommandError
 from hostrun.library import Library
 
@@ -15,7 +15,20 @@ class Librarian:
         self.library = Library(cards, token=token, frontiers=frontiers, clock=clock)
         self.clock = clock
         with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             self.library.initialize_questions(db)
+            hpedia_migration.migrate(db)
+
+    def migration_reviews(self, *, token):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            return hpedia_migration.reviews(db)
+
+    def decide_migration(self, review_id, target, *, token):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            hpedia_migration.decide(db, review_id, target)
 
     def list(self, *, token):
         return self.library.list(token=token)
