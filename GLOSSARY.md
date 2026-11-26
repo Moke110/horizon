@@ -7,15 +7,14 @@
 | English | 中文 | Meaning |
 |---|---|---|
 | Horizon | 地平线 | The software |
-| Library | 图书馆 | The Dictionary, Hpedia, Bulletin Board and Archive managed through the Librarian |
-| Dictionary | 词典 | The collection of Terms |
+| Library | 图书馆 | Hpedia, Bulletin Board and Archive managed through the Librarian |
 | Term | 术语 | One vocabulary entry and its definition, corresponding to one existing Knowledge Card |
-| Hpedia | 百科 | The collection of Questions |
+| Hpedia | 百科 | The collection of Terms, Questions and Frontiers |
 | Question | 问题 | A specific question and its answer, together referencing at least one Term |
 | Status (Term or Question) | 状态 | Whether the current definition or answer is considered valid (有效) or questionable (存疑) |
-| Followed (Term or Question) | 追踪中 | Whether the Explorer is tracking the entry on the Bulletin Board. Questionable entries are always followed. |
-| Bulletin Board | 白板 | The collection of Frontiers and links to followed Terms and Questions |
-| Frontier | 前沿 | An open-ended question the Explorer follows, with zero or more Updates |
+| Followed (Hpedia entry) | 追踪中 | Whether the Explorer is tracking the entry on the Bulletin Board. Questionable entries are always followed. |
+| Bulletin Board | 白板 | Links to all followed Hpedia entries |
+| Frontier | 前沿 | An open-ended research question with zero or more Updates, a tracking choice and a record of resolution when solved |
 | Update | 进展 | A distinct development under a Frontier |
 | Archive | 资料库 | The collection of original source records and their references to source documents |
 | Explorer | 探索者 | A person using Horizon |
@@ -75,7 +74,7 @@ Horizon-managed knowledge representing what the Explorer has mastered, with auto
 The Explorer's focus question with an explicit research scope, hard constraints, a version and a following status; it is the durable knowledge scope a Voyager retrieval plan can use. Relations stay empty in K1.
 _Avoid_: topic, saved search, subscription
 
-**Frontier status（关注状态）**:
+**Legacy Frontier status（旧关注状态）**:
 The lifecycle state of a Frontier: following, paused, resolved or deleted. Pause, resolve and delete stop future retrieval without destroying the Frontier's history or already-produced materials; deleted is terminal and cannot be edited.
 _Avoid_: enabled flag, archived, closed
 
