@@ -99,3 +99,53 @@ def test_agent_hpedia_question_is_confirmed_in_its_own_conversation(tmp_path):
     result = librarian.decide("question", "confirm", token=token, origin="agent:question-origin")
     assert result["results"][0]["tags"] == ["测试"]
     assert librarian.list_questions(token=token) == result["results"]
+
+def test_legacy_uuid_and_reference_survive_reopening_librarian(tmp_path):
+    import json
+    import sqlite3
+    import uuid
+    from hostrun.knowledge_history import KnowledgeHistoryService
+
+    cards = KnowledgeCardService(tmp_path, token=TOKEN)
+    old = str(uuid.uuid4()).upper()
+    term = cards.create({"schema_version": 1, "operation_id": "seed", "title": "old",
+                         "content": "definition"}, token=TOKEN)
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        db.execute("UPDATE knowledge_cards SET card_id=?, result=?", (old,json.dumps({**term,"card_id":old})))
+        db.execute("UPDATE knowledge_card_operations SET result=replace(result,?,?)", (term["card_id"],old))
+    librarian = Librarian(cards, token=TOKEN)
+    expected = "t-" + old.lower().replace("-", "")
+    assert librarian.view(expected,token=TOKEN)["title"] == "old"
+    history = KnowledgeHistoryService({"card": cards}).history(
+        {"schema_version":1,"operation_id":"history","kind":"card","id":expected}, token=TOKEN)
+    assert history["total"] == 1
+    assert Librarian(cards,token=TOKEN).list(token=TOKEN)[0]["card_id"] == expected
+
+def test_ambiguous_legacy_term_stays_pending_until_librarian_choice(tmp_path):
+    import json
+    import sqlite3
+
+    cards = KnowledgeCardService(tmp_path, token=TOKEN)
+    for operation in ("first", "second"):
+        cards.create({"schema_version": 1, "operation_id": operation, "title": "共享名称",
+                      "content": operation}, token=TOKEN)
+    AgentService(tmp_path, token=TOKEN)
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        question = {"question_id":"legacy-question","version":1,"prompt":"问题",
+                    "answer":"[[term:共享名称]]","term_ids":["共享名称"]}
+        db.execute("INSERT INTO hpedia_questions VALUES(?,?)", ("legacy-question",json.dumps(question)))
+    librarian = Librarian(cards, token=TOKEN)
+    question, = librarian.list_questions(token=TOKEN)
+    review, = librarian.migration_reviews(token=TOKEN)
+    assert question["term_ids"] == ["共享名称"]
+    assert {candidate["summary"] for candidate in review["candidates"]} == {"first","second"}
+    librarian.decide_migration(review["id"], None, token=TOKEN)
+    assert librarian.migration_reviews(token=TOKEN)[0]["deferred"]
+    target = review["candidates"][0]["id"]
+    librarian.decide_migration(review["id"], target, token=TOKEN)
+    reopened = Librarian(cards, token=TOKEN)
+    resolved, = reopened.list_questions(token=TOKEN)
+    assert resolved["question_id"] == question["question_id"]
+    assert resolved["answer"] == f"[[term:{target}]]"
+    assert resolved["term_ids"] == [target]
+    assert reopened.migration_reviews(token=TOKEN) == []

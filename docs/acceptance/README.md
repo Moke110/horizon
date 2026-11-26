@@ -714,3 +714,7 @@ The integrated whiteboard and frontier service checks passed (7 tests), alongsid
 ## Hpedia ID creation and lookup — 2026-11-27 (#275)
 
 In an isolated Windows workspace, the Librarian confirmed one term, question and frontier. A fresh Electron desktop opened each persisted entry through the Hpedia search field using its full ID, uppercase ID and hyphenated UUID. All nine detail views copied the expected canonical ID to the Windows clipboard.
+
+## Legacy Hpedia reference review — 2026-11-27 (#276)
+
+A real Windows Electron session opened a migrated workspace containing a question that referred to two same-name terms. The review showed both definitions and IDs. Deferring collapsed the card. Reopening it and selecting a candidate resolved the review and retained the question in Hpedia.

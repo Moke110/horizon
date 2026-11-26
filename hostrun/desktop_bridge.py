@@ -897,6 +897,7 @@ def _serve(resolved, executable, managed):
             facts = embedded_agent.runtime(app.home, code=code)
             emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':librarian.list_frontiers(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'bulletin_links':librarian.bulletin_links(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
+                            'migration_reviews':librarian.migration_reviews(token=token),
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
                            'archive_sources':librarian.list_sources(token=token),
                            'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
@@ -1120,6 +1121,9 @@ def _serve(resolved, executable, managed):
                                 for term in data['results']:
                                     emit('card_view', term)
                             state()
+                    elif action == 'hpedia_migration_decide':
+                        librarian.decide_migration(cmd.get('review_id'),cmd.get('target'),token=token)
+                        state()
                     elif action in ('bulletin_list','bulletin_open'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         emit(*bulletin_board_command(librarian,cmd,token=token))

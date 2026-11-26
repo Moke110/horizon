@@ -29,6 +29,7 @@ function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>
     if(!part.startsWith('[[term:'))return part;
     const id=part.slice(7,-2);
     const term=terms.find(candidate=>candidate.card_id===id);
+    if(!term)return <span key={index}>{id}（待确认）</span>;
     return <button key={index} type="button" className="hpedia-term-link"
       onClick={()=>openTerm(id)}>{term?.title??'术语'}</button>;
   });
@@ -36,7 +37,7 @@ function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>
 
 export function termLinkLabels(text:string,terms:CardSummary[]){
   return text.replace(/\[\[term:([^\[\]\s]+)\]\]/g,
-    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??'术语');
+    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??(id+'（待确认）'));
 }
 
 export function QuestionContents({question,terms,openTerm}:{question:Question;terms:CardSummary[];openTerm:(id:string)=>void}) {
