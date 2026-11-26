@@ -12,7 +12,9 @@
 | Term | 术语 | One vocabulary entry and its definition, corresponding to one existing Knowledge Card |
 | Hpedia | 百科 | The collection of Questions |
 | Question | 问题 | A specific question and its answer, together referencing at least one Term |
-| Bulletin Board | 白板 | The collection of Frontiers and links to unresolved Terms and Questions |
+| Status (Term or Question) | 状态 | Whether the current definition or answer is considered valid (有效) or questionable (存疑) |
+| Followed (Term or Question) | 追踪中 | Whether the Explorer is tracking the entry on the Bulletin Board. Questionable entries are always followed. |
+| Bulletin Board | 白板 | The collection of Frontiers and links to followed Terms and Questions |
 | Frontier | 前沿 | An open-ended question the Explorer follows, with zero or more Updates |
 | Update | 进展 | A distinct development under a Frontier |
 | Archive | 资料库 | The collection of original source records and their references to source documents |
