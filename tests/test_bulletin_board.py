@@ -61,6 +61,7 @@ def test_validity_and_tracking_are_independent_through_confirmed_edits(tmp_path)
         librarian.decide(operation, "confirm", token="desktop", origin="gui")
         current = cards.view(term["card_id"], token="desktop")
         assert (current["validity"], current["tracked"]) == expected
+        assert [row["id"] for row in librarian.bulletin_links(token="desktop")] == ([term["card_id"]] if expected[1] else [])
 
 
 def test_legacy_validity_projection_preserves_term_and_question_references(tmp_path):
@@ -111,4 +112,6 @@ def test_tracked_frontier_links_follow_confirmed_edits(tmp_path):
             item = change("update", str(index), frontier_id=identity, expected_version=item["version"], **fields)
         links = librarian.bulletin_links(token="s")
         assert [(link["kind"], link["id"]) for link in links] == ([("frontier", identity)] if expected else [])
-        assert librarian.view_frontier(identity, token="s")["question"] == "Frontier"
+        kind, original = bulletin_board_command(librarian, {"action": "bulletin_open", "kind": "frontier",
+                                                             "id": identity}, token="s")
+        assert kind == "bulletin_frontier" and original == item
