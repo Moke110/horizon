@@ -55,7 +55,8 @@ export function TermContents({term}:{term:KnowledgeCard}) {
   </>;
 }
 
-export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send}:{
+export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers}:{
+  renderFrontiers:(matches:(text:string,state:string,ids:string[])=>boolean, createRequest:number)=>React.ReactNode;
   closeDetail:()=>void;
   cardEditor:Pick<React.ComponentProps<typeof KnowledgeCardPanel>,'materials'|'selected'|'viewEvent'|'commandError'>;
   questions:Question[];
@@ -64,6 +65,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
   openDetail:()=>void;
   send:(command:unknown)=>void;
 }) {
+  const [frontierCreate,setFrontierCreate]=useState(0);
   const [entryType,setEntryType]=useState('question');
   const [termRequest,setTermRequest]=useState<React.ComponentProps<typeof KnowledgeCardPanel>['openRequest']>(null);
   const [question,setQuestion]=useState<Question|null>(null);
@@ -216,11 +218,11 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
   </article>:null;
 
   return <section className="hpedia-panel" aria-label="百科">
-    <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>entryType==='term'?editTerm(null):start(null)}>{entryType==='term'?'新增术语':'新增问题'}</Button></ModuleHeading>
-    {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',undefined,
+    <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>entryType==='frontier'?setFrontierCreate(value=>value+1):entryType==='term'?editTerm(null):start(null)}>{entryType==='frontier'?'新增前沿':entryType==='term'?'新增术语':'新增问题'}</Button></ModuleHeading>
+    {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',undefined,
       <FixedSelect aria-label="条目类型" value={entryType} onChange={event=>{setEntryType(event.target.value);closeDetail();}}>
-        <option value="question">问题</option><option value="term">术语</option></FixedSelect>)}
-    {entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
+        <option value="question">问题</option><option value="term">术语</option><option value="frontier">前沿</option></FixedSelect>)}
+    {entryType==='frontier'?renderFrontiers(filter.matches,frontierCreate):entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
       title={term.title} summary={term.content||''} selected={!!detailHost && termRequest?.kind==='open' && termRequest.id===term.card_id}
       onOpen={()=>editTerm(term)}/>)}</ResultCards>:<ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
       title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}

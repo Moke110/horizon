@@ -68,3 +68,18 @@ def test_pending_progress_keeps_parent_readable_and_reject_preserves_progress(tm
     librarian.decide("edit", "reject", token="s", origin="gui")
     assert librarian.list_progress(frontier_id, token="s") == [progress]
     assert librarian.view_frontier(frontier_id, token="s") == frontier
+
+def test_frontier_tracking_preserves_resolution_across_tracking_changes(tmp_path):
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    item = confirm(librarian, "frontier", "create", "new", question="光子")
+    assert item["tracked"] is True
+    for version, fields, tracked, resolved in (
+        (1, {"tracked": False}, False, False),
+        (2, {"status": "resolved"}, False, True),
+        (3, {"tracked": True}, True, True),
+    ):
+        item = confirm(librarian, "frontier", "update", str(version), frontier_id=item["frontier_id"],
+                       expected_version=version, **fields)
+        assert item["tracked"] is tracked
+        assert (item.get("resolved_at") is not None) is resolved
+        assert librarian.list_frontiers(token="s")[0]["tracked"] is tracked
