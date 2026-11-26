@@ -36,7 +36,7 @@ def confirmed_knowledge(home, *, token):
     cards = librarian.query(token=token)
     return [{"kind": "card", "id": item["card_id"], "version": item["version"],
               "title": item["title"][:120], "summary": item["content"][:500]}
-             for item in cards if item["known"] and not item["source_pending"] and not item["questionable"]
+             for item in cards if item["known"] and not item["source_pending"] and item["validity"] == "valid"
              and item["sources"] and all(ref.get("status") != "removed" for ref in item["sources"])][:8]
 
 
