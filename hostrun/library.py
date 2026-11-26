@@ -136,7 +136,7 @@ class Library:
             if row.get("status", "active") == "active" and row["tracked"]
         ] + [
             {"kind": "frontier", "id": row["frontier_id"], "title": row["question"],
-             "summary": row["scope"]["text"], "term_ids": row.get("term_ids", []),
+             "summary": row["scope"]["text"], "term_ids": hpedia.referenced_terms(row["question"], row["scope"]["text"]),
              "tracked": True, **visible_tags(row)}
             for row in frontiers if row["status"] != "deleted" and row["tracked"]
         ]

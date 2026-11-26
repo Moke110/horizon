@@ -103,7 +103,7 @@ def test_tracked_frontier_links_follow_confirmed_edits(tmp_path):
                                    token="s", origin="gui")
         return librarian.decide(operation, "confirm", token="s", origin="gui")["results"][0]
 
-    item = change("create", "new", question="Frontier")
+    item = change("create", "new", question="Frontier [[term:topic]]")
     identity = item["frontier_id"]
     for index, (fields, expected) in enumerate([
         ({}, True), ({"tracked": False}, False), ({"tracked": True}, True), ({"status": "resolved"}, False)
@@ -111,6 +111,8 @@ def test_tracked_frontier_links_follow_confirmed_edits(tmp_path):
         if fields:
             item = change("update", str(index), frontier_id=identity, expected_version=item["version"], **fields)
         links = librarian.bulletin_links(token="s")
+        if expected:
+            assert links[0]["term_ids"] == ["topic"]
         assert [(link["kind"], link["id"]) for link in links] == ([("frontier", identity)] if expected else [])
         kind, original = bulletin_board_command(librarian, {"action": "bulletin_open", "kind": "frontier",
                                                              "id": identity}, token="s")

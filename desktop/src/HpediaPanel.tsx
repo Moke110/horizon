@@ -42,7 +42,7 @@ export function QuestionContents({question,terms,openTerm}:{question:Question;te
   return <>
     <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)} <TestTag tags={question.tags}/></h2>
     <p className="hpedia-text">{referencedText(question.answer,terms,openTerm)}</p>
-    <p>{convergenceLabel(question.convergence??'resolved','question')}</p>
+    <p>{convergenceLabel(entryState(question),'question')}</p>
   </>;
 }
 
@@ -50,7 +50,7 @@ export function TermContents({term}:{term:KnowledgeCard}) {
   return <>
     <h2>{term.title} <TestTag tags={term.tags}/></h2>
     <p className="hpedia-text">{term.content}</p>
-    <p>{convergenceLabel(term.convergence??(term.questionable?'unresolved':'resolved'),'term')}</p>
+    <p>{convergenceLabel(entryState(term),'term')}</p>
     {!!term.aliases.length&&<p>别名 {term.aliases.join('、')}</p>}
   </>;
 }

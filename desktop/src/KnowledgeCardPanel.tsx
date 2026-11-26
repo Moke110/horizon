@@ -229,12 +229,12 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
   <p>{selected.title} <TestTag tags={selected.tags}/> · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
-  <p>{provenanceLabel(selected)}{selected.convergence?(' · '+convergenceLabel(selected.convergence,'term')):selected.questionable?' · 存疑':''} · {selected.known?'已知':'未计入已知'}</p>
+  <p>{provenanceLabel(selected)}{' · '+convergenceLabel(entryState(selected),'term')} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}
   {selected.status!=='archived'&&<div className="workbench-actions"><Button variant={termMode?'archive':'standard'} type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</Button></div>}
   </section>}
   {showList&&<><h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
-  {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{card.convergence?(' · '+convergenceLabel(card.convergence,'term')):card.questionable?' · 存疑':''} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
+  {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{' · '+convergenceLabel(entryState(card),'term')} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>
   <Button disabled={loading||saving} onClick={()=>load(card)}>{card.status==='archived'?'查看完整版本（只读）':'编辑（读取完整版本）'}</Button>
   {card.status!=='archived'&&<Button disabled={loading||saving} onClick={()=>archive(card)}>归档</Button>}
   </section>)}</>}

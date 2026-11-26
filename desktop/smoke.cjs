@@ -34,7 +34,7 @@ function blankPdf() {
 
 const libraryState = {
   chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
-  cards:[{card_id:'related-term',version:1,title:'Related term',aliases:['Alternate name'],content:'Definition only',status:'active',updated_at:1}],
+  cards:[{card_id:'related-term',version:1,title:'Related term',aliases:['Ａlternate name'],content:'Definition only',status:'active',updated_at:1}],
   questions:[{question_id:'q1',version:1,prompt:'Prompt marker',answer:'Answer marker [[term:related-term]]',term_ids:['related-term']}],
   bulletin_links:[
     {kind:'term',id:'related-term',title:'Related term',summary:'Definition only',term_ids:['related-term'],validity:'valid'},
@@ -64,7 +64,7 @@ const server = net.createServer(socket => socket.on('data', chunk => {
     const command = JSON.parse(line);
     const view = command.action === 'question_open'
       ? {kind:'question_view',data:libraryState.questions.find(row=>row.question_id===command.question_id)}
-      : {kind:'card_view',data:{...libraryState.cards[0],sources:[],relations:[],known:true,read_operation_id:command.operation_id}};
+      : {kind:'card_view',data:{...libraryState.cards[0],questionable:true,sources:[],relations:[],known:true,read_operation_id:command.operation_id}};
     socket.write(JSON.stringify(view)+'\n');
   }
   const pdfLine = chunk.toString().split('\n').find(line => line.includes('"action":"materials_pdf_register"'));
@@ -204,6 +204,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       (await wait(()=>document.querySelector('.hpedia-term-link'))).click();
       const linkedTerm=await wait(()=>document.querySelector('article[aria-label="术语"]'));
       if(!linkedTerm.textContent.includes('Definition only')) throw Error('Linked term content missing');
+      if(!linkedTerm.textContent.includes('存疑 · 追踪中')) throw Error('Missing legacy questionable state');
       linkedTerm.querySelector('button').click();
       (await wait(()=>document.querySelector('[aria-label="关闭详情"]'))).click();
       switchType('term');
