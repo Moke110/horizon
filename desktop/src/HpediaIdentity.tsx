@@ -1,3 +1,4 @@
+import {Button} from './gui/elements/Button';
 import React,{useState} from 'react';
 
 export function matchesEntryId(query:string,stored:string,prefix:string){
@@ -11,8 +12,8 @@ export function matchesEntryId(query:string,stored:string,prefix:string){
 
 export function CopyEntryId({id}:{id:string}){
   const [status,setStatus]=useState('');
-  return <><code>{id}</code> <button type="button" onClick={async()=>{
+  return <><code>{id}</code> <Button type="button" onClick={async()=>{
     try{await navigator.clipboard.writeText(id);setStatus('已复制');}
     catch{setStatus(id);}
-  }}>复制百科 ID</button> <output>{status}</output></>;
+  }}>复制百科 ID</Button> <output>{status}</output></>;
 }

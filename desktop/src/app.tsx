@@ -165,7 +165,7 @@ const frontierCommand=(command:Record<string,unknown>)=>{
     send(chat?.task_id?{...command,task_id:chat.task_id}:command);
   }else send(command);
 };
-const renderFrontiers=(matches:React.ComponentProps<typeof FrontierTracking>['matches'],createRequest:number,lookup?:React.ComponentProps<typeof FrontierTracking>['lookup'],boardFrontier?:FrontierSummary)=><FrontierTracking lookup={lookup} boardFrontier={boardFrontier} terms={state.cards||[]} matches={matches} createRequest={createRequest} frontiers={state.frontiers||[]} sources={state.archive_sources||[]} frontier={frontierView}
+const renderFrontiers=(matches:React.ComponentProps<typeof FrontierTracking>['matches'],createRequest:number,lookup?:React.ComponentProps<typeof FrontierTracking>['lookup'],boardFrontier?:FrontierSummary)=><FrontierTracking deleted={state.hpedia_deleted} lookup={lookup} boardFrontier={boardFrontier} terms={state.cards||[]} matches={matches} createRequest={createRequest} frontiers={state.frontiers||[]} sources={state.archive_sources||[]} frontier={frontierView}
     viewEvent={frontierViewEvent} error={frontierError} detailHost={detail==='frontier'?detailHost:null}
     openDetail={()=>{closeDetail();setDetail('frontier');}} send={frontierCommand} openSource={openArchiveSource}
     openVoyager={requestId=>{navigate('voyager');send({action:'voyager_open',request_id:requestId});}}/>;
@@ -224,7 +224,7 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
 {state.migration_reviews?.map(review=><MigrationReviewCard key={review.id} review={review} decide={target=>send({action:'hpedia_migration_decide',review_id:review.id,target})}/>)}
 {state.gui_term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
   decide={choice=>send({action:card.entity==='question'?'question_confirm':card.entity==='source'?'source_confirm':card.entity==='frontier'?'frontier_confirm':card.entity==='progress'?'progress_confirm':card.entity==='test_cleanup'?'test_cleanup_confirm':'card_confirm',operation_id:card.operation_id,choice})}/>)}
-{tab==='test-cleanup'?<TestCleanupPanel send={send} pending={Boolean(state.gui_term_confirmations?.some(card=>card.entity==='test_cleanup'))}/>:tab==='bulletin'?<><BulletinBoard kind={boardKind} changeKind={setBoardKind} links={state.bulletin_links||[]} terms={state.cards||[]}
+{tab==='test-cleanup'?<TestCleanupPanel send={send} pending={Boolean(state.gui_term_confirmations?.some(card=>card.entity==='test_cleanup'))}/>:tab==='bulletin'?<><BulletinBoard deleted={state.hpedia_deleted} kind={boardKind} changeKind={setBoardKind} links={state.bulletin_links||[]} terms={state.cards||[]}
   selected={boardLink} onOpen={link=>{closeDetail();setBoardLink(link);setDetail(link.kind==='frontier'?'frontier':'hpedia');}}/>
   {boardLink?.kind==='frontier'?<div key={boardLink.id}>{renderFrontiers(()=>false,0,undefined,state.frontiers?.find(item=>item.frontier_id===boardLink.id))}</div>:
     boardLink?<HpediaPanel deleted={state.hpedia_deleted} key={boardLink.kind+boardLink.id} boardLink={boardLink} renderFrontiers={renderFrontiers} frontierRows={state.frontiers} questions={state.questions||[]} terms={state.cards||[]} send={send} closeDetail={closeDetail} cardEditor={{materials:state.materials||[],selected:cardView,viewEvent:cardViewEvent,commandError:cardError}}

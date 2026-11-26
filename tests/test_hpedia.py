@@ -113,12 +113,21 @@ def test_legacy_uuid_and_reference_survive_reopening_librarian(tmp_path):
     with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
         db.execute("UPDATE knowledge_cards SET card_id=?, result=?", (old,json.dumps({**term,"card_id":old})))
         db.execute("UPDATE knowledge_card_operations SET result=replace(result,?,?)", (term["card_id"],old))
+        from hostrun.keeper import KeeperService
+        KeeperService.initialize_database(db)
+        proposal = {"changes":[{"kind":"card","id":old,"before":{"card_id":old}}]}
+        db.execute("INSERT INTO keeper_proposals VALUES('proposal','request',?)", (json.dumps(proposal),))
+        db.execute("INSERT INTO voyager_material_references VALUES('material',?,'hash',NULL)", ("card:"+old+":hash",))
     librarian = Librarian(cards, token=TOKEN)
     expected = "t-" + old.lower().replace("-", "")
     assert librarian.view(expected,token=TOKEN)["title"] == "old"
     history = KnowledgeHistoryService({"card": cards}).history(
         {"schema_version":1,"operation_id":"history","kind":"card","id":expected}, token=TOKEN)
     assert history["total"] == 1
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        proposal = json.loads(db.execute("SELECT result FROM keeper_proposals").fetchone()[0])
+        assert proposal["changes"] == [{"kind":"card","id":expected,"before":{"card_id":expected}}]
+        assert db.execute("SELECT owner_id FROM voyager_material_references").fetchone() == ("card:"+expected+":hash",)
     assert Librarian(cards,token=TOKEN).list(token=TOKEN)[0]["card_id"] == expected
 
 def test_ambiguous_legacy_term_stays_pending_until_librarian_choice(tmp_path):
@@ -139,6 +148,15 @@ def test_ambiguous_legacy_term_stays_pending_until_librarian_choice(tmp_path):
     review, = librarian.migration_reviews(token=TOKEN)
     assert question["term_ids"] == ["共享名称"]
     assert {candidate["summary"] for candidate in review["candidates"]} == {"first","second"}
+    package = librarian.export_entries(token=TOKEN)
+    assert question["question_id"] not in [entry["id"] for entry in package["entries"]]
+    assert [entry["id"] for entry in package["blocked"]] == [question["question_id"]]
+    stale = review["candidates"][1]["id"]
+    librarian.request("delete", {"schema_version":1,"operation_id":"delete-stale",
+                      "card_id":stale,"expected_version":1}, token=TOKEN, origin="gui")
+    librarian.decide("delete-stale","confirm",token=TOKEN,origin="gui")
+    with pytest.raises(CommandError, match="候选"):
+        librarian.decide_migration(review["id"], stale, token=TOKEN)
     librarian.decide_migration(review["id"], None, token=TOKEN)
     assert librarian.migration_reviews(token=TOKEN)[0]["deferred"]
     target = review["candidates"][0]["id"]

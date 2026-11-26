@@ -43,7 +43,10 @@ export function HpediaTransfer(){
           ...(card.status==='pending'?[card]:[])]);
         setMessage(({confirmed:'导入完成',rejected:'已取消导入',expired:'导入确认已过期'} as Record<string,string>)[card.status]??'');
       }
-      if(event.kind==='hpedia_export_saved')setMessage('百科文件已保存');
+      if(event.kind==='hpedia_export_saved'){
+        const blocked=(event.data??[]) as {id:string}[];
+        setMessage(blocked.length?'百科文件已保存。待确认条目暂未导出：'+blocked.map(item=>item.id).join('、'):'百科文件已保存');
+      }
     });
     window.horizon.send({action:'hpedia_import_pending'});
     return unsubscribe;

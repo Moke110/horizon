@@ -17,7 +17,10 @@ DOCUMENTS = {table: (field, ("result",)) for table, field in ENTRIES.values()}
 for owner in ("knowledge_card", "frontier", "voyager", "knowledge_theme"):
     DOCUMENTS[owner + "_operations"] = ("operation_id", ("request", "result"))
     DOCUMENTS[owner + "_events"] = ("operation_id", ("event",))
-DOCUMENTS.update(frontier_progress=("progress_id", ("result",)), voyager_requests=("request_id", ("result",)),
+DOCUMENTS.update(keeper_proposals=("proposal_id", ("result",)), keeper_requests=("request_id", ("request","result")),
+                 keeper_operations=("operation_id", ("request","result")), keeper_audit=("operation_id", ("event",)),
+                 keeper_revision_jobs=("review_id", ("request","result")), keeper_revision_history=("operation_id", ("result",)),
+                 frontier_progress=("progress_id", ("result",)), voyager_requests=("request_id", ("result",)),
                  knowledge_themes=("theme_id", ("result",)), librarian_term_requests=("id", ("request", "result")))
 
 
@@ -28,7 +31,11 @@ def _body(value):
 
 def _visit(value, resolve, field=None):
     if isinstance(value, dict):
-        return {key: _visit(child, resolve, key) for key, child in value.items()}
+        updated = {key: _visit(child, resolve, key) for key, child in value.items()}
+        prefix = {"card":"t","term":"t","question":"q","frontier":"f"}.get(value.get("kind")) if isinstance(value.get("kind"),str) else None
+        if prefix and isinstance(value.get("id"), str):
+            updated["id"] = resolve(prefix, value["id"])
+        return updated
     if isinstance(value, list):
         return [_visit(item, resolve, field) for item in value]
     if isinstance(value, str):
@@ -55,6 +62,17 @@ def migrate(db):
     db.execute("""CREATE TABLE hpedia_reference_reviews(
         review_id INTEGER PRIMARY KEY, details TEXT NOT NULL, deferred INTEGER DEFAULT 0)""")
     db.execute("CREATE TABLE IF NOT EXISTS hpedia_identities(body TEXT PRIMARY KEY, prefix TEXT NOT NULL)")
+    exact, aliases, titles = _reserve_entry_ids(db)
+    def candidates(prefix, raw):
+        return exact[prefix,raw] or aliases[prefix,_body(raw) or raw] or titles[prefix,raw]
+
+    db.execute("DELETE FROM hpedia_term_references")
+    tables = {name for name, in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+    _migrate_documents(db, tables, candidates)
+    _migrate_owner_keys(db, tables, candidates)
+
+
+def _reserve_entry_ids(db):
     exact = defaultdict(set)
     aliases = defaultdict(set)
     titles = defaultdict(set)
@@ -67,19 +85,7 @@ def migrate(db):
     entries.sort(key=lambda item: not (item[4] and item[4] == item[0] + "-" + (_body(item[4]) or "")))
     used = set()
     for prefix, table, field, row, key, doc in entries:
-        body = _body(key) or _body(doc.get(field))
-        canonical = body and prefix + "-" + body
-        if canonical != key or not body:
-            if body and body not in used and db.execute(
-                    "INSERT OR IGNORE INTO hpedia_identities VALUES(?,?)", (body,prefix)).rowcount:
-                identity = canonical
-            else:
-                identity = allocate(db, prefix)
-        else:
-            identity = canonical
-            db.execute("INSERT OR IGNORE INTO hpedia_identities VALUES(?,?)", (body,prefix))
-            if body in used:
-                identity = allocate(db, prefix)
+        identity = _reserve(db, prefix, key, doc.get(field), used)
         used.add(identity[2:])
         for alias in (key, doc.get(field), identity):
             if isinstance(alias, str) and alias:
@@ -91,40 +97,70 @@ def migrate(db):
         doc[field] = identity
         db.execute(f"UPDATE {table} SET {field}=?,result=? WHERE rowid=?", (identity,json.dumps(doc),row))
 
-    db.execute("DELETE FROM hpedia_term_references")
-    tables = {name for name, in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+    return exact, aliases, titles
+
+
+def _reserve(db, prefix, key, recorded, used):
+    body = _body(key) or _body(recorded)
+    if body and body not in used:
+        canonical = prefix + "-" + body
+        inserted = db.execute("INSERT OR IGNORE INTO hpedia_identities VALUES(?,?)", (body, prefix)).rowcount
+        if inserted or (key == canonical and db.execute(
+                "SELECT prefix FROM hpedia_identities WHERE body=?", (body,)).fetchone() == (prefix,)):
+            return canonical
+    return allocate(db, prefix)
+
+
+def _migrate_documents(db, tables, candidates):
     for table, (primary, columns) in DOCUMENTS.items():
         if table not in tables:
             continue
         for column in columns:
             for key, encoded in db.execute(f"SELECT {primary},{column} FROM {table}").fetchall():
-                doc = json.loads(encoded)
-                pending = {}
-                def resolve(prefix, raw):
-                    choices = exact[prefix,raw] or aliases[prefix,_body(raw) or raw] or titles[prefix,raw]
-                    # A newly assigned canonical ID always identifies its own entry.
-                    if raw in choices:
-                        return raw
-                    if len(choices) == 1:
-                        return next(iter(choices))
-                    if len(choices) > 1:
-                        pending[prefix,raw] = sorted(choices)
-                    return raw
-                updated = _visit(doc, resolve)
-                if updated != doc:
-                    db.execute(f"UPDATE {table} SET {column}=? WHERE {primary}=?",
-                               (json.dumps(updated,sort_keys=column=="request"),key))
-                if column == "result":
-                    _related_indexes(db,table,key,updated)
-                for (prefix,raw), candidates in pending.items():
-                    details = dict(table=table,column=column,key=key,prefix=prefix,raw=raw,candidates=candidates)
-                    db.execute("INSERT INTO hpedia_reference_reviews(details) VALUES(?)",(json.dumps(details),))
+                _migrate_document(db, table, primary, key, column, encoded, candidates)
+
+
+def _migrate_document(db, table, primary, key, column, encoded, candidates):
+    doc = json.loads(encoded)
+    pending = {}
+    def resolve(prefix, raw):
+        choices = candidates(prefix,raw)
+        # A newly assigned canonical ID always identifies its own entry.
+        if raw in choices:
+            return raw
+        if len(choices) == 1:
+            return next(iter(choices))
+        if len(choices) > 1:
+            pending[prefix,raw] = sorted(choices)
+        return raw
+    updated = _visit(doc, resolve)
+    if updated != doc:
+        db.execute(f"UPDATE {table} SET {column}=? WHERE {primary}=?",
+                   (json.dumps(updated,sort_keys=column=="request"),key))
+    if column == "result":
+        _related_indexes(db,table,key,updated)
+    for (prefix,raw), matches in pending.items():
+        details = dict(table=table,column=column,key=key,prefix=prefix,raw=raw,candidates=matches)
+        db.execute("INSERT INTO hpedia_reference_reviews(details) VALUES(?)",(json.dumps(details),))
+
+
+def _migrate_owner_keys(db, tables, candidates):
+    if "voyager_material_references" in tables:
+        rows = db.execute("SELECT material_id,owner_id FROM voyager_material_references WHERE owner_id LIKE 'card:%'").fetchall()
+        for material, owner in rows:
+            raw, sep, digest = owner[5:].rpartition(":")
+            if not sep:
+                raw, digest = digest, ""
+            matches = candidates("t",raw)
+            if len(matches) == 1:
+                db.execute("UPDATE voyager_material_references SET owner_id=? WHERE material_id=? AND owner_id=?",
+                           ("card:" + next(iter(matches)) + sep + digest, material, owner))
     if "librarian_term_locks" in tables:
         for key, in db.execute("SELECT term_id FROM librarian_term_locks").fetchall():
             kind, sep, rest = key.partition(":")
             prefix = {"question":"q","frontier":"f"}.get(kind,"t")
             raw = rest if sep else key
-            targets = exact[prefix,raw] or aliases[prefix,_body(raw) or raw]
+            targets = candidates(prefix,raw)
             if len(targets) == 1:
                 db.execute("UPDATE librarian_term_locks SET term_id=? WHERE term_id=?",
                            ((kind+sep if sep else "")+next(iter(targets)),key))
@@ -154,7 +190,9 @@ def decide(db, review_id, target):
     if target is None:
         db.execute("UPDATE hpedia_reference_reviews SET deferred=1 WHERE review_id=?", (review_id,))
         return
-    if target not in item["candidates"]:
+    candidate_table, field = ENTRIES[item["prefix"]]
+    available = db.execute(f"SELECT result FROM {candidate_table} WHERE {field}=?", (target,)).fetchone()
+    if target not in item["candidates"] or not available or json.loads(available[0]).get("status") == "deleted":
         raise CommandError("invalid_target", "请选择待确认引用的候选条目")
     table, column, key = item["table"], item["column"], item["key"]
     if table not in DOCUMENTS or column not in DOCUMENTS[table][1]:

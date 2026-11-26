@@ -1,3 +1,4 @@
+import {Button} from './gui/elements/Button';
 import React from 'react';
 
 export type MigrationReview={id:number;raw:string;owner:string;deferred:boolean;
@@ -9,8 +10,8 @@ export function MigrationReviewCard({review,decide}:{review:MigrationReview;deci
     <p>条目或记录 {review.owner}</p>
     {review.candidates.map(item=><section key={item.id}>
       <strong>{item.title}</strong> <code>{item.id}</code>
-      <p>{item.summary}</p><button type="button" onClick={()=>decide(item.id)}>关联到此条目</button>
+      <p>{item.summary}</p><Button type="button" onClick={()=>decide(item.id)}>关联到此条目</Button>
     </section>)}
-    {!review.deferred&&<button type="button" onClick={()=>decide(null)}>稍后处理</button>}
+    {!review.deferred&&<Button type="button" onClick={()=>decide(null)}>稍后处理</Button>}
   </details>;
 }

@@ -112,3 +112,28 @@ def test_deleted_ids_require_explicit_individual_restoration(tmp_path):
     lib.decide_import("last", {frontier:"restore"}, **GUI)
     assert lib.view_frontier(frontier, **AUTH)["version"] > 1
     assert lib.deleted_entries(**AUTH) == {}
+
+def test_import_reconciles_status_and_content_of_archived_terms(tmp_path):
+    lib = workspace(tmp_path)
+    identity = add_term(lib, "term", "old")
+    package = lib.export_entries(**AUTH)
+    for op, status in enumerate(("archived", "archived", "active")):
+        title = f"new-{op}"
+        package["entries"][0]["content"].update(status=status,title=title)
+        lib.request_import(str(op), package, **GUI)
+        lib.decide_import(str(op), {identity:"incoming"}, **GUI)
+        term = lib.view(identity, **AUTH)
+        assert (term["status"],term["title"],term["known"]) == (status,title,status=="active")
+
+
+def test_missing_citation_blocks_only_affected_entries(tmp_path):
+    source, dest = [workspace(tmp_path / name) for name in ("source", "dest")]
+    bad = add_term(source, "bad", "missing citation")
+    good = add_term(source, "good", "independent")
+    package = source.export_entries(**AUTH)
+    entry = next(item for item in package["entries"] if item["id"] == bad)
+    entry["content"]["sources"] = [{"material_id":"missing","locator":"p1","excerpt":"some text"}]
+    card = dest.request_import("batch",package,**GUI)
+    assert {item["id"]:item["status"] for item in card["items"]} == {bad:"blocked",good:"create"}
+    dest.decide_import("batch", {}, **GUI)
+    assert [term["card_id"] for term in dest.list(**AUTH)] == [good]

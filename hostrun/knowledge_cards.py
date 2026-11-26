@@ -275,6 +275,10 @@ class KnowledgeCardService:
             fields["questionable"] = fields["convergence"] != "resolved"
         return fields
 
+    def validate_import_sources(self, db, content):
+        for source in _bounded_sources(content.get("sources", [])):
+            self.materials.validate_knowledge_source(db, source["material_id"], source["excerpt"])
+
     def _resolve_sources(self, db, card_id, sources, previous=()):
         existing = {_source_key(source): source for source in previous}
         resolved = []
@@ -385,7 +389,7 @@ class KnowledgeCardService:
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, fields)
-            if card["status"] == "archived":
+            if card["status"] == "archived" and import_id != card["card_id"]:
                 raise CommandError("invalid_transition", "已归档的知识卡片不能编辑")
             if "status" in command:
                 raise CommandError("invalid_status", "请用归档操作改变知识卡片状态")
@@ -402,6 +406,7 @@ class KnowledgeCardService:
                 updated["convergence"] = compatibility_state(updated)
             updated["provenance"], updated["source_pending"] = _provenance(
                 updated["sources"])
+            updated["status"] = "active"
             updated["known"] = True
             event_type = "knowledge_card.updated"
         else:

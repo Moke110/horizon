@@ -57,6 +57,9 @@ class Library:
     def term_fields(self, command):
         return self._cards._fields(command)
 
+    def validate_import_sources(self, db, content):
+        self._cards.validate_import_sources(db, content)
+
     def term_relations(self, db, term_id, relations):
         return self._cards._relations(db, term_id, relations)
 

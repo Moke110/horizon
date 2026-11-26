@@ -15,7 +15,7 @@ KINDS = {
 IDENTITY = re.compile(r"[tqf]-[0-9a-f]{32}")
 
 
-def export(db, library):
+def _entries(db, library):
     entries = []
     for kind, records in (("term", library.query_all_in_transaction(db)),
                           ("question", hpedia.list_questions(db)),
@@ -29,7 +29,25 @@ def export(db, library):
                 content["sources"] = [{k: source[k] for k in ("material_id", "excerpt", "locator")}
                                       for source in row["sources"]]
             entries.append({"kind": kind, "id": row[id_field], "content": content})
-    return {"schema_version": 1, "entries": entries}
+    return entries
+
+
+def export(db, library):
+    entries = _entries(db, library)
+    blocked = {key for key, in db.execute("""
+        SELECT DISTINCT json_extract(details,'$.key') FROM hpedia_reference_reviews
+        WHERE json_extract(details,'$.table') IN ('knowledge_cards','hpedia_questions','frontiers')
+    """)}
+    blocked.update(item["id"] for item in entries
+                   if any(not IDENTITY.fullmatch(ref) for ref in dependencies(item)))
+    while True:
+        dependents = {item["id"] for item in entries if item["id"] not in blocked and dependencies(item) & blocked}
+        if not dependents:
+            break
+        blocked.update(dependents)
+    return {"schema_version": 1, "entries": [item for item in entries if item["id"] not in blocked],
+            "blocked": [{"id":item["id"],"reason":"存在待确认的历史引用"}
+                        for item in entries if item["id"] in blocked]}
 
 
 def initialize(db):
@@ -42,7 +60,7 @@ def invalid(message):
 
 
 def review(db, librarian, package):
-    current = {row["id"]: row for row in export(db, librarian.library)["entries"]}
+    current = {row["id"]: row for row in _entries(db, librarian.library)}
     deleted = dict(db.execute("SELECT id,version FROM hpedia_deleted"))
     owners = {identity[2:]: identity[0] for identity in current}
     if db.execute("SELECT 1 FROM sqlite_schema WHERE name='hpedia_identities'").fetchone():
@@ -68,6 +86,11 @@ def review(db, librarian, package):
             item.update(status="conflict", reason="声明类型与前缀不符或主体已被另一类型占用")
         elif set(entry["content"]) - set(KINDS[kind][2]):
             item.update(status="conflict", reason="记录包含未知字段")
+        elif kind == "term" and item["status"] != "skip":
+            try:
+                librarian.library.validate_import_sources(db, entry["content"])
+            except CommandError as error:
+                item.update(status="blocked", reason=str(error))
         grouped.setdefault(identity[2:], []).append(item)
         items.append(item)
     for group in grouped.values():
@@ -76,7 +99,7 @@ def review(db, librarian, package):
                 item.update(status="conflict", reason="导入文件中出现重复的 ID 主体")
 
     available = set(current) | {item["id"] for item in items}
-    available.difference_update(item["id"] for item in items if item["status"] == "conflict")
+    available.difference_update(item["id"] for item in items if item["status"] in ("blocked", "conflict"))
     # Drop blocked dependents to a fixed point; valid cycles of term links remain importable.
     while True:
         before = len(available)
@@ -139,7 +162,7 @@ def write(db, librarian, item, token):
             current = hpedia.read(db, identity)
         command.update({KINDS[kind][1]: identity, "expected_version": current["version"]})
     if kind == "term":
-        term, _ = library.apply(db, action, command, token=token, **kwargs)
+        term, _ = library.apply(db, action, command, token=token, now=kwargs["now"], import_id=identity)
         if archived:
             library.apply(db, "archive", {"schema_version": 1, "operation_id": str(uuid.uuid4()),
                           "card_id": identity, "expected_version": term["version"]}, token=token, now=kwargs["now"])

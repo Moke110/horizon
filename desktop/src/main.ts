@@ -20,7 +20,7 @@ async function saveHpediaExport(data: unknown) {
     const choice=await dialog.showSaveDialog(win,{defaultPath:'hpedia.json',filters:[{name:'百科 JSON',extensions:['json']}]});
     if(choice.canceled || !choice.filePath)return;
     await writeFile(choice.filePath,JSON.stringify(data,null,2),'utf8');
-    send({kind:'hpedia_export_saved'});
+    send({kind:'hpedia_export_saved',data:(data as {blocked?:unknown[]}).blocked??[]});
   } catch {
     send({kind:'notice',data:'百科文件保存失败'});
   }
