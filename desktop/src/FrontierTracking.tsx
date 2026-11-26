@@ -21,7 +21,7 @@ export function FrontierTracking({frontiers,terms,matches,createRequest,sources,
   boardFrontier?:FrontierSummary;
   frontiers:FrontierSummary[];
   terms:CardSummary[];
-  matches:(text:string,status:string,ids:string[])=>boolean;
+  matches:(text:string,status:string,ids:string[],tracked:boolean)=>boolean;
   createRequest:number;
   sources:ArchiveSource[];
   frontier:Frontier|null;
@@ -70,13 +70,13 @@ export function FrontierTracking({frontiers,terms,matches,createRequest,sources,
   const history=tracking?.frontier_id===selectedId?tracking.history:[];
   const visibleFrontiers=frontiers.filter(item=>{
     const text=termLinkLabels(item.question+' '+item.scope_text,terms);
-    return item.status!=='deleted' && matches(text,item.status,item.term_ids||[]);
+    return item.status!=='deleted' && matches(text,item.status,item.term_ids||[],item.tracked??(item.status==='following'));
   });
   return <section hidden={!!boardFrontier} className="frontier-tracking" aria-label="前沿">
     <h2>前沿</h2>
     <ResultCards label="前沿结果">{visibleFrontiers.map(item=><ResultCard key={item.frontier_id}
       title={<>{termLinkLabels(item.question,terms)} <TestTag tags={item.tags}/></>} summary={termLinkLabels(item.scope_text||'',terms)}
-      status={statusText[item.status]} selected={!!detailHost && selectedId===item.frontier_id}
+      entry={{tracked:item.tracked??(item.status==='following')}} status={statusText[item.status]} selected={!!detailHost && selectedId===item.frontier_id}
       onOpen={()=>show({kind:'open',nonce:crypto.randomUUID(),id:item.frontier_id,version:item.version})}/>)}</ResultCards>
     {detailHost&&selection&&createPortal(<div aria-label="前沿详情" className="frontier-detail">
       <KnowledgePanel frontiers={frontiers} selected={selected} viewEvent={viewEvent} commandError={error}

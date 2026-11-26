@@ -836,3 +836,19 @@ button[popovertarget]::after { margin-inline-start: 8px; }
   flex: 0 0 48px;
   align-items: center;
 }
+
+#hpedia-create {
+  position-area: bottom span-left;
+  justify-self: end;
+  margin: 4px 0 0;
+  padding: 4px;
+  color: inherit;
+  background: #252529;
+  border: 1px solid #44444d;
+  border-radius: 6px;
+}
+#hpedia-create:popover-open { display: grid; }
+.module-card-list .entry-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.entry-validity { flex: 0 0 8px; height: 8px; border-radius: 50%; background: #62c387; }
+.entry-validity[data-validity="questionable"] { background: #e8be4c; }
+.module-card-container .module-card-list button[data-result][data-tracked="true"] { border-color: #e8be4c; }
