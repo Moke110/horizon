@@ -39,6 +39,10 @@ const libraryState = {
   children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}],
   providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
 };
+libraryState.frontiers=['following','paused'].map(status=>({frontier_id:status,question:status,status,tracked:status==='following'}));
+for(const [prompt,validity] of [['q2','valid'],['q3','questionable']]) {
+  libraryState.questions.push({question_id:prompt,prompt,answer:'',term_ids:[],validity,tracked:true});
+}
 const pdfFileName = 'chooser-fixture.pdf';
 const pdfFixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), pdfFileName);
 fs.writeFileSync(pdfFixture, Buffer.from(blankPdf(), 'base64'));
@@ -144,6 +148,44 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
         await new Promise(resolve=>setTimeout(resolve,0));
       };
       const results = () => document.querySelector('.hpedia-panel [data-result]');
+      const status=search.querySelector('.dictionary-scope'), tracking=search.querySelector('select[aria-label="追踪中"]');
+      if(!tracking||tracking.value!=='all'||status.value!=='all') throw Error('Missing initial encyclopedia filters');
+      const choose=async (select,value)=>{
+        select.value=value;
+        select.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
+      };
+      const cards=()=>[...document.querySelectorAll('.hpedia-panel [data-result]')];
+      const verifyMark=(card,label,dot)=>{
+        if(!card||card.title!==label||card.getAttribute('aria-description')!==label) throw Error('Missing accessible state '+label);
+        const mark=card.querySelector('.entry-validity');
+        if((mark?getComputedStyle(mark).backgroundColor:null)!==dot) throw Error('Wrong validity dot '+label);
+        const yellow=getComputedStyle(card).borderTopColor==='rgb(232, 190, 76)';
+        if(yellow!==label.endsWith('追踪中：是')) throw Error('Wrong tracking border '+label);
+      };
+      const green='rgb(98, 195, 135)', yellow='rgb(232, 190, 76)';
+      verifyMark(cards()[0],'状态：有效，追踪中：否',green);
+      verifyMark(cards()[1],'状态：有效，追踪中：是',green);
+      verifyMark(cards()[2],'状态：存疑，追踪中：是',yellow);
+      await choose(status,'questionable');
+      await choose(tracking,'no');
+      if(cards().length) throw Error('Filters must intersect');
+      await choose(tracking,'yes');
+      if(cards().length!==1||!cards()[0].textContent.includes('q3')) throw Error('Missing questionable followed question');
+      switchType('frontier');
+      await wait(()=>status.disabled && status.selectedOptions[0].textContent==='不适用');
+      verifyMark(cards()[0],'追踪中：是',null);
+      if(cards().length!==1) throw Error('Lost tracking filter');
+      await choose(tracking,'no');
+      verifyMark(cards()[0],'追踪中：否',null);
+      switchType('term');
+      await wait(()=>!status.disabled && status.value==='questionable');
+      if(cards().length) throw Error('Type switch lost validity filter');
+      await choose(status,'valid');
+      verifyMark(cards()[0],'状态：有效，追踪中：否',green);
+      await choose(status,'all');
+      await choose(tracking,'all');
+      switchType('question');
       for (const value of ['Prompt marker','Answer marker']) {
         await searchFor(value);
         if (!results()?.textContent.includes('Prompt marker')) throw Error('Missing question for '+value);

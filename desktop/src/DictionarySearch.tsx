@@ -6,8 +6,8 @@ import './dictionary-search.css';
 
 type Term = {card_id: string; title: string; aliases?: string[]};
 
-export function DictionarySearch<S extends string>({query, setQuery, scope, changeScope, cards, selected, changeSelected, submit, scopeOptions, beforeQuery, extraFilter, placeholder='搜索术语和释义'}: {
-  beforeQuery?: React.ReactNode; extraFilter?: React.ReactNode; scopeOptions?: Record<string,string>; placeholder?: string;
+export function DictionarySearch<S extends string>({query, setQuery, scope, changeScope, cards, selected, changeSelected, submit, scopeOptions, scopeDisabled, beforeQuery, extraFilter, placeholder='搜索术语和释义'}: {
+  scopeDisabled?:boolean; beforeQuery?: React.ReactNode; extraFilter?: React.ReactNode; scopeOptions?: Record<string,string>; placeholder?: string;
   query: string; setQuery: (value: string) => void; scope: S; changeScope: (value: S) => void;
   cards: Term[]; selected: string[]; changeSelected: (ids: string[]) => void; submit: () => void;
 }) {
@@ -38,8 +38,9 @@ export function DictionarySearch<S extends string>({query, setQuery, scope, chan
       </div>
     </div>
     <div className="dictionary-filter-row">
-      <label>{scopeOptions ? '状态' : '范围'}<FixedSelect className="dictionary-scope" value={scope} onChange={e => {setOpen(false); changeScope(e.target.value as S);}}>
-        {Object.entries(scopeOptions || {active:'当前有效',inactive:'归档与停用',pending:'待确认'}).map(([value,label])=><option key={value} value={value}>{label}</option>)}
+      <label>{scopeOptions ? '状态' : '范围'}<FixedSelect className="dictionary-scope" disabled={scopeDisabled} value={scopeDisabled?'na':scope} onChange={e => {setOpen(false); changeScope(e.target.value as S);}}>
+        {scopeDisabled&&<option value="na">不适用</option>}
+        {!scopeDisabled&&Object.entries(scopeOptions || {active:'当前有效',inactive:'归档与停用',pending:'待确认'}).map(([value,label])=><option key={value} value={value}>{label}</option>)}
       </FixedSelect></label>
       {extraFilter}
       <div className="term-picker" onBlur={e => {if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);}}>
