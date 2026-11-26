@@ -65,7 +65,7 @@ class Library:
 
     def apply(self, db, action, command, *, token, now=None, origin="manual", import_id=None):
         return self._cards.apply_in_transaction(
-            db, action, command, token=token, lock_clock=now, origin=origin, import_id=import_id)
+            db, "delete_entry" if action == "delete" else action, command, token=token, lock_clock=now, origin=origin, import_id=import_id)
 
     def list_frontiers(self, *, token):
         return self._frontiers.list(token=token)

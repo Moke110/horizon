@@ -328,7 +328,9 @@ class KnowledgeCardService:
         validate_reason(command.get("reason"), code="invalid_card")
         if origin not in ("manual", "keeper"):
             raise ValueError("Unknown Knowledge Card origin")
-        if action not in ("create", "update", "archive", "delete"):
+        if action == "delete":
+            action = "archive"
+        if action not in ("create", "update", "archive", "delete_entry"):
             raise CommandError("invalid_command", "Unknown Knowledge Card action")
         encoded, previous = self._replay(db, command, action, origin)
         if previous is not None:
@@ -423,13 +425,13 @@ class KnowledgeCardService:
             updated["status"] = "archived"
             updated["known"] = False
             event_type = "knowledge_card.archived"
-            if action == "delete":
+            if action == "delete_entry":
                 updated["status"] = "deleted"
                 mark_deleted(db, card["card_id"], card["version"] + 1)
                 event_type = "knowledge_card.deleted"
         updated["version"] = card["version"] + 1
         updated["updated_at"] = int(self.clock())
-        if action == "delete":
+        if action == "delete_entry":
             db.execute("DELETE FROM knowledge_cards WHERE card_id=?", (card["card_id"],))
         else:
             db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?", (json.dumps(updated), card["card_id"]))
