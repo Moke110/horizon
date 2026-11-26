@@ -205,4 +205,3 @@ def decide(db, review_id, target):
         if column == "result":
             _related_indexes(db,table,key,updated)
     db.execute("DELETE FROM hpedia_reference_reviews WHERE review_id=?", (review_id,))
-

@@ -726,3 +726,9 @@ An isolated Windows Electron desktop imported a JSON file from a second workspac
 ## Deleted Hpedia IDs and restoration (#278)
 
 In an isolated Windows Electron session, the desktop deleted a term, question and frontier from their detail panels through three Librarian confirmations. Searching each full ID displayed “条目已删除”. An import of the prior export displayed three unchecked “恢复此条目” choices. Each ID still showed the deletion notice while the review was pending. Selecting all three and confirming restored the entries. Searching each original ID opened its detail panel again.
+
+## Integrated Hpedia acceptance — 2026-11-27 (#274)
+
+The full Windows Python suite at `9123b86` passed 1,774 tests, skipped 15 and reported two dependency warnings. Desktop type checking and the renderer build passed.
+
+In the Windows Electron desktop, opening a deleted term from a question showed its original ID and deletion notice. Export identified a question with an unresolved legacy reference and listed its ID among the exclusions in the saved JSON. Import identified an unavailable material citation, and confirming the batch added only the independent entry to SQLite. The probe supplied the file input and save destination.
