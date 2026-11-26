@@ -6,6 +6,7 @@ Tests exercise positive, failure, replay/concurrency and persistence behavior;
 they do not reach any live source or cloud Base.
 """
 
+import re
 import threading
 
 import pytest
@@ -52,6 +53,7 @@ def voyager_command(frontier_id, operation="voy-1", **scope_overrides):
 def test_create_frontier_persists_question_scope_status_and_empty_relations(tmp_path):
     service = FrontierService(tmp_path, token="s")
     created = service.create(frontier_command(), token="s")
+    assert re.fullmatch(r"f-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", created["frontier_id"])
     assert created["version"] == 1
     assert created["question"] == "可解释人工智能如何用于单细胞扰动预测？"
     assert created["status"] == "following"

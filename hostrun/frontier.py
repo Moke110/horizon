@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import time
-import uuid
+from hostrun.hpedia_identity import allocate
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -302,7 +302,7 @@ class FrontierService:
         if previous is not None:
             return previous, False
         if action == "create":
-            frontier_id = str(uuid.uuid4())
+            frontier_id = allocate(db, "f")
             now = int(self.clock())
             frontier = {
                 "schema_version": 1,

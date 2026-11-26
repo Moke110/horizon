@@ -1,3 +1,4 @@
+import {CopyEntryId} from './HpediaIdentity';
 import {Button} from './gui/elements/Button';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import React,{useEffect,useRef,useState} from 'react';
@@ -227,6 +228,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <Button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该卡片已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</Button>
   </section>}
   {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
+  <CopyEntryId id={selected.card_id}/>
   <p>{selected.title} <TestTag tags={selected.tags}/> · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
   <p>{provenanceLabel(selected)}{' · '+convergenceLabel(entryState(selected),'term')} · {selected.known?'已知':'未计入已知'}</p>

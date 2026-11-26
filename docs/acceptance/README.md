@@ -710,3 +710,7 @@ The [Spec 8 issue](https://github.com/Moke110/horizon/issues/259) links the indi
 Windows Electron checks on the integrated desktop verified question and term browsing, frontier tracking and resolution, cross-type creation, filter restoration, card status indicators and navigation from whiteboard links. Creation checks used isolated data and the Python librarian to confirm writes and read back saved entries. The card indicator checks verified computed colors, hover text and accessible descriptions. [Creation evidence](https://github.com/Moke110/horizon/issues/270#issuecomment-7186616887) · [Filter and indicator evidence](https://github.com/Moke110/horizon/issues/271#issuecomment-7186618521)
 
 The integrated whiteboard and frontier service checks passed (7 tests), alongside desktop type checking, build and Electron smoke. Synthesis tests verified citation eligibility for tracked valid terms and exclusion of questionable terms and terms with inadequate sources. [Whiteboard evidence](https://github.com/Moke110/horizon/issues/272#issuecomment-7186833573) · [Synthesis evidence](https://github.com/Moke110/horizon/issues/273#issuecomment-7186134686)
+
+## Hpedia ID creation and lookup — 2026-11-27 (#275)
+
+In an isolated Windows workspace, the Librarian confirmed one term, question and frontier. A fresh Electron desktop opened each persisted entry through the Hpedia search field using its full ID, uppercase ID and hyphenated UUID. All nine detail views copied the expected canonical ID to the Windows clipboard.

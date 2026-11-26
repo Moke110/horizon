@@ -6,7 +6,8 @@ import './dictionary-search.css';
 
 type Term = {card_id: string; title: string; aliases?: string[]};
 
-export function DictionarySearch<S extends string>({query, setQuery, scope, changeScope, cards, selected, changeSelected, submit, scopeOptions, scopeDisabled, beforeQuery, extraFilter, placeholder='搜索术语和释义'}: {
+export function DictionarySearch<S extends string>({query, setQuery, onPasteQuery, scope, changeScope, cards, selected, changeSelected, submit, scopeOptions, scopeDisabled, beforeQuery, extraFilter, placeholder='搜索术语和释义'}: {
+  onPasteQuery?:(query:string)=>void;
   scopeDisabled?:boolean; beforeQuery?: React.ReactNode; extraFilter?: React.ReactNode; scopeOptions?: Record<string,string>; placeholder?: string;
   query: string; setQuery: (value: string) => void; scope: S; changeScope: (value: S) => void;
   cards: Term[]; selected: string[]; changeSelected: (ids: string[]) => void; submit: () => void;
@@ -31,7 +32,7 @@ export function DictionarySearch<S extends string>({query, setQuery, scope, chan
     <div><label htmlFor="dictionary-query">搜索</label>
       <div className="dictionary-query-row">
         {beforeQuery}
-        <TextInput id="dictionary-query" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder={placeholder}/>
+        <TextInput id="dictionary-query" type="search" value={query} onPaste={event=>onPasteQuery?.(event.clipboardData.getData("text"))} onChange={e => setQuery(e.target.value)} placeholder={placeholder}/>
         <Button className="search-icon" type="submit" aria-label="搜索" title="搜索">
           <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
         </Button>

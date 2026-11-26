@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
+from hostrun.hpedia_identity import allocate
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -333,7 +333,7 @@ class KnowledgeCardService:
         if previous is not None:
             return previous, False
         if action == "create":
-            card_id = str(uuid.uuid4())
+            card_id = allocate(db, "t")
             now = int(self.clock())
             fields = self._fields(command)
             if "title" not in fields or "content" not in fields:

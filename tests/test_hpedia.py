@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from hostrun.agent_service import AgentService, CommandError
@@ -15,6 +17,7 @@ def test_cutover_preserves_terms_and_sources_and_confirms_the_first_question(tmp
     cards = KnowledgeCardService(tmp_path, token=TOKEN)
     term = cards.create({"schema_version": 1, "operation_id": "term",
                          "title": "测试光谱", "content": "测试术语释义。"}, token=TOKEN)
+    assert re.fullmatch(r"t-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", term["card_id"])
     themes = KnowledgeThemeService(tmp_path, token=TOKEN, cards=cards)
     themes.create({"schema_version": 1, "operation_id": "old",
                    "judgement": "开发阶段命题", "related_cards": [], "evidence": []}, token=TOKEN)
@@ -44,6 +47,7 @@ def test_cutover_preserves_terms_and_sources_and_confirms_the_first_question(tmp
     assert bridge("question_list") == ("question_list", [])
     _, result = bridge("question_confirm", operation_id="first", choice="confirm")
     question, = result["results"]
+    assert re.fullmatch(r"q-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", question["question_id"])
     assert question["term_ids"] == [term["card_id"]]
     assert question["prompt"] == proposal["prompt"]
     assert question["answer"] == proposal["answer"]
