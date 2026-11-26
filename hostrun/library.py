@@ -57,12 +57,15 @@ class Library:
     def term_fields(self, command):
         return self._cards._fields(command)
 
+    def validate_import_sources(self, db, content):
+        self._cards.validate_import_sources(db, content)
+
     def term_relations(self, db, term_id, relations):
         return self._cards._relations(db, term_id, relations)
 
-    def apply(self, db, action, command, *, token, now=None, origin="manual"):
+    def apply(self, db, action, command, *, token, now=None, origin="manual", import_id=None):
         return self._cards.apply_in_transaction(
-            db, action, command, token=token, lock_clock=now, origin=origin)
+            db, "delete_entry" if action == "delete" else action, command, token=token, lock_clock=now, origin=origin, import_id=import_id)
 
     def list_frontiers(self, *, token):
         return self._frontiers.list(token=token)
@@ -92,13 +95,13 @@ class Library:
     def check_frontier_lock(self, db, frontier_id, *, now=None):
         self._frontiers.check_write_lock(db, frontier_id, now=now)
 
-    def apply_frontier(self, db, action, command, *, token, now, origin="manual"):
+    def apply_frontier(self, db, action, command, *, token, now, origin="manual", import_id=None):
         if action == "create":
             command = {"schema_version": 1, "hard_constraints": {},
                        "scope": {"text": command.get("question"), "alternatives": [], "sources": ["arxiv"]},
                        **command}
         return self._frontiers.apply_in_transaction(
-            db, action, command, token=token, lock_clock=now, origin=origin)
+            db, action, command, token=token, lock_clock=now, origin=origin, import_id=import_id)
 
     def apply_progress(self, db, action, command, *, now):
         frontier = self._frontiers.read_in_transaction(db, command.get("frontier_id"))
@@ -151,7 +154,7 @@ class Library:
         with self.connect() as db:
             return hpedia.read(db, question_id)
 
-    def apply_question(self, db, action, command, *, now):
+    def apply_question(self, db, action, command, *, now, import_id=None):
         def check_question_lock(question_id):
             locked = db.execute("""SELECT 1 FROM librarian_term_locks AS lock
                 JOIN librarian_term_requests AS request ON request.id=lock.request_id
@@ -161,7 +164,7 @@ class Library:
                 raise CommandError("question_locked", "百科问题正在等待确认")
 
         return hpedia.apply(db, action, command, read_term=lambda term_id: self.read_in_transaction(db, term_id),
-                            check_question_lock=check_question_lock, now=now)
+                            check_question_lock=check_question_lock, now=now, import_id=import_id)
 
     def notify_committed(self, term):
         self._cards.notify_committed(term)

@@ -540,11 +540,15 @@ class MaterialsService(MaterialLifecycle):
                         "limitation": grant["limitation"]}
         return {"status": "unavailable", "segment": None}
 
+    def validate_knowledge_source(self, db, material_id, excerpt):
+        material = _record(db, material_id)
+        self._check_knowledge_excerpt(material, excerpt)
+        return material
+
     def knowledge_reference(self, db, material_id, excerpt, *, card_id, token):
         """Verify and bind a Knowledge Card citation on the caller's transaction."""
         self._authorize(token)
-        material = _record(db, material_id)
-        self._check_knowledge_excerpt(material, excerpt)
+        material = self.validate_knowledge_source(db, material_id, excerpt)
         return self._bind_reference(db, material, f"card:{card_id}")
 
     def validate_knowledge_pin(self, db, citation):

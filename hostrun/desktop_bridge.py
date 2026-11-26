@@ -587,7 +587,7 @@ def librarian_question_command(librarian, command, *, token, origin):
 
 def librarian_card_command(librarian, command, *, token, origin):
     action = command["action"]
-    if action in ("card_create", "card_update", "card_archive"):
+    if action in ("card_create", "card_update", "card_archive", "card_delete"):
         payload = {key: value for key, value in command.items() if key != "action"}
         card = librarian.request(action.removeprefix("card_"), payload,
                                  token=token, origin=origin)
@@ -897,6 +897,8 @@ def _serve(resolved, executable, managed):
             facts = embedded_agent.runtime(app.home, code=code)
             emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':librarian.list_frontiers(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'bulletin_links':librarian.bulletin_links(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
+                            'migration_reviews':librarian.migration_reviews(token=token),
+                            'hpedia_deleted':librarian.deleted_entries(token=token),
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
                            'archive_sources':librarian.list_sources(token=token),
                            'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
@@ -1109,7 +1111,7 @@ def _serve(resolved, executable, managed):
                                              "progress": librarian.list_progress(frontier_id, token=token),
                                              "history": voyager.recent(token=token, frontier_id=frontier_id)})
                             state()
-                    elif action in ('card_create','card_update','card_archive',
+                    elif action in ('card_create','card_update','card_archive','card_delete',
                                     'card_open','card_list','card_query','card_confirm','card_batch'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=librarian_card_command(librarian,cmd,token=token,origin='gui')
@@ -1120,9 +1122,26 @@ def _serve(resolved, executable, managed):
                                 for term in data['results']:
                                     emit('card_view', term)
                             state()
+                    elif action == 'hpedia_migration_decide':
+                        librarian.decide_migration(cmd.get('review_id'),cmd.get('target'),token=token)
+                        state()
                     elif action in ('bulletin_list','bulletin_open'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         emit(*bulletin_board_command(librarian,cmd,token=token))
+                    elif action in ('hpedia_export', 'hpedia_import', 'hpedia_import_decide', 'hpedia_import_pending'):
+                        if exiting.is_set():
+                            raise CommandError('exiting', 'Desktop is exiting')
+                        if action == 'hpedia_export':
+                            emit('hpedia_export', librarian.export_entries(token=token))
+                        elif action == 'hpedia_import_pending':
+                            emit('hpedia_import_pending', librarian.pending_imports(token=token, origin='gui'))
+                        elif action == 'hpedia_import':
+                            emit('hpedia_import_review', librarian.request_import(
+                                cmd.get('operation_id'), cmd.get('package'), token=token, origin='gui'))
+                        else:
+                            emit('hpedia_import_review', librarian.decide_import(
+                                cmd.get('operation_id'), cmd.get('choices'), token=token, origin='gui'))
+                            state()
                     elif action in ('question_list' ,'question_open','question_create',
                                     'question_update','question_delete','question_confirm'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')

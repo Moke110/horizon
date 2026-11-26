@@ -1,3 +1,4 @@
+import {CopyEntryId} from './HpediaIdentity';
 import {ResultCard,ResultCards} from './ResultCards';
 import {termLinkLabels} from './HpediaPanel';
 import type {CardSummary} from './KnowledgeCardPanel';
@@ -16,11 +17,13 @@ type Tracking={frontier_id:string;progress:Progress[];history:VoyagerSummary[]};
 
 const statusText:Record<string,string>={following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 
-export function FrontierTracking({frontiers,terms,matches,createRequest,sources,frontier,viewEvent,error,detailHost,openDetail,
-  send,openSource,openVoyager,boardFrontier}:{
+export function FrontierTracking({frontiers,terms,deleted={},matches,createRequest,sources,frontier,viewEvent,error,detailHost,openDetail,
+  send,openSource,openVoyager,lookup,boardFrontier}:{
+  lookup?:{id:string;version:number;nonce:string};
   boardFrontier?:FrontierSummary;
   frontiers:FrontierSummary[];
   terms:CardSummary[];
+  deleted?:Record<string,string>;
   matches:(text:string,status:string,ids:string[],tracked:boolean)=>boolean;
   createRequest:number;
   sources:ArchiveSource[];
@@ -58,6 +61,7 @@ export function FrontierTracking({frontiers,terms,matches,createRequest,sources,
     setDraft(null);
     openDetail();
   };
+  useEffect(()=>{if(lookup)show({kind:"open",...lookup});},[lookup]);
   const lastCreate=useRef(createRequest);
   useEffect(()=>{
     if(lastCreate.current!==createRequest){
@@ -69,16 +73,17 @@ export function FrontierTracking({frontiers,terms,matches,createRequest,sources,
   const progress=tracking?.frontier_id===selectedId?tracking.progress:[];
   const history=tracking?.frontier_id===selectedId?tracking.history:[];
   const visibleFrontiers=frontiers.filter(item=>{
-    const text=termLinkLabels(item.question+' '+item.scope_text,terms);
+    const text=termLinkLabels(item.question+' '+item.scope_text,terms,deleted);
     return item.status!=='deleted' && matches(text,item.status,item.term_ids||[],item.tracked??(item.status==='following'));
   });
   return <section hidden={!!boardFrontier} className="frontier-tracking" aria-label="前沿">
     <h2>前沿</h2>
     <ResultCards label="前沿结果">{visibleFrontiers.map(item=><ResultCard key={item.frontier_id}
-      title={<>{termLinkLabels(item.question,terms)} <TestTag tags={item.tags}/></>} summary={termLinkLabels(item.scope_text||'',terms)}
+      title={<>{termLinkLabels(item.question,terms,deleted)} <TestTag tags={item.tags}/></>} summary={termLinkLabels(item.scope_text||'',terms,deleted)}
       entry={{tracked:item.tracked??(item.status==='following')}} status={statusText[item.status]} selected={!!detailHost && selectedId===item.frontier_id}
       onOpen={()=>show({kind:'open',nonce:crypto.randomUUID(),id:item.frontier_id,version:item.version})}/>)}</ResultCards>
     {detailHost&&selection&&createPortal(<div aria-label="前沿详情" className="frontier-detail">
+      {selectedId&&<CopyEntryId id={selectedId}/>}
       <KnowledgePanel frontiers={frontiers} selected={selected} viewEvent={viewEvent} commandError={error}
         onCommand={send} embedded showList={false} openRequest={selection} titleOnly
         onCommitted={(id,version)=>setSelection(current=>current?{kind:'open',id,version,nonce:current.nonce}:current)}/>

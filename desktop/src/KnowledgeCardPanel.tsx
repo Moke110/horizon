@@ -1,3 +1,4 @@
+import {CopyEntryId} from './HpediaIdentity';
 import {Button} from './gui/elements/Button';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import React,{useEffect,useRef,useState} from 'react';
@@ -227,11 +228,13 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
   <Button type="button" disabled={loading||saving} onClick={()=>{if(latest.status==='archived'){clearDraft();setMessage('该卡片已归档，已放弃草稿。');}else{populate(latest);setMessage(`已放弃草稿并载入版本 ${latest.version}。`);}}}>放弃草稿</Button>
   </section>}
   {!creating&&isFullCard(selected)&&<section className="child-result"><h3>当前已提交版本</h3>
+  <CopyEntryId id={selected.card_id}/>
   <p>{selected.title} <TestTag tags={selected.tags}/> · {statusLabel[selected.status]} · 版本 {selected.version}</p><p>{selected.content}</p>
   <p>别名：{selected.aliases.join('、')||'无'} · 关联：{selected.relations.map(cardName).join('、')||'无'}</p>
   <p>{provenanceLabel(selected)}{' · '+convergenceLabel(entryState(selected),'term')} · {selected.known?'已知':'未计入已知'}</p>
   {selected.sources.map(source=><p key={JSON.stringify(source)}>{source.title} · 资料版本 {source.material_version} · {source.locator}{source.status==='removed'?' · 原资料已永久移除':''}<br/>{source.excerpt}</p>)}
-  {selected.status!=='archived'&&<div className="workbench-actions"><Button variant={termMode?'archive':'standard'} type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</Button></div>}
+  {termMode&&selected.status!=='deleted'&&<Button disabled={loading||saving} onClick={()=>send(crypto.randomUUID(),'card_delete',{card_id:selected.card_id,expected_version:selected.version})}>删除术语</Button>}
+  {selected.status!=='deleted'&&selected.status!=='archived'&&<div className="workbench-actions"><Button variant={termMode?'archive':'standard'} type="button" disabled={loading||saving} onClick={()=>archive(selected)}>{termMode?'归档术语':'归档知识卡片'}</Button></div>}
   </section>}
   {showList&&<><h3>知识卡片列表</h3><p>列表摘要不用于编辑；编辑会读取完整已提交版本。归档的卡片仍会列出并标明状态。</p>{cards.length===0&&<p>尚无知识卡片。填写上方表单创建第一张卡片。</p>}
   {cards.map(card=><section className="child-result" key={card.card_id}><h3>{card.title}</h3><p>{provenanceLabel(card)}{card.source_removed?' · 引用的资料已移除':''}{' · '+convergenceLabel(entryState(card),'term')} · {statusLabel[card.status]||card.status} · 版本 {card.version}</p>

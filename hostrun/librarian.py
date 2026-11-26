@@ -3,7 +3,7 @@
 import json
 import time
 
-from hostrun import frontier_progress, library_cleanup
+from hostrun import frontier_progress, hpedia_identity, hpedia_migration, library_cleanup
 from hostrun.agent_service import CommandError
 from hostrun.library import Library
 
@@ -15,7 +15,26 @@ class Librarian:
         self.library = Library(cards, token=token, frontiers=frontiers, clock=clock)
         self.clock = clock
         with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             self.library.initialize_questions(db)
+            hpedia_migration.migrate(db)
+            hpedia_identity.migrate_deleted(db)
+
+    def deleted_entries(self, *, token):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            return {identity: "条目已删除" for identity, in db.execute("SELECT id FROM hpedia_deleted")}
+
+    def migration_reviews(self, *, token):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            return hpedia_migration.reviews(db)
+
+    def decide_migration(self, review_id, target, *, token):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            hpedia_migration.decide(db, review_id, target)
 
     def list(self, *, token):
         return self.library.list(token=token)
@@ -121,7 +140,9 @@ class Librarian:
         """Apply a term change already approved through the Keeper workflow."""
         if origin != "keeper":
             raise ValueError("A reviewed Keeper proposal is required")
-        return self.library.apply(db, action, command, token=token, origin=origin)
+        # Keeper's reviewed card removal archives the cited record for history and undo.
+        return self.library.apply(db, "archive" if action == "delete" else action,
+                                  command, token=token, origin=origin)
 
     def notify_committed(self, term):
         self.library.notify_committed(term)
@@ -263,6 +284,36 @@ class Librarian:
                 result, _ = self.library.apply(db, "delete", command, token=token, now=now)
             results.append({"kind": kind, "record": result})
         return results
+
+    def export_entries(self, *, token):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN")
+            return hpedia_transfer.export(db, self.library)
+
+    def request_import(self, request_id, package, *, token, origin):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return hpedia_transfer.request(db, self, request_id, package, origin, token)
+
+    def pending_imports(self, *, token, origin):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            hpedia_transfer.initialize(db)
+            return [json.loads(card) for card, in db.execute(
+                """SELECT card FROM hpedia_imports WHERE origin=? AND json_extract(card,'$.status')='pending'
+                AND json_extract(card,'$.expires_at')>? ORDER BY rowid""", (origin, self.clock()))]
+
+    def decide_import(self, request_id, choices, *, token, origin):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return hpedia_transfer.decide(db, self, request_id, choices, origin, token)
 
     def request_batch(self, request_id, changes, *, token, origin, entity="term"):
         self.library.authorize(token)

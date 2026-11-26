@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from hostrun.agent_service import AgentService, CommandError
@@ -15,6 +17,7 @@ def test_cutover_preserves_terms_and_sources_and_confirms_the_first_question(tmp
     cards = KnowledgeCardService(tmp_path, token=TOKEN)
     term = cards.create({"schema_version": 1, "operation_id": "term",
                          "title": "测试光谱", "content": "测试术语释义。"}, token=TOKEN)
+    assert re.fullmatch(r"t-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", term["card_id"])
     themes = KnowledgeThemeService(tmp_path, token=TOKEN, cards=cards)
     themes.create({"schema_version": 1, "operation_id": "old",
                    "judgement": "开发阶段命题", "related_cards": [], "evidence": []}, token=TOKEN)
@@ -44,6 +47,7 @@ def test_cutover_preserves_terms_and_sources_and_confirms_the_first_question(tmp
     assert bridge("question_list") == ("question_list", [])
     _, result = bridge("question_confirm", operation_id="first", choice="confirm")
     question, = result["results"]
+    assert re.fullmatch(r"q-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", question["question_id"])
     assert question["term_ids"] == [term["card_id"]]
     assert question["prompt"] == proposal["prompt"]
     assert question["answer"] == proposal["answer"]
@@ -95,3 +99,71 @@ def test_agent_hpedia_question_is_confirmed_in_its_own_conversation(tmp_path):
     result = librarian.decide("question", "confirm", token=token, origin="agent:question-origin")
     assert result["results"][0]["tags"] == ["测试"]
     assert librarian.list_questions(token=token) == result["results"]
+
+def test_legacy_uuid_and_reference_survive_reopening_librarian(tmp_path):
+    import json
+    import sqlite3
+    import uuid
+    from hostrun.knowledge_history import KnowledgeHistoryService
+
+    cards = KnowledgeCardService(tmp_path, token=TOKEN)
+    old = str(uuid.uuid4()).upper()
+    term = cards.create({"schema_version": 1, "operation_id": "seed", "title": "old",
+                         "content": "definition"}, token=TOKEN)
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        db.execute("UPDATE knowledge_cards SET card_id=?, result=?", (old,json.dumps({**term,"card_id":old})))
+        db.execute("UPDATE knowledge_card_operations SET result=replace(result,?,?)", (term["card_id"],old))
+        from hostrun.keeper import KeeperService
+        KeeperService.initialize_database(db)
+        proposal = {"changes":[{"kind":"card","id":old,"before":{"card_id":old}}]}
+        db.execute("INSERT INTO keeper_proposals VALUES('proposal','request',?)", (json.dumps(proposal),))
+        db.execute("INSERT INTO voyager_material_references VALUES('material',?,'hash',NULL)", ("card:"+old+":hash",))
+    librarian = Librarian(cards, token=TOKEN)
+    expected = "t-" + old.lower().replace("-", "")
+    assert librarian.view(expected,token=TOKEN)["title"] == "old"
+    history = KnowledgeHistoryService({"card": cards}).history(
+        {"schema_version":1,"operation_id":"history","kind":"card","id":expected}, token=TOKEN)
+    assert history["total"] == 1
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        proposal = json.loads(db.execute("SELECT result FROM keeper_proposals").fetchone()[0])
+        assert proposal["changes"] == [{"kind":"card","id":expected,"before":{"card_id":expected}}]
+        assert db.execute("SELECT owner_id FROM voyager_material_references").fetchone() == ("card:"+expected+":hash",)
+    assert Librarian(cards,token=TOKEN).list(token=TOKEN)[0]["card_id"] == expected
+
+def test_ambiguous_legacy_term_stays_pending_until_librarian_choice(tmp_path):
+    import json
+    import sqlite3
+
+    cards = KnowledgeCardService(tmp_path, token=TOKEN)
+    for operation in ("first", "second"):
+        cards.create({"schema_version": 1, "operation_id": operation, "title": "共享名称",
+                      "content": operation}, token=TOKEN)
+    AgentService(tmp_path, token=TOKEN)
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        question = {"question_id":"legacy-question","version":1,"prompt":"问题",
+                    "answer":"[[term:共享名称]]","term_ids":["共享名称"]}
+        db.execute("INSERT INTO hpedia_questions VALUES(?,?)", ("legacy-question",json.dumps(question)))
+    librarian = Librarian(cards, token=TOKEN)
+    question, = librarian.list_questions(token=TOKEN)
+    review, = librarian.migration_reviews(token=TOKEN)
+    assert question["term_ids"] == ["共享名称"]
+    assert {candidate["summary"] for candidate in review["candidates"]} == {"first","second"}
+    package = librarian.export_entries(token=TOKEN)
+    assert question["question_id"] not in [entry["id"] for entry in package["entries"]]
+    assert [entry["id"] for entry in package["blocked"]] == [question["question_id"]]
+    stale = review["candidates"][1]["id"]
+    librarian.request("delete", {"schema_version":1,"operation_id":"delete-stale",
+                      "card_id":stale,"expected_version":1}, token=TOKEN, origin="gui")
+    librarian.decide("delete-stale","confirm",token=TOKEN,origin="gui")
+    with pytest.raises(CommandError, match="候选"):
+        librarian.decide_migration(review["id"], stale, token=TOKEN)
+    librarian.decide_migration(review["id"], None, token=TOKEN)
+    assert librarian.migration_reviews(token=TOKEN)[0]["deferred"]
+    target = review["candidates"][0]["id"]
+    librarian.decide_migration(review["id"], target, token=TOKEN)
+    reopened = Librarian(cards, token=TOKEN)
+    resolved, = reopened.list_questions(token=TOKEN)
+    assert resolved["question_id"] == question["question_id"]
+    assert resolved["answer"] == f"[[term:{target}]]"
+    assert resolved["term_ids"] == [target]
+    assert reopened.migration_reviews(token=TOKEN) == []

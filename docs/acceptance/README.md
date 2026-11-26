@@ -710,3 +710,25 @@ The [Spec 8 issue](https://github.com/Moke110/horizon/issues/259) links the indi
 Windows Electron checks on the integrated desktop verified question and term browsing, frontier tracking and resolution, cross-type creation, filter restoration, card status indicators and navigation from whiteboard links. Creation checks used isolated data and the Python librarian to confirm writes and read back saved entries. The card indicator checks verified computed colors, hover text and accessible descriptions. [Creation evidence](https://github.com/Moke110/horizon/issues/270#issuecomment-7186616887) · [Filter and indicator evidence](https://github.com/Moke110/horizon/issues/271#issuecomment-7186618521)
 
 The integrated whiteboard and frontier service checks passed (7 tests), alongside desktop type checking, build and Electron smoke. Synthesis tests verified citation eligibility for tracked valid terms and exclusion of questionable terms and terms with inadequate sources. [Whiteboard evidence](https://github.com/Moke110/horizon/issues/272#issuecomment-7186833573) · [Synthesis evidence](https://github.com/Moke110/horizon/issues/273#issuecomment-7186134686)
+
+## Hpedia ID creation and lookup — 2026-11-27 (#275)
+
+In an isolated Windows workspace, the Librarian confirmed one term, question and frontier. A fresh Electron desktop opened each persisted entry through the Hpedia search field using its full ID, uppercase ID and hyphenated UUID. All nine detail views copied the expected canonical ID to the Windows clipboard.
+
+## Legacy Hpedia reference review — 2026-11-27 (#276)
+
+A real Windows Electron session opened a migrated workspace containing a question that referred to two same-name terms. The review showed both definitions and IDs. Deferring collapsed the card. Reopening it and selecting a candidate resolved the review and retained the question in Hpedia.
+
+## Cross-workspace Hpedia transfer (#277)
+
+An isolated Windows Electron desktop imported a JSON file from a second workspace. Its confirmation displayed the local and incoming titles for the same ID plus an independent entry. Selecting the incoming version and confirming persisted both original identities. The desktop exported a JSON file with both verified titles and IDs. The probe supplied the file input and save-dialog destination; both data paths used the actual Librarian and SQLite store.
+
+## Deleted Hpedia IDs and restoration (#278)
+
+In an isolated Windows Electron session, the desktop deleted a term, question and frontier from their detail panels through three Librarian confirmations. Searching each full ID displayed “条目已删除”. An import of the prior export displayed three unchecked “恢复此条目” choices. Each ID still showed the deletion notice while the review was pending. Selecting all three and confirming restored the entries. Searching each original ID opened its detail panel again.
+
+## Integrated Hpedia acceptance — 2026-11-27 (#274)
+
+The full Windows Python suite at `9123b86` passed 1,774 tests, skipped 15 and reported two dependency warnings. Desktop type checking and the renderer build passed.
+
+In the Windows Electron desktop, opening a deleted term from a question showed its original ID and deletion notice. Export identified a question with an unresolved legacy reference and listed its ID among the exclusions in the saved JSON. Import identified an unavailable material citation, and confirming the batch added only the independent entry to SQLite. The probe supplied the file input and save destination.

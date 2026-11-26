@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import time
-import uuid
+from hostrun.hpedia_identity import allocate, import_version, mark_deleted
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -284,7 +284,7 @@ class FrontierService:
             self.notify_committed(frontier)
         return frontier
 
-    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None):
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None, import_id=None):
         """Apply one Frontier write on the caller's open transaction.
 
         The caller owns BEGIN, COMMIT and notification. Replays return their
@@ -302,13 +302,13 @@ class FrontierService:
         if previous is not None:
             return previous, False
         if action == "create":
-            frontier_id = str(uuid.uuid4())
+            frontier_id = allocate(db, "f", import_id)
             now = int(self.clock())
             frontier = {
                 "schema_version": 1,
                 "operation_id": command["operation_id"],
                 "frontier_id": frontier_id,
-                "version": 1,
+                "version": import_version(db, import_id),
                 "question": _validate_question(command.get("question")),
                 "status": _tracking_status(command, ACTIVE_STATUS),
                 "scope": _validate_scope(command.get("scope")),
@@ -355,6 +355,7 @@ class FrontierService:
             event_type = "frontier.updated"
         else:
             updated["status"] = "deleted"
+            mark_deleted(db, frontier_id, frontier["version"] + 1)
             event_type = "frontier.deleted"
         updated["version"] = frontier["version"] + 1
         updated["updated_at"] = int(self.clock())

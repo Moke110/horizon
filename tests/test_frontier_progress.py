@@ -83,3 +83,31 @@ def test_frontier_tracking_preserves_resolution_across_tracking_changes(tmp_path
         assert item["tracked"] is tracked
         assert (item.get("resolved_at") is not None) is resolved
         assert librarian.list_frontiers(token="s")[0]["tracked"] is tracked
+
+def test_legacy_frontier_progress_and_board_follow_same_identity(tmp_path):
+    import json
+    import sqlite3
+
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    frontier = confirm(librarian, "frontier", "create", "new-frontier", question="Original title")
+    original = frontier["frontier_id"]
+    progress = confirm(librarian, "progress", "create", "new-progress", frontier_id=original,
+                       content="Recorded update", source_ids=[])
+    with sqlite3.connect(tmp_path / "horizon.sqlite3") as db:
+        # Reconstruct the previous schema with a non-UUID owner key.
+        db.execute("DELETE FROM hpedia_migrations WHERE name='typed_ids'")
+        db.execute("DROP TABLE hpedia_reference_reviews")
+        db.execute("UPDATE frontiers SET frontier_id='legacy', result=?",
+                   (json.dumps({**frontier,"frontier_id":"legacy"}),))
+        db.execute("UPDATE frontier_progress SET frontier_id='legacy', result=?",
+                   (json.dumps({**progress,"frontier_id":"legacy"}),))
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    migrated, = librarian.list_frontiers(token="s")
+    identity = migrated["frontier_id"]
+    assert identity.startswith("f-")
+    row, = librarian.list_progress(identity, token="s")
+    assert (row["frontier_id"],row["progress_id"]) == (identity,progress["progress_id"])
+    confirm(librarian, "frontier", "update", "rename", frontier_id=identity,
+            expected_version=migrated["version"],question="Current title")
+    link, = librarian.bulletin_links(token="s")
+    assert (link["id"],link["title"]) == (identity,"Current title")

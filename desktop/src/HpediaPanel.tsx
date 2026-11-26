@@ -1,4 +1,6 @@
+import {CopyEntryId,matchesEntryId} from './HpediaIdentity';
 import {ResultCard,ResultCards} from './ResultCards';
+import {HpediaTransfer} from './HpediaTransfer';
 import {HpediaIcon} from './HpediaIcon';
 import {useModuleSearch} from './ModuleSearch';
 import {ModuleHeading} from './ModuleHeading';
@@ -23,25 +25,27 @@ export type Question = {
   validity?:"valid"|"questionable";tracked?:boolean;convergence?:Convergence;
 };
 
-function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>void) {
+function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>void, deleted:Record<string,string>) {
   return text.split(/(\[\[term:[^\[\]\s]+\]\])/).map((part,index)=>{
     if(!part.startsWith('[[term:'))return part;
     const id=part.slice(7,-2);
     const term=terms.find(candidate=>candidate.card_id===id);
-    return <button key={index} type="button" className="hpedia-term-link"
-      onClick={()=>openTerm(id)}>{term?.title??'术语'}</button>;
+    if(!term&&!deleted[id])return <span key={index}>{id}（待确认）</span>;
+    return <Button key={index} type="button" className="hpedia-term-link"
+      onClick={()=>openTerm(id)}>{term?.title??(id+'（条目已删除）')}</Button>;
   });
 }
 
-export function termLinkLabels(text:string,terms:CardSummary[]){
+export function termLinkLabels(text:string,terms:CardSummary[],deleted:Record<string,string>={}){
   return text.replace(/\[\[term:([^\[\]\s]+)\]\]/g,
-    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??'术语');
+    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??(id+(deleted[id]?'（条目已删除）':'（待确认）')));
 }
 
-export function QuestionContents({question,terms,openTerm}:{question:Question;terms:CardSummary[];openTerm:(id:string)=>void}) {
+export function QuestionContents({question,terms,openTerm,deleted}:{deleted:Record<string,string>;question:Question;terms:CardSummary[];openTerm:(id:string)=>void}) {
   return <>
-    <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)} <TestTag tags={question.tags}/></h2>
-    <p className="hpedia-text">{referencedText(question.answer,terms,openTerm)}</p>
+    <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm,deleted)} <TestTag tags={question.tags}/></h2>
+    <CopyEntryId id={question.question_id}/>
+    <p className="hpedia-text">{referencedText(question.answer,terms,openTerm,deleted)}</p>
     <p>{convergenceLabel(entryState(question),'question')}</p>
   </>;
 }
@@ -49,24 +53,29 @@ export function QuestionContents({question,terms,openTerm}:{question:Question;te
 export function TermContents({term}:{term:KnowledgeCard}) {
   return <>
     <h2>{term.title} <TestTag tags={term.tags}/></h2>
+    <CopyEntryId id={term.card_id}/>
     <p className="hpedia-text">{term.content}</p>
     <p>{convergenceLabel(entryState(term),'term')}</p>
     {!!term.aliases.length&&<p>别名 {term.aliases.join('、')}</p>}
   </>;
 }
 
-export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers,boardLink}:{
+export function HpediaPanel({questions,terms,deleted={},detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers,frontierRows=[],boardLink}:{
+  frontierRows?:{frontier_id:string;version:number}[];
   boardLink?:{kind:string;id:string};
-  renderFrontiers:(matches:(text:string,state:string,ids:string[],tracked:boolean)=>boolean, createRequest:number)=>React.ReactNode;
+  renderFrontiers:(matches:(text:string,state:string,ids:string[],tracked:boolean)=>boolean, createRequest:number, lookup?:{id:string;version:number;nonce:string})=>React.ReactNode;
   closeDetail:()=>void;
   cardEditor:Pick<React.ComponentProps<typeof KnowledgeCardPanel>,'materials'|'selected'|'viewEvent'|'commandError'>;
+  deleted?:Record<string,string>;
   questions:Question[];
   terms:CardSummary[];
   detailHost:HTMLElement|null;
   openDetail:()=>void;
   send:(command:unknown)=>void;
 }) {
+  const [deletedLookup,setDeletedLookup]=useState('');
   const [frontierCreate,setFrontierCreate]=useState(0);
+  const [frontierLookup,setFrontierLookup]=useState<{id:string;version:number;nonce:string}>();
   const [entryType,setEntryType]=useState('question');
   const [termRequest,setTermRequest]=useState<React.ComponentProps<typeof KnowledgeCardPanel>['openRequest']>(null);
   const [question,setQuestion]=useState<Question|null>(null);
@@ -175,18 +184,34 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
   };
 
   const openTerm=(id:string)=>{
+    if(deleted[id]){
+      if(boardLink)openDetail();else closeDetail?.();
+      setDeletedLookup(id);return;
+    }
+    setDeletedLookup('');
     termToRead.current=id;
     send({action:'card_open',card_id:id,operation_id:crypto.randomUUID()});
   };
 
-  const filter=useModuleSearch();
+  const filter=useModuleSearch(query=>{
+    const removed=Object.keys(deleted).find(id=>matchesEntryId(query,id,id[0]));
+    setDeletedLookup(removed??'');
+    if(removed){closeDetail?.();return true;}
+    const term=terms.find(item=>matchesEntryId(query,item.card_id,'t'));
+    if(term){setEntryType('term');editTerm(term);return true;}
+    const question=questions.find(item=>matchesEntryId(query,item.question_id,'q'));
+    if(question){setEntryType('question');show(question.question_id);return true;}
+    const frontier=frontierRows.find(item=>matchesEntryId(query,item.frontier_id,'f'));
+    if(frontier){setEntryType('frontier');setFrontierLookup({id:frontier.frontier_id,version:frontier.version,nonce:crypto.randomUUID()});return true;}
+    return false;
+  });
   const [tracking,setTracking]=useState('all');
   const matchesTracking=(tracked:boolean)=>tracking==='all'||(tracking==='yes')===tracked;
   const matchesEntry=(text:string, item:Question|CardSummary, ids:string[])=>{
     const {validity,tracked}=stateFields(entryState(item));
     return matchesTracking(tracked)&&filter.matches(text,validity,ids);
   };
-  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && matchesEntry(termLinkLabels(item.prompt+' '+item.answer,terms),item,item.term_ids||[]));
+  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && matchesEntry(termLinkLabels(item.prompt+' '+item.answer,terms,deleted),item,item.term_ids||[]));
   const activeTerms=terms.filter(term=>term.status==='active');
   const editTerm=(term:CardSummary|null)=>{
     const nonce=crypto.randomUUID();
@@ -219,7 +244,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
     <button type="submit" disabled={waiting}>提交审核</button>
     {question&&<button type="button" disabled={waiting} onClick={()=>setEditing(false)}>返回详情</button>}
   </form>:question?<article aria-label="百科问题">
-    <QuestionContents question={question} terms={terms} openTerm={openTerm}/>
+    <QuestionContents question={question} terms={terms} openTerm={openTerm} deleted={deleted}/>
     <button type="button" disabled={waiting} onClick={()=>start(question)}>编辑问题</button>
     <button type="button" disabled={waiting} onClick={()=>sendChange('question_delete')}>删除问题</button>
   </article>:null;
@@ -233,7 +258,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
     }
   },[boardLink]);
 
-  if(boardLink)return detailHost?createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost):null;
+  if(boardLink)return detailHost?createPortal(<>{deleted[deletedLookup]?<p role="status">{deletedLookup} · 条目已删除</p>:detail}{error&&<p role="alert">{error}</p>}</>,detailHost):null;
   return <section className="hpedia-panel" aria-label="百科">
     <ModuleHeading icon={<HpediaIcon/>} title="百科">
       <Button variant="primary" type="button" disabled={waiting} popoverTarget="hpedia-create">创建</Button>
@@ -243,17 +268,19 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
         <Button value="frontier" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>setFrontierCreate(value=>value+1)}>前沿</Button>
       </div>
     </ModuleHeading>
+    <HpediaTransfer/>
+    {deleted[deletedLookup]&&<p role="status">{deletedLookup} · 条目已删除</p>}
     {filter.controls(terms,{valid:'有效',questionable:'存疑'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',
       <label>追踪中<FixedSelect aria-label="追踪中" value={tracking} onChange={event=>setTracking(event.target.value)}>
         <option value="all">全部</option><option value="yes">是</option><option value="no">否</option></FixedSelect></label>,
       <FixedSelect aria-label="条目类型" value={entryType} onChange={event=>{setEntryType(event.target.value);closeDetail();}}>
         <option value="question">问题</option><option value="term">术语</option><option value="frontier">前沿</option></FixedSelect>,entryType==='frontier')}
-    <div hidden={entryType!=='frontier'}>{renderFrontiers((text,status,ids,tracked)=>matchesTracking(tracked)&&filter.matches(text,status,ids,true),frontierCreate)}</div>
+    <div hidden={entryType!=='frontier'}>{renderFrontiers((text,status,ids,tracked)=>matchesTracking(tracked)&&filter.matches(text,status,ids,true),frontierCreate,frontierLookup)}</div>
     {entryType==='frontier'?null:entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
       entry={stateFields(entryState(term))} title={term.title} summary={term.content||''} selected={!!detailHost && termRequest?.kind==='open' && termRequest.id===term.card_id}
       onOpen={()=>editTerm(term)}/>)}</ResultCards>:<ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
-      entry={stateFields(entryState(row))} title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}
-      summary={termLinkLabels(row.answer,terms)} selected={!!detailHost && row.question_id===question?.question_id}
+      entry={stateFields(entryState(row))} title={<>{termLinkLabels(row.prompt,terms,deleted)} <TestTag tags={row.tags}/></>}
+      summary={termLinkLabels(row.answer,terms,deleted)} selected={!!detailHost && row.question_id===question?.question_id}
       onOpen={()=>show(row.question_id)}/>)}</ResultCards>}
     {detailHost&&createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost)}
   </section>;
