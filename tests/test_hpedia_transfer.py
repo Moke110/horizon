@@ -82,3 +82,33 @@ def test_roundtrip_cyclic_term_relations_and_full_question_reference(tmp_path):
     assert dest.view(b, **AUTH)["relations"] == [a]
     assert dest.view_question(question, **AUTH)["term_ids"] == [a]
     assert dest.view_frontier(frontier, **AUTH)["question"] == "前沿"
+
+
+def test_deleted_ids_require_explicit_individual_restoration(tmp_path):
+    lib = workspace(tmp_path)
+    term = add_term(lib, "term", "术语")
+    lib.request_question("create", {"operation_id": "ask", "schema_version": 1,
+        "prompt": "问题", "answer": f"[[term:{term}]]"}, **GUI)
+    question = lib.decide("ask", "confirm", **GUI)["results"][0]["question_id"]
+    lib.request_frontier("create", {"operation_id": "front", "question": "前沿"}, **GUI)
+    frontier = lib.decide("front", "confirm", **GUI)["results"][0]["frontier_id"]
+    package = lib.export_entries(**AUTH)
+    for identity, field, request in [(term,"card_id",lib.request),(question,"question_id",lib.request_question),
+                                    (frontier,"frontier_id",lib.request_frontier)]:
+        op = "delete" + identity
+        request("delete", {"operation_id":op,"schema_version":1,field:identity,"expected_version":1}, **GUI)
+        lib.decide(op,"confirm", **GUI)
+        assert lib.deleted_entries(**AUTH)[identity] == "条目已删除"
+    lib = workspace(tmp_path)
+    assert lib.export_entries(**AUTH)["entries"] == []
+    card = lib.request_import("restore", package, **GUI)
+    assert [item["status"] for item in card["items"]] == ["restore"] * 3
+    assert len(lib.deleted_entries(**AUTH)) == 3
+    lib.decide_import("restore", {term:"restore",question:"restore",frontier:"skip"}, **GUI)
+    assert lib.view_question(question, **AUTH)["term_ids"] == [term]
+    assert lib.view(term, **AUTH)["version"] > 1
+    assert lib.deleted_entries(**AUTH) == {frontier:"条目已删除"}
+    lib.request_import("last", package, **GUI)
+    lib.decide_import("last", {frontier:"restore"}, **GUI)
+    assert lib.view_frontier(frontier, **AUTH)["version"] > 1
+    assert lib.deleted_entries(**AUTH) == {}

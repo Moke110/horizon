@@ -722,3 +722,7 @@ A real Windows Electron session opened a migrated workspace containing a questio
 ## Cross-workspace Hpedia transfer (#277)
 
 An isolated Windows Electron desktop imported a JSON file from a second workspace. Its confirmation displayed the local and incoming titles for the same ID plus an independent entry. Selecting the incoming version and confirming persisted both original identities. The desktop exported a JSON file with both verified titles and IDs. The probe supplied the file input and save-dialog destination; both data paths used the actual Librarian and SQLite store.
+
+## Deleted Hpedia IDs and restoration (#278)
+
+In an isolated Windows Electron session, the desktop deleted a term, question and frontier from their detail panels through three Librarian confirmations. Searching each full ID displayed “条目已删除”. An import of the prior export displayed three unchecked “恢复此条目” choices. Each ID still showed the deletion notice while the review was pending. Selecting all three and confirming restored the entries. Searching each original ID opened its detail panel again.

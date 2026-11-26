@@ -2,7 +2,7 @@
 
 import json
 import re
-from hostrun.hpedia_identity import allocate
+from hostrun.hpedia_identity import allocate, import_version, mark_deleted
 
 from hostrun.agent_service import CommandError
 from hostrun.library_tags import new_test_tags
@@ -79,7 +79,7 @@ def apply(db, action, command, *, read_term, check_question_lock, now, import_id
     if type(command.get("schema_version")) is not int or command["schema_version"] != 1:
         raise CommandError("unsupported_schema", "需使用版本 1 的百科问题命令")
     if action == "create":
-        question = {"question_id": allocate(db, "q", import_id), "version": 0, "created_at": int(now), **new_test_tags(command)}
+        question = {"question_id": allocate(db, "q", import_id), "version": import_version(db, import_id) - 1, "created_at": int(now), **new_test_tags(command)}
     else:
         question = read(db, command.get("question_id"))
         check_question_lock(question["question_id"])
@@ -88,6 +88,7 @@ def apply(db, action, command, *, read_term, check_question_lock, now, import_id
     identity = question["question_id"]
     db.execute("DELETE FROM hpedia_term_references WHERE question_id=?", (identity,))
     if action == "delete":
+        mark_deleted(db, identity, question["version"] + 1)
         db.execute("DELETE FROM hpedia_questions WHERE question_id=?", (identity,))
         return {**question, "status": "deleted"}
     prompt = _text(command.get("prompt", question.get("prompt")), "题干")

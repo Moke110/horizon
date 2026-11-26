@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import time
-from hostrun.hpedia_identity import allocate
+from hostrun.hpedia_identity import allocate, import_version, mark_deleted
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -317,17 +317,14 @@ class KnowledgeCardService:
     def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None, import_id=None):
         """Apply one Knowledge Card write on the caller's open transaction.
 
-        ``delete`` and ``archive`` share the public archive semantics and the
-        same operation receipt. The caller owns BEGIN, COMMIT and notification.
+        The caller owns BEGIN, COMMIT and notification.
         """
         self._authorize(token)
         self._validate_command(command)
         validate_reason(command.get("reason"), code="invalid_card")
         if origin not in ("manual", "keeper"):
             raise ValueError("Unknown Knowledge Card origin")
-        if action == "delete":
-            action = "archive"
-        if action not in ("create", "update", "archive"):
+        if action not in ("create", "update", "archive", "delete"):
             raise CommandError("invalid_command", "Unknown Knowledge Card action")
         encoded, previous = self._replay(db, command, action, origin)
         if previous is not None:
@@ -344,7 +341,7 @@ class KnowledgeCardService:
                 "schema_version": 1,
                 "operation_id": command["operation_id"],
                 "card_id": card_id,
-                "version": 1,
+                "version": import_version(db, import_id),
                 "title": fields["title"],
                 "content": fields["content"],
                 "aliases": fields.get("aliases", []),
@@ -409,21 +406,28 @@ class KnowledgeCardService:
             event_type = "knowledge_card.updated"
         else:
             from hostrun.hpedia import check_term_removal
-            check_term_removal(db, card["card_id"])
+            if action == "archive":
+                check_term_removal(db, card["card_id"])
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, {})
-            if card["status"] == "archived":
+            if action == "archive" and card["status"] == "archived":
                 raise CommandError("invalid_transition", "该知识卡片已归档")
             updated = dict(card)
             updated["operation_id"] = command["operation_id"]
             updated["status"] = "archived"
             updated["known"] = False
             event_type = "knowledge_card.archived"
+            if action == "delete":
+                updated["status"] = "deleted"
+                mark_deleted(db, card["card_id"], card["version"] + 1)
+                event_type = "knowledge_card.deleted"
         updated["version"] = card["version"] + 1
         updated["updated_at"] = int(self.clock())
-        db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?",
-                   (json.dumps(updated), card["card_id"]))
+        if action == "delete":
+            db.execute("DELETE FROM knowledge_cards WHERE card_id=?", (card["card_id"],))
+        else:
+            db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?", (json.dumps(updated), card["card_id"]))
         db.execute("INSERT INTO knowledge_card_operations VALUES(?,?,?)",
                    (command["operation_id"], encoded, json.dumps(updated)))
         db.execute("INSERT INTO knowledge_card_events(operation_id,event) VALUES(?,?)",

@@ -60,18 +60,20 @@ export function TermContents({term}:{term:KnowledgeCard}) {
   </>;
 }
 
-export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers,frontierRows=[],boardLink}:{
+export function HpediaPanel({questions,terms,deleted={},detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers,frontierRows=[],boardLink}:{
   frontierRows?:{frontier_id:string;version:number}[];
   boardLink?:{kind:string;id:string};
   renderFrontiers:(matches:(text:string,state:string,ids:string[],tracked:boolean)=>boolean, createRequest:number, lookup?:{id:string;version:number;nonce:string})=>React.ReactNode;
   closeDetail:()=>void;
   cardEditor:Pick<React.ComponentProps<typeof KnowledgeCardPanel>,'materials'|'selected'|'viewEvent'|'commandError'>;
+  deleted?:Record<string,string>;
   questions:Question[];
   terms:CardSummary[];
   detailHost:HTMLElement|null;
   openDetail:()=>void;
   send:(command:unknown)=>void;
 }) {
+  const [deletedLookup,setDeletedLookup]=useState('');
   const [frontierCreate,setFrontierCreate]=useState(0);
   const [frontierLookup,setFrontierLookup]=useState<{id:string;version:number;nonce:string}>();
   const [entryType,setEntryType]=useState('question');
@@ -182,11 +184,18 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
   };
 
   const openTerm=(id:string)=>{
+    if(deleted[id]){
+      closeDetail?.();setDeletedLookup(id);return;
+    }
+    setDeletedLookup('');
     termToRead.current=id;
     send({action:'card_open',card_id:id,operation_id:crypto.randomUUID()});
   };
 
   const filter=useModuleSearch(query=>{
+    const removed=Object.keys(deleted).find(id=>matchesEntryId(query,id,id[0]));
+    setDeletedLookup(removed??'');
+    if(removed){closeDetail?.();return true;}
     const term=terms.find(item=>matchesEntryId(query,item.card_id,'t'));
     if(term){setEntryType('term');editTerm(term);return true;}
     const question=questions.find(item=>matchesEntryId(query,item.question_id,'q'));
@@ -259,6 +268,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
       </div>
     </ModuleHeading>
     <HpediaTransfer/>
+    {deleted[deletedLookup]&&<p role="status">{deletedLookup} · 条目已删除</p>}
     {filter.controls(terms,{valid:'有效',questionable:'存疑'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',
       <label>追踪中<FixedSelect aria-label="追踪中" value={tracking} onChange={event=>setTracking(event.target.value)}>
         <option value="all">全部</option><option value="yes">是</option><option value="no">否</option></FixedSelect></label>,

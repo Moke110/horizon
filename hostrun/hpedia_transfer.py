@@ -43,6 +43,7 @@ def invalid(message):
 
 def review(db, librarian, package):
     current = {row["id"]: row for row in export(db, librarian.library)["entries"]}
+    deleted = dict(db.execute("SELECT id,version FROM hpedia_deleted"))
     owners = {identity[2:]: identity[0] for identity in current}
     if db.execute("SELECT 1 FROM sqlite_schema WHERE name='hpedia_identities'").fetchone():
         owners.update(db.execute("SELECT body,prefix FROM hpedia_identities"))
@@ -56,6 +57,8 @@ def review(db, librarian, package):
             raise invalid("百科导入记录的类型或 ID 无效")
         local = current.get(identity)
         item = {**entry, "status": "skip" if local == entry else "create"}
+        if identity in deleted:
+            item.update(status="restore", deleted_version=deleted[identity])
         if local and item["status"] != "skip":
             item["status"] = "different"
             item["diff"] = {k: {"local": local["content"].get(k), "incoming": entry["content"].get(k)}
@@ -164,15 +167,36 @@ def decide(db, librarian, request_id, choices, origin, token):
         if card["items"] != review(db, librarian, json.loads(row[1])):
             raise invalid("本地条目已有变更，请重新导入并核对差异")
         selected = []
+        withheld = set()
         for item in card["items"]:
+            if item["status"] == "restore":
+                if choices.get(item["id"]) == "restore":
+                    selected.append(item)
+                else:
+                    withheld.add(item["id"])
             if item["status"] == "different" and choices.get(item["id"]) not in ("incoming", "local"):
                 raise invalid("请选择保留本地或导入版本")
             if item["status"] == "create" or (item["status"] == "different" and choices[item["id"]] == "incoming"):
                 selected.append(item)
+        # Keep dependent records pending when the user leaves their target deleted.
+        while True:
+            blocked = {item["id"] for item in selected if dependencies(item) & withheld}
+            if not blocked:
+                break
+            withheld.update(blocked)
+            selected = [item for item in selected if item["id"] not in blocked]
+        restored = [item for item in selected if item["status"] == "restore"]
+        for item in restored:
+            identity = item["id"]
+            # The transaction retains the tombstone until the replacement and all references commit.
+            db.execute("DELETE FROM hpedia_identities WHERE body=? AND prefix=?", (identity[2:], identity[0]))
+            if item["kind"] == "frontier":
+                db.execute("DELETE FROM frontiers WHERE frontier_id=? AND json_extract(result,'$.status')='deleted'",
+                           (identity,))
         # Introduce all term identities before installing potentially cyclic links.
         deferred = []
         for item in selected:
-            if item["status"] == "create" and item["kind"] == "term":
+            if item["status"] in ("create", "restore") and item["kind"] == "term":
                 content = item["content"]
                 write(db, librarian, {**item, "content": {**content, "relations": [], "status": "active"}}, token)
                 if content.get("relations") or content.get("status") == "archived":
@@ -181,6 +205,10 @@ def decide(db, librarian, request_id, choices, origin, token):
                 deferred.append(item)
         for item in deferred:
             write(db, librarian, item, token)
+        db.executemany("DELETE FROM hpedia_deleted WHERE id=?", [(item["id"],) for item in restored])
+        for item in card["items"]:
+            if item["id"] in withheld:
+                item["status"] = "blocked" if item["status"] != "restore" else "skipped_restore"
         card["status"] = "confirmed"
     db.execute("UPDATE hpedia_imports SET card=? WHERE id=?", (json.dumps(card), request_id))
     return card

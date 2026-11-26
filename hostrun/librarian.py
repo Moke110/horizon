@@ -3,7 +3,7 @@
 import json
 import time
 
-from hostrun import frontier_progress, hpedia_migration, library_cleanup
+from hostrun import frontier_progress, hpedia_identity, hpedia_migration, library_cleanup
 from hostrun.agent_service import CommandError
 from hostrun.library import Library
 
@@ -18,6 +18,12 @@ class Librarian:
             db.execute("BEGIN IMMEDIATE")
             self.library.initialize_questions(db)
             hpedia_migration.migrate(db)
+            hpedia_identity.migrate_deleted(db)
+
+    def deleted_entries(self, *, token):
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            return {identity: "条目已删除" for identity, in db.execute("SELECT id FROM hpedia_deleted")}
 
     def migration_reviews(self, *, token):
         self.library.authorize(token)
@@ -134,7 +140,9 @@ class Librarian:
         """Apply a term change already approved through the Keeper workflow."""
         if origin != "keeper":
             raise ValueError("A reviewed Keeper proposal is required")
-        return self.library.apply(db, action, command, token=token, origin=origin)
+        # Keeper's reviewed card removal archives the cited record for history and undo.
+        return self.library.apply(db, "archive" if action == "delete" else action,
+                                  command, token=token, origin=origin)
 
     def notify_committed(self, term):
         self.library.notify_committed(term)

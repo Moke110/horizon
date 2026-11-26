@@ -1,11 +1,11 @@
 import React, {useEffect, useState} from 'react';
 import {Button} from './gui/elements/Button';
-import {FilePicker,FixedSelect} from './gui/elements/ChoiceElements';
+import {Checkbox,FilePicker,FixedSelect} from './gui/elements/ChoiceElements';
 
 type Item = {id:string; status:string; reason?:string; content:Record<string,unknown>;
   diff?:Record<string,{local:unknown; incoming:unknown}>};
 type Review = {operation_id:string; items:Item[]; status:string};
-const labels:Record<string,string> = {create:'新增',skip:'内容相同，跳过',different:'版本不同',conflict:'身份冲突',blocked:'等待依赖'};
+const labels:Record<string,string> = {restore:'条目已删除',create:'新增',skip:'内容相同，跳过',different:'版本不同',conflict:'身份冲突',blocked:'等待依赖'};
 const display = (value:unknown) => typeof value==='string' ? value : JSON.stringify(value);
 
 function ImportReview({card}:{card:Review}){
@@ -19,6 +19,8 @@ function ImportReview({card}:{card:Review}){
       <p>{item.id} · {labels[item.status]} {item.reason}</p>
       {item.diff && Object.entries(item.diff).map(([field,change])=><p key={field}>
         {field} · 本地：{display(change.local)} · 导入：{display(change.incoming)}</p>)}
+      {item.status==='restore'&&<Checkbox checked={choices[item.id]==='restore'}
+        onChange={event=>setChoices({...choices,[item.id]:event.target.checked?'restore':'skip'})}>恢复此条目</Checkbox>}
       {item.status==='different' && <FixedSelect aria-label={item.id+' 保留版本'} value={choices[item.id]??''}
         onChange={event=>setChoices({...choices,[item.id]:event.target.value})}>
         <option value="">选择版本</option><option value="local">保留本地版本</option>

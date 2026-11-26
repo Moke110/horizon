@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from hostrun.hpedia_identity import allocate
+from hostrun.hpedia_identity import allocate, import_version, mark_deleted
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -308,7 +308,7 @@ class FrontierService:
                 "schema_version": 1,
                 "operation_id": command["operation_id"],
                 "frontier_id": frontier_id,
-                "version": 1,
+                "version": import_version(db, import_id),
                 "question": _validate_question(command.get("question")),
                 "status": _tracking_status(command, ACTIVE_STATUS),
                 "scope": _validate_scope(command.get("scope")),
@@ -355,6 +355,7 @@ class FrontierService:
             event_type = "frontier.updated"
         else:
             updated["status"] = "deleted"
+            mark_deleted(db, frontier_id, frontier["version"] + 1)
             event_type = "frontier.deleted"
         updated["version"] = frontier["version"] + 1
         updated["updated_at"] = int(self.clock())

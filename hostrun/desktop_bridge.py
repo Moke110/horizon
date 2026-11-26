@@ -587,7 +587,7 @@ def librarian_question_command(librarian, command, *, token, origin):
 
 def librarian_card_command(librarian, command, *, token, origin):
     action = command["action"]
-    if action in ("card_create", "card_update", "card_archive"):
+    if action in ("card_create", "card_update", "card_archive", "card_delete"):
         payload = {key: value for key, value in command.items() if key != "action"}
         card = librarian.request(action.removeprefix("card_"), payload,
                                  token=token, origin=origin)
@@ -898,6 +898,7 @@ def _serve(resolved, executable, managed):
             emit('state', {'chats': chats, 'current': current, 'busy': app.busy,'voyager_requests':voyager.recent(token=token),'voyager_busy':list(voyager_busy),'web_jobs':list(web_jobs),'subscriptions':subscriptions.summaries(),'subscription_busy':list(subscription_busy),'materials':materials.list_summaries(token=token,include_version=True),'frontiers':librarian.list_frontiers(token=token),'cards':librarian.list(token=token),'questions':librarian.list_questions(token=token),'bulletin_links':librarian.bulletin_links(token=token),'themes':knowledge_themes.list(token=token),
                             'term_confirmations':librarian.confirmations(token=token,origin='agent:'+chats[current]['task_id']) if chats else [],
                             'migration_reviews':librarian.migration_reviews(token=token),
+                            'hpedia_deleted':librarian.deleted_entries(token=token),
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
                            'archive_sources':librarian.list_sources(token=token),
                            'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
@@ -1110,7 +1111,7 @@ def _serve(resolved, executable, managed):
                                              "progress": librarian.list_progress(frontier_id, token=token),
                                              "history": voyager.recent(token=token, frontier_id=frontier_id)})
                             state()
-                    elif action in ('card_create','card_update','card_archive',
+                    elif action in ('card_create','card_update','card_archive','card_delete',
                                     'card_open','card_list','card_query','card_confirm','card_batch'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         kind,data=librarian_card_command(librarian,cmd,token=token,origin='gui')
