@@ -469,6 +469,7 @@ class KnowledgeCardService:
             "card_id": card["card_id"],
             "version": card["version"],
             "title": card["title"],
+            "content": card["content"],
             "aliases": card.get("aliases", []),
             "status": card["status"],
             "provenance": card["provenance"],

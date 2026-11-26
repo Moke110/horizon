@@ -80,6 +80,7 @@ def test_manual_card_without_source_is_user_statement_pending_and_known(tmp_path
 
     # Public list/open reads carry the committed version for Voyager/Editor.
     summary = service.list(token="s")[0]
+    assert summary["content"] == "扰动预测模型用表达谱推断未见基因扰动后的细胞响应。"
     assert (summary["card_id"], summary["version"], summary["status"]) == (
         created["card_id"], 1, "active")
     assert summary["provenance"] == "user_statement"
