@@ -1,6 +1,6 @@
 import {app,BrowserWindow,dialog,ipcMain,Tray,Menu,nativeImage,shell} from 'electron';
 import {join,basename} from 'node:path';
-import {open} from 'node:fs/promises';
+import {open,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {appOrigin,selectOriginal,serveReader} from './pdfProtocol';
 import {createInterface} from 'node:readline';
@@ -15,7 +15,17 @@ let tray:Tray;
 const requestExit=()=>bridge.write(JSON.stringify({action:'exit'})+'\n');
 let win: BrowserWindow; let ready=false; const pending:unknown[]=[];
 const send=(event:unknown)=>{if(ready)win.webContents.send('event',event);else pending.push(event);};
-createInterface({input:bridge}).on('line',line=>{try {const e=JSON.parse(line); if(e.kind==='private_pdf'){selectOriginal(e.data);return;} if(e.kind==='exit_ready'){quitNow();}else if(e.kind==='activate'){win?.restore();win?.show();win?.focus();}else send(e);}catch{}}).on('close',quitNow);
+async function saveHpediaExport(data: unknown) {
+  try {
+    const choice=await dialog.showSaveDialog(win,{defaultPath:'hpedia.json',filters:[{name:'百科 JSON',extensions:['json']}]});
+    if(choice.canceled || !choice.filePath)return;
+    await writeFile(choice.filePath,JSON.stringify(data,null,2),'utf8');
+    send({kind:'hpedia_export_saved'});
+  } catch {
+    send({kind:'notice',data:'百科文件保存失败'});
+  }
+}
+createInterface({input:bridge}).on('line',line=>{try {const e=JSON.parse(line); if(e.kind==='hpedia_export'){void saveHpediaExport(e.data);return;} if(e.kind==='private_pdf'){selectOriginal(e.data);return;} if(e.kind==='exit_ready'){quitNow();}else if(e.kind==='activate'){win?.restore();win?.show();win?.focus();}else send(e);}catch{}}).on('close',quitNow);
 function showWindow() {
   if (win.isMinimized()) win.restore();
   win.show();

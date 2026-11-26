@@ -264,6 +264,36 @@ class Librarian:
             results.append({"kind": kind, "record": result})
         return results
 
+    def export_entries(self, *, token):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN")
+            return hpedia_transfer.export(db, self.library)
+
+    def request_import(self, request_id, package, *, token, origin):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return hpedia_transfer.request(db, self, request_id, package, origin, token)
+
+    def pending_imports(self, *, token, origin):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            hpedia_transfer.initialize(db)
+            return [json.loads(card) for card, in db.execute(
+                """SELECT card FROM hpedia_imports WHERE origin=? AND json_extract(card,'$.status')='pending'
+                AND json_extract(card,'$.expires_at')>? ORDER BY rowid""", (origin, self.clock()))]
+
+    def decide_import(self, request_id, choices, *, token, origin):
+        from hostrun import hpedia_transfer
+        self.library.authorize(token)
+        with self.library.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return hpedia_transfer.decide(db, self, request_id, choices, origin, token)
+
     def request_batch(self, request_id, changes, *, token, origin, entity="term"):
         self.library.authorize(token)
         if not isinstance(origin, str) or not origin or not isinstance(request_id, str) \

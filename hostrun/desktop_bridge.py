@@ -1123,6 +1123,20 @@ def _serve(resolved, executable, managed):
                     elif action in ('bulletin_list','bulletin_open'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         emit(*bulletin_board_command(librarian,cmd,token=token))
+                    elif action in ('hpedia_export', 'hpedia_import', 'hpedia_import_decide', 'hpedia_import_pending'):
+                        if exiting.is_set():
+                            raise CommandError('exiting', 'Desktop is exiting')
+                        if action == 'hpedia_export':
+                            emit('hpedia_export', librarian.export_entries(token=token))
+                        elif action == 'hpedia_import_pending':
+                            emit('hpedia_import_pending', librarian.pending_imports(token=token, origin='gui'))
+                        elif action == 'hpedia_import':
+                            emit('hpedia_import_review', librarian.request_import(
+                                cmd.get('operation_id'), cmd.get('package'), token=token, origin='gui'))
+                        else:
+                            emit('hpedia_import_review', librarian.decide_import(
+                                cmd.get('operation_id'), cmd.get('choices'), token=token, origin='gui'))
+                            state()
                     elif action in ('question_list' ,'question_open','question_create',
                                     'question_update','question_delete','question_confirm'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')

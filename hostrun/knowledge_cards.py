@@ -314,7 +314,7 @@ class KnowledgeCardService:
             self.notify_committed(card)
         return card
 
-    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None):
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None, import_id=None):
         """Apply one Knowledge Card write on the caller's open transaction.
 
         ``delete`` and ``archive`` share the public archive semantics and the
@@ -333,7 +333,7 @@ class KnowledgeCardService:
         if previous is not None:
             return previous, False
         if action == "create":
-            card_id = allocate(db, "t")
+            card_id = allocate(db, "t", import_id)
             now = int(self.clock())
             fields = self._fields(command)
             if "title" not in fields or "content" not in fields:

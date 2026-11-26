@@ -284,7 +284,7 @@ class FrontierService:
             self.notify_committed(frontier)
         return frontier
 
-    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None):
+    def apply_in_transaction(self, db, action, command, *, token, origin="manual", lock_clock=None, import_id=None):
         """Apply one Frontier write on the caller's open transaction.
 
         The caller owns BEGIN, COMMIT and notification. Replays return their
@@ -302,7 +302,7 @@ class FrontierService:
         if previous is not None:
             return previous, False
         if action == "create":
-            frontier_id = allocate(db, "f")
+            frontier_id = allocate(db, "f", import_id)
             now = int(self.clock())
             frontier = {
                 "schema_version": 1,

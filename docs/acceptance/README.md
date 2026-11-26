@@ -714,3 +714,7 @@ The integrated whiteboard and frontier service checks passed (7 tests), alongsid
 ## Hpedia ID creation and lookup — 2026-11-27 (#275)
 
 In an isolated Windows workspace, the Librarian confirmed one term, question and frontier. A fresh Electron desktop opened each persisted entry through the Hpedia search field using its full ID, uppercase ID and hyphenated UUID. All nine detail views copied the expected canonical ID to the Windows clipboard.
+
+## Cross-workspace Hpedia transfer (#277)
+
+An isolated Windows Electron desktop imported a JSON file from a second workspace. Its confirmation displayed the local and incoming titles for the same ID plus an independent entry. Selecting the incoming version and confirming persisted both original identities. The desktop exported a JSON file with both verified titles and IDs. The probe supplied the file input and save-dialog destination; both data paths used the actual Librarian and SQLite store.

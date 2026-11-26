@@ -75,11 +75,11 @@ def _text(value, label):
     return value.strip()
 
 
-def apply(db, action, command, *, read_term, check_question_lock, now):
+def apply(db, action, command, *, read_term, check_question_lock, now, import_id=None):
     if type(command.get("schema_version")) is not int or command["schema_version"] != 1:
         raise CommandError("unsupported_schema", "需使用版本 1 的百科问题命令")
     if action == "create":
-        question = {"question_id": allocate(db, "q"), "version": 0, "created_at": int(now), **new_test_tags(command)}
+        question = {"question_id": allocate(db, "q", import_id), "version": 0, "created_at": int(now), **new_test_tags(command)}
     else:
         question = read(db, command.get("question_id"))
         check_question_lock(question["question_id"])

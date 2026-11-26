@@ -1,5 +1,6 @@
 import {CopyEntryId,matchesEntryId} from './HpediaIdentity';
 import {ResultCard,ResultCards} from './ResultCards';
+import {HpediaTransfer} from './HpediaTransfer';
 import {HpediaIcon} from './HpediaIcon';
 import {useModuleSearch} from './ModuleSearch';
 import {ModuleHeading} from './ModuleHeading';
@@ -256,6 +257,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
         <Button value="frontier" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>setFrontierCreate(value=>value+1)}>前沿</Button>
       </div>
     </ModuleHeading>
+    <HpediaTransfer/>
     {filter.controls(terms,{valid:'有效',questionable:'存疑'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',
       <label>追踪中<FixedSelect aria-label="追踪中" value={tracking} onChange={event=>setTracking(event.target.value)}>
         <option value="all">全部</option><option value="yes">是</option><option value="no">否</option></FixedSelect></label>,
