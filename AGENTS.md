@@ -54,6 +54,10 @@ For development checks, use an independent Python environment with PyYAML, pytes
 
 Put relocatable temporary files for development, tests, packaging and acceptance under the checkout's `tmp/`. Use short, per-run paths and set tool options or process-scoped environment variables before launching tools so pytest (`--basetemp`), caches, build staging, diagnostic scratch files and GitHub `--body-file` transport stay there. When an acceptance requirement depends on the real platform install or data location, use that location only for the part under test and keep staging and other scratch files in `tmp/`.
 
+Keep the checkout root free of ad hoc dot-prefixed directories. Use a root dot-directory only when an established project or tool convention requires that location (for example, `.git/`, `.github/`, `.horizon/` or `.venv/`).
+
+Create linked Git worktrees under the primary checkout's `tmp/worktrees/<name>/`. Collect temporary test output under `tmp/tests/<run>/`, including pytest basetemp, caches, logs and generated fixtures. For example, pass `--basetemp=tmp/tests/<run>/base -o cache_dir=tmp/tests/<run>/cache` to pytest, substituting a short, unique run name.
+
 ### Skill pack
 
 Read the relevant `SKILL.md` before applying a skill. Shared Matt Pocock skills are installed under `~/.agents/skills/<name>/`; source metadata lives in `~/.agents/.skill-lock.json`. Use the supported skill-loading mechanism against this shared source, without relying on WorkBuddy junctions. If a required skill is unavailable, report the missing integration rather than inventing its behavior.
