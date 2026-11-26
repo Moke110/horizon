@@ -147,7 +147,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
         search.requestSubmit();
         await new Promise(resolve=>setTimeout(resolve,0));
       };
-      const results = () => document.querySelector('.hpedia-panel [data-result]');
+      const results = () => cards()[0];
       const status=search.querySelector('.dictionary-scope'), tracking=search.querySelector('select[aria-label="追踪中"]');
       if(!tracking||tracking.value!=='all'||status.value!=='all') throw Error('Missing initial encyclopedia filters');
       const choose=async (select,value)=>{
@@ -155,7 +155,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
         select.dispatchEvent(new Event('change',{bubbles:true}));
         await new Promise(resolve=>setTimeout(resolve,0));
       };
-      const cards=()=>[...document.querySelectorAll('.hpedia-panel [data-result]')];
+      const cards=()=>[...document.querySelectorAll('.hpedia-panel [data-result]')].filter(card=>card.checkVisibility());
       const verifyMark=(card,label,dot)=>{
         if(!card||card.title!==label||card.getAttribute('aria-description')!==label) throw Error('Missing accessible state '+label);
         const mark=card.querySelector('.entry-validity');
