@@ -10,6 +10,8 @@
 | Library | 图书馆 | Hpedia, Bulletin Board and Archive managed through the Librarian |
 | Term | 术语 | One vocabulary entry and its definition, corresponding to one existing Knowledge Card |
 | Hpedia | 百科 | The collection of Terms, Questions and Frontiers |
+| Hpedia entry | 百科条目 | A Term, Question or Frontier with its own identity in Hpedia |
+| Hpedia ID | 百科 ID | The permanent identifier of an Hpedia entry, with a type prefix and a hexadecimal body. References use the same ID across workspaces. |
 | Question | 问题 | A specific question and its answer, together referencing at least one Term |
 | Status (Term or Question) | 状态 | Whether the current definition or answer is considered valid (有效) or questionable (存疑) |
 | Followed (Hpedia entry) | 追踪中 | Whether the Explorer is tracking the entry on the Bulletin Board. Questionable entries are always followed. |
