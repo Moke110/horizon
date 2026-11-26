@@ -34,7 +34,8 @@ function blankPdf() {
 
 const libraryState = {
   chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
-  cards:[{card_id:'related-term',version:1,title:'Related term',status:'active',updated_at:1}],
+  cards:[{card_id:'related-term',version:1,title:'Related term',aliases:['Alternate name'],content:'Definition only',status:'active',updated_at:1}],
+  questions:[{question_id:'q1',version:1,prompt:'Prompt marker',answer:'Answer marker [[term:related-term]]',term_ids:['related-term']}],
   children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}],
   providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
 };
@@ -44,6 +45,14 @@ fs.writeFileSync(pdfFixture, Buffer.from(blankPdf(), 'base64'));
 dialog.showOpenDialog = async () => ({canceled:false, filePaths:[pdfFixture]});
 let registeredPdf = false;
 const server = net.createServer(socket => socket.on('data', chunk => {
+  for (const line of chunk.toString().trim().split('\n')) {
+    if (!line.includes('"action":"question_open"') && !line.includes('"action":"card_open"')) continue;
+    const command = JSON.parse(line);
+    const view = command.action === 'question_open'
+      ? {kind:'question_view',data:libraryState.questions.find(row=>row.question_id===command.question_id)}
+      : {kind:'card_view',data:{...libraryState.cards[0],sources:[],relations:[],known:true,read_operation_id:command.operation_id}};
+    socket.write(JSON.stringify(view)+'\n');
+  }
   const pdfLine = chunk.toString().split('\n').find(line => line.includes('"action":"materials_pdf_register"'));
   if (pdfLine) {
     const command = JSON.parse(pdfLine);
@@ -117,8 +126,45 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       if (navigator.userAgent.includes('Windows') && (!overlay?.height || overlay.width >= innerWidth)) {
         throw Error('The native caption does not reserve space for Windows window buttons');
       }
-      navigation.querySelector('button[aria-label="词典"]').click();
+      if (navigation.querySelector('button[aria-label="词典"]')) throw Error('Dictionary still has separate navigation');
+      navigation.querySelector('button[aria-label="百科"]').click();
+      const entryType = await wait(() => document.querySelector('select[aria-label="条目类型"]'));
+      if (entryType.value !== 'question') throw Error('Expected questions on entry');
+      const switchType = type => {
+        entryType.value=type;
+        entryType.dispatchEvent(new Event('change',{bubbles:true}));
+      };
       const search = await wait(() => document.querySelector('form[aria-label="搜索导航栏"]'));
+      const query = search.querySelector('input[type="search"]');
+      const searchFor = async value => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(query,value);
+        query.dispatchEvent(new Event('input',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
+        search.requestSubmit();
+        await new Promise(resolve=>setTimeout(resolve,0));
+      };
+      const results = () => document.querySelector('.hpedia-panel [data-result]');
+      for (const value of ['Prompt marker','Answer marker']) {
+        await searchFor(value);
+        if (!results()?.textContent.includes('Prompt marker')) throw Error('Missing question for '+value);
+      }
+      results().click();
+      (await wait(()=>document.querySelector('.hpedia-term-link'))).click();
+      const linkedTerm=await wait(()=>document.querySelector('article[aria-label="术语"]'));
+      if(!linkedTerm.textContent.includes('Definition only')) throw Error('Linked term content missing');
+      linkedTerm.querySelector('button').click();
+      (await wait(()=>document.querySelector('[aria-label="关闭详情"]'))).click();
+      switchType('term');
+      await wait(()=>document.querySelector('[aria-label="百科术语结果"]'));
+      if(query.value!=='Answer marker'||results()) throw Error('Type switch lost query or mixed results');
+      for (const value of ['Related term','Alternate name','Definition only']) {
+        await searchFor(value);
+        if(!results()?.textContent.includes('Related term')) throw Error('Missing term for '+value);
+      }
+      results().click();
+      await wait(()=>Array.from(document.querySelectorAll('textarea')).some(field=>field.value==='Definition only'));
+      document.querySelector('[aria-label="关闭详情"]').click();
+      await searchFor('');
       const queryBox = search.querySelector('input[type="search"]').getBoundingClientRect();
       const submitButton = search.querySelector('button[type="submit"]');
       const searchIcon = submitButton.getBoundingClientRect();
@@ -427,7 +473,8 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
         document.querySelector('${termPicker}').value === ''`)) {
       throw Error('Escape did not close the picker while keeping the selection');
     }
-    await mouseClick('#workspace-navigation button[aria-label="词典"]');
+    await mouseClick('#workspace-navigation button[aria-label="百科"]');
+    await renderer("const type = document.querySelector('select[aria-label=条目类型]'); type.value='term'; type.dispatchEvent(new Event('change',{bubbles:true}))");
     await mouseClick('.dictionary-heading button');
     const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
       .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
