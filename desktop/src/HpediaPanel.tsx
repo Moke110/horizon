@@ -218,11 +218,19 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
   </article>:null;
 
   return <section className="hpedia-panel" aria-label="百科">
-    <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>entryType==='frontier'?setFrontierCreate(value=>value+1):entryType==='term'?editTerm(null):start(null)}>{entryType==='frontier'?'新增前沿':entryType==='term'?'新增术语':'新增问题'}</Button></ModuleHeading>
+    <ModuleHeading icon={<HpediaIcon/>} title="百科">
+      <Button variant="primary" type="button" disabled={waiting} popoverTarget="hpedia-create">创建</Button>
+      <div id="hpedia-create" popover="auto" role="group" aria-label="创建条目">
+        <Button value="term" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>editTerm(null)}>术语</Button>
+        <Button value="question" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>start(null)}>问题</Button>
+        <Button value="frontier" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>setFrontierCreate(value=>value+1)}>前沿</Button>
+      </div>
+    </ModuleHeading>
     {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',undefined,
       <FixedSelect aria-label="条目类型" value={entryType} onChange={event=>{setEntryType(event.target.value);closeDetail();}}>
         <option value="question">问题</option><option value="term">术语</option><option value="frontier">前沿</option></FixedSelect>)}
-    {entryType==='frontier'?renderFrontiers(filter.matches,frontierCreate):entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
+    <div hidden={entryType!=='frontier'}>{renderFrontiers(filter.matches,frontierCreate)}</div>
+    {entryType==='frontier'?null:entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
       title={term.title} summary={term.content||''} selected={!!detailHost && termRequest?.kind==='open' && termRequest.id===term.card_id}
       onOpen={()=>editTerm(term)}/>)}</ResultCards>:<ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
       title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}

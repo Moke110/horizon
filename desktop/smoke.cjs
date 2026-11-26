@@ -178,6 +178,13 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       picker.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
       await wait(() => picker.getAttribute('aria-expanded') === 'false');
       (await wait(() => document.querySelector('.dictionary-heading button'))).click();
+      (await wait(() => document.querySelector('#hpedia-create:popover-open [value=question]'))).click();
+      await wait(() => document.querySelector('[aria-label="工作区详情"] form'));
+      document.querySelector('[aria-label="关闭详情"]').click();
+      await wait(() => !document.querySelector('[aria-label="工作区详情"]'));
+      if (document.querySelector('[aria-label="条目类型"]').value !== 'term') throw Error('Cancel lost source type');
+      document.querySelector('.dictionary-heading button').click();
+      (await wait(() => document.querySelector('#hpedia-create:popover-open [value=term]'))).click();
       const termField = await wait(() => Array.from(document.querySelectorAll('form label'))
         .find(label => label.textContent.trim() === '释义')?.querySelector('textarea'));
       const singleLineHeight = termField.getBoundingClientRect().height;
@@ -305,7 +312,8 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       pdf.click();
       await wait(() => document.querySelector('[aria-label="工作区详情"] canvas')?.height === 300);
       navigation.querySelector('button[aria-label="百科"]').click();
-      (await wait(() => Array.from(main.querySelectorAll('button')).find(button => button.textContent === '新增问题'))).click();
+      (await wait(() => Array.from(main.querySelectorAll('button')).find(button => button.textContent === '创建'))).click();
+      (await wait(() => document.querySelector('#hpedia-create [value=question]'))).click();
       const question = await wait(() => document.querySelector('form.hpedia-form'));
       const termPicker = question.querySelector('.hpedia-reference-picker select');
       if (getComputedStyle(termPicker).appearance !== 'base-select') throw Error('Question reference is not a fixed single-select');
@@ -445,6 +453,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     win.webContents.focus();
     await mouseClick('#workspace-navigation button[aria-label="百科"]');
     await mouseClick('.hpedia-panel .dictionary-heading button');
+    await mouseClick('#hpedia-create [value=question]');
     const termPicker = '.hpedia-reference-picker select';
     await mouseClick(termPicker);
     if (!await win.webContents.executeJavaScript(`document.querySelector('${termPicker}').matches(':open')`)) {
@@ -476,6 +485,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     await mouseClick('#workspace-navigation button[aria-label="百科"]');
     await renderer("const type = document.querySelector('select[aria-label=条目类型]'); type.value='term'; type.dispatchEvent(new Event('change',{bubbles:true}))");
     await mouseClick('.dictionary-heading button');
+    await mouseClick('#hpedia-create [value=term]');
     const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
       .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
     if (!sourceToggle) throw Error('Native mouse did not open the Term draft');

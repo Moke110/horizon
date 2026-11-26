@@ -836,3 +836,15 @@ button[popovertarget]::after { margin-inline-start: 8px; }
   flex: 0 0 48px;
   align-items: center;
 }
+
+#hpedia-create {
+  position-area: bottom span-left;
+  justify-self: end;
+  margin: 4px 0 0;
+  padding: 4px;
+  color: inherit;
+  background: #252529;
+  border: 1px solid #44444d;
+  border-radius: 6px;
+}
+#hpedia-create:popover-open { display: grid; }
