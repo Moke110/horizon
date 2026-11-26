@@ -10,7 +10,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import type {CardSummary, KnowledgeCard} from './KnowledgeCardPanel';
 
-import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
+import {ConvergenceSelect,entryState,stateFields,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
 export type Question = {
   tags?:string[];
@@ -20,7 +20,7 @@ export type Question = {
   answer:string;
   term_ids:string[];
   status?:'deleted';
-  convergence?:Convergence;
+  validity?:"valid"|"questionable";tracked?:boolean;convergence?:Convergence;
 };
 
 function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>void) {
@@ -125,7 +125,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     setQuestion(selected);
     setPrompt(selected?.prompt??'');
     setAnswer(selected?.answer??'');
-    setConvergence(selected?.convergence??'resolved');
+    setConvergence(entryState(selected??undefined));
     setSelectedTerm(null);
     setError('');
     setEditing(true);
@@ -148,7 +148,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     setError('');
     send({action,schema_version:1,operation_id:operation.current,
       ...(question?{question_id:question.question_id,expected_version:question.version}:{}),
-      ...(action!=='question_delete'?{prompt,answer,convergence}:{})});
+      ...(action!=='question_delete'?{prompt,answer,...stateFields(convergence)}:{})});
   };
 
   const insertReference=(field:'prompt'|'answer')=>{
@@ -183,7 +183,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <h2>{question?'编辑问题':'新增问题'}</h2>
     <label>题干<MultilineInput ref={promptInput} value={prompt} required onChange={event=>setPrompt(event.target.value)}/></label>
     <label>解答<MultilineInput ref={answerInput} value={answer} required onChange={event=>setAnswer(event.target.value)}/></label>
-    <ConvergenceSelect kind="question" value={convergence} onChange={setConvergence}/>
+    <ConvergenceSelect value={convergence} onChange={setConvergence}/>
     <div className="hpedia-reference-picker">
       <label>引用术语<FixedSelect value={termChoice} onChange={event=>setTermChoice(event.target.value)}>
         <option value="">选择有效术语</option>

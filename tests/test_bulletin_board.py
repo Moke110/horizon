@@ -42,3 +42,55 @@ def test_board_links_follow_confirmed_convergence_and_open_the_originals(tmp_pat
                                            "convergence": "resolved"}, token=token, origin="gui")
     librarian.decide("question-solve", "confirm", token=token, origin="gui")
     assert links() == []
+
+def test_validity_and_tracking_are_independent_through_confirmed_edits(tmp_path):
+    cards = KnowledgeCardService(tmp_path, token="desktop")
+    librarian = Librarian(cards, token="desktop")
+    term = cards.create({"schema_version": 1, "operation_id": "term",
+                         "title": "示例", "content": "释义"}, token="desktop")
+    assert (term["validity"], term["tracked"]) == ("valid", False)
+    for version, (changes, expected) in enumerate([
+        ({"validity": "questionable", "tracked": False}, ("questionable", True)),
+        ({"validity": "valid"}, ("valid", True)),
+        ({"tracked": False}, ("valid", False)),
+    ], 1):
+        operation = f"edit-{version}"
+        librarian.request("update", {"schema_version": 1, "operation_id": operation,
+                          "card_id": term["card_id"], "expected_version": version, **changes},
+                          token="desktop", origin="gui")
+        librarian.decide(operation, "confirm", token="desktop", origin="gui")
+        current = cards.view(term["card_id"], token="desktop")
+        assert (current["validity"], current["tracked"]) == expected
+
+
+def test_legacy_validity_projection_preserves_term_and_question_references(tmp_path):
+    import json
+    from hostrun.managed_database import database_connection
+
+    token = "desktop"
+    cards = KnowledgeCardService(tmp_path, token=token)
+    librarian = Librarian(cards, token=token)
+    term = cards.create({"schema_version": 1, "operation_id": "term",
+                         "title": "测试", "content": "释义"}, token=token)
+    librarian.request_question("create", {"schema_version": 1, "operation_id": "question",
+        "prompt": "测试问题", "answer": f"[[term:{term['card_id']}]]"}, token=token, origin="gui")
+    question, = librarian.decide("question", "confirm", token=token, origin="gui")["results"]
+    for legacy, expected in [
+        ({"convergence": "resolved", "questionable": True}, ("valid", False)),
+        ({"convergence": "unresolved", "questionable": True}, ("valid", True)),
+        ({"convergence": "conflicted", "questionable": False}, ("questionable", True)),
+        ({"questionable": True}, ("questionable", True)),
+        ({"questionable": False}, ("valid", False)),
+    ]:
+        with database_connection(tmp_path) as db:
+            for table, record in [("knowledge_cards", term), ("hpedia_questions", question)]:
+                snapshot = {k: v for k, v in record.items() if k not in ("validity", "tracked")}
+                db.execute(f"UPDATE {table} SET result=?", (json.dumps({**snapshot, **legacy}),))
+            db.commit()
+        for _ in range(2):
+            card = cards.view(term["card_id"], token=token)
+            entry = librarian.view_question(question["question_id"], token=token)
+            assert entry["term_ids"] == [card["card_id"]]
+            for record in (card, entry):
+                assert (record["validity"], record["tracked"]) == expected
+                assert record["version"] == 1

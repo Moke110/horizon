@@ -5,12 +5,12 @@ import {MultilineInput, TextInput} from './gui/elements/FormElements';
 import {TermLists, type SourceInput} from './TermLists';
 import {TestTag} from './TestCleanupPanel';
 
-import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
+import {ConvergenceSelect,entryState,stateFields,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
-export type CardSummary={aliases?:string[];tags?:string[];card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;convergence?:Convergence;updated_at:number};
+export type CardSummary={aliases?:string[];tags?:string[];card_id:string;version:number;title:string;status:string;provenance?:string;source_pending?:boolean;source_removed?:boolean;questionable?:boolean;validity?:"valid"|"questionable";tracked?:boolean;convergence?:Convergence;updated_at:number};
 type SavedSource=SourceInput&{title:string;material_version:number;content_hash:string;status?:'removed'};
 type MaterialSummary={material_id:string;title:string};
-export type KnowledgeCard={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};
+export type KnowledgeCard={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;card_id:string;version:number;title:string;content:string;aliases:string[];sources:SavedSource[];relations:string[];provenance:string;source_pending:boolean;questionable:boolean;validity?:"valid"|"questionable";tracked?:boolean;convergence?:Convergence;known:boolean;status:string;created_at:number;updated_at:number};
 export type CardConflictDetails={expected_version?:number;current_version?:number;current?:KnowledgeCard;submitted?:Record<string,unknown>;changed?:string[]};
 export type CardViewEvent={source:'view';operation_id?:string;nonce:string};
 export type CardCommandError={operation_id?:string;code?:string;message?:string;details?:CardConflictDetails};
@@ -24,7 +24,7 @@ const provenanceLabel=(card:{provenance?:string})=>card.provenance==='sourced'?'
 const draftFrom=(card:KnowledgeCard):CardDraft=>({
   title:card.title,content:card.content,aliases:card.aliases.join('\n'),
   sources:card.sources.map(({material_id,excerpt,locator})=>({material_id,excerpt,locator})),
-  relations:card.relations,convergence:card.convergence??(card.questionable?'unresolved':'resolved'),
+  relations:card.relations,convergence:entryState(card),
 });
 const draftFields=(draft:CardDraft,materialName:(id:string)=>string,cardName:(id:string)=>string) => [
   {field:'title',label:'标题',mine:draft.title,raw:draft.title},
@@ -32,7 +32,7 @@ const draftFields=(draft:CardDraft,materialName:(id:string)=>string,cardName:(id
   {field:'aliases',label:'别名',mine:lines(draft.aliases).join('\n'),raw:lines(draft.aliases)},
   {field:'sources',label:'来源',mine:draft.sources.map(s=>[materialName(s.material_id),s.locator,s.excerpt].join(' · ')).join('、'),raw:draft.sources},
   {field:'relations',label:'关系',mine:draft.relations.map(cardName).join('、'),raw:draft.relations},
-  {field:'convergence',label:'收敛状态',mine:convergenceLabel(draft.convergence,'term'),raw:draft.convergence},
+  {field:'convergence',label:'状态与追踪',mine:convergenceLabel(draft.convergence,'term'),raw:draft.convergence},
 ];
 const sameValue=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 /** Field-by-field difference between a local draft and the latest committed card. */
@@ -87,7 +87,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     if(loading||saving||latest)return;
     if(staleDraft){setMessage('当前草稿属于另一条知识卡片；请重新载入本记录后再保存。');return;}
     if(termMode&&sources.some(source=>!source.locator.trim()||!source.excerpt.trim())){setMessage('请为每项来源填写定位和原文摘录。');return;}
-    const payload={title,content,aliases:lines(aliases),sources,relations,convergence,...(reason.trim()?{reason:reason.trim()}:{})};
+    const payload={title,content,aliases:lines(aliases),sources,relations,...stateFields(convergence),...(reason.trim()?{reason:reason.trim()}:{})};
     const operation_id=crypto.randomUUID();
     pending.current={kind:'save',operation_id,card_id:editing?.card_id};
     setSaving(true);setLatest(null);
@@ -212,7 +212,7 @@ export function KnowledgeCardPanel({cards,materials,selected,viewEvent,commandEr
     {cards.filter(card=>card.card_id!==editing?.card_id).map(card=><option key={card.card_id} value={card.card_id}>{card.title}{card.status==='archived'?'（已归档）':''}</option>)}
   </FixedSelect></label>
   </>}
-  <ConvergenceSelect kind="term" value={convergence} onChange={setConvergence}/>
+  <ConvergenceSelect value={convergence} onChange={setConvergence}/>
   {!sources.length&&<p>未填写来源时，卡片记为「用户陈述 · 来源待补充」。</p>}
   <label>本次保存理由（可选）<TextInput maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：补充来源与别名"/></label>
   <p>理由会写入版本历史；保存成功后清空，失败时与草稿一起保留。</p>
