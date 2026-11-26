@@ -55,7 +55,8 @@ export function TermContents({term}:{term:KnowledgeCard}) {
   </>;
 }
 
-export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers}:{
+export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers,boardLink}:{
+  boardLink?:{kind:string;id:string};
   renderFrontiers:(matches:(text:string,state:string,ids:string[])=>boolean, createRequest:number)=>React.ReactNode;
   closeDetail:()=>void;
   cardEditor:Pick<React.ComponentProps<typeof KnowledgeCardPanel>,'materials'|'selected'|'viewEvent'|'commandError'>;
@@ -217,6 +218,16 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
     <button type="button" disabled={waiting} onClick={()=>sendChange('question_delete')}>删除问题</button>
   </article>:null;
 
+  useEffect(()=>{
+    if(boardLink?.kind==='question'){
+      send({action:'question_open',question_id:boardLink.id});
+    }else if(boardLink?.kind==='term'){
+      const term=terms.find(row=>row.card_id===boardLink.id);
+      if(term)setTermRequest({kind:'open',id:term.card_id,version:term.version,nonce:crypto.randomUUID()});
+    }
+  },[boardLink]);
+
+  if(boardLink)return detailHost?createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost):null;
   return <section className="hpedia-panel" aria-label="百科">
     <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>entryType==='frontier'?setFrontierCreate(value=>value+1):entryType==='term'?editTerm(null):start(null)}>{entryType==='frontier'?'新增前沿':entryType==='term'?'新增术语':'新增问题'}</Button></ModuleHeading>
     {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',undefined,

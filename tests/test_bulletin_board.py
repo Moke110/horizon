@@ -94,3 +94,21 @@ def test_legacy_validity_projection_preserves_term_and_question_references(tmp_p
             for record in (card, entry):
                 assert (record["validity"], record["tracked"]) == expected
                 assert record["version"] == 1
+
+def test_tracked_frontier_links_follow_confirmed_edits(tmp_path):
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    def change(action, operation, **fields):
+        librarian.request_frontier(action, {"schema_version": 1, "operation_id": operation, **fields},
+                                   token="s", origin="gui")
+        return librarian.decide(operation, "confirm", token="s", origin="gui")["results"][0]
+
+    item = change("create", "new", question="Frontier")
+    identity = item["frontier_id"]
+    for index, (fields, expected) in enumerate([
+        ({}, True), ({"tracked": False}, False), ({"tracked": True}, True), ({"status": "resolved"}, False)
+    ]):
+        if fields:
+            item = change("update", str(index), frontier_id=identity, expected_version=item["version"], **fields)
+        links = librarian.bulletin_links(token="s")
+        assert [(link["kind"], link["id"]) for link in links] == ([("frontier", identity)] if expected else [])
+        assert librarian.view_frontier(identity, token="s")["question"] == "Frontier"

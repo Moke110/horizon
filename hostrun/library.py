@@ -122,9 +122,10 @@ class Library:
             db.execute("BEGIN")
             terms = self.query_all_in_transaction(db)
             questions = hpedia.list_questions(db)
+            frontiers = self.query_frontiers_in_transaction(db)
         return [
             {"kind": kind, "id": row[id_field], "title": row[title_field],
-             "convergence": convergence.current(row),
+             "convergence": convergence.current(row), "validity": row["validity"], "tracked": True,
              "summary": row["content"] if kind == "term" else row["answer"],
              "term_ids": ([row[id_field], *row.get("relations", [])] if kind == "term"
                           else row.get("term_ids", [])), **visible_tags(row)}
@@ -132,7 +133,12 @@ class Library:
                 ("term", terms, "card_id", "title"),
                 ("question", questions, "question_id", "prompt"))
             for row in records
-            if row.get("status", "active") == "active" and convergence.current(row) != "resolved"
+            if row.get("status", "active") == "active" and row["tracked"]
+        ] + [
+            {"kind": "frontier", "id": row["frontier_id"], "title": row["question"],
+             "summary": row.get("scope_text", ""), "term_ids": row.get("term_ids", []),
+             "tracked": True, **visible_tags(row)}
+            for row in frontiers if row["status"] != "deleted" and row["tracked"]
         ]
 
     def list_questions(self, *, token):
