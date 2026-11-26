@@ -4,8 +4,8 @@ import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
 
-export type FrontierSummary={tags?:string[];frontier_id:string;version:number;question:string;status:string;scope_text:string;term_ids?:string[];updated_at:number};
-export type Frontier={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;frontier_id:string;version:number;question:string;status:string;scope:{text:string;alternatives:string[];sources:string[]};hard_constraints:{must_include:string[];exclude:string[]};relations:unknown[];created_at:number;updated_at:number};
+export type FrontierSummary={tags?:string[];frontier_id:string;version:number;question:string;tracked?:boolean;was_resolved?:boolean;resolved_at?:number;status:string;scope_text:string;term_ids?:string[];updated_at:number};
+export type Frontier={tags?:string[];schema_version:number;operation_id:string;read_operation_id?:string;frontier_id:string;version:number;question:string;tracked?:boolean;was_resolved?:boolean;resolved_at?:number;status:string;scope:{text:string;alternatives:string[];sources:string[]};hard_constraints:{must_include:string[];exclude:string[]};relations:unknown[];created_at:number;updated_at:number};
 export type FrontierViewEvent={source:'view';operation_id?:string;nonce:string};
 export type FrontierCommandError={operation_id?:string;code?:string;message?:string};
 type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
@@ -88,6 +88,8 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
     if(action.kind==='delete'){
       setMessage(`已删除版本 ${selected.version}；该 Frontier 现为只读，历史检索与资料仍保留。`);
     }else{
+      setEditing(current=>current?.frontier_id===selected.frontier_id?{...current,version:selected.version,status:selected.status}:current);
+      setStatus(selected.status);
       setMessage(`已更新为「${statusLabel[selected.status]||selected.status}」 · 版本 ${selected.version}。`);
     }
     committed.current?.(selected.frontier_id,selected.version);
@@ -188,11 +190,11 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   {locked&&<p>已删除的 Frontier 以只读方式显示；历史检索与资料仍然保留。</p>}
   {message&&<p role="status">{message}</p>}
   {stale&&<p role="alert">该 Frontier 已更新到版本 {selected.version}，当前编辑仍固定在载入的版本 {editing.version}；提交会因版本冲突失败。请取消修改后重新编辑以载入最新版本。</p>}
-  {!isCreateDraft&&isFullView(selected)&&<section className="child-result"><h3>当前完整已提交版本</h3><p>关注问题：{selected.question} <TestTag tags={selected.tags}/></p><p>状态：{statusLabel[selected.status]||selected.status} · 版本 {selected.version}</p><p>原始研究范围：{selected.scope.text}</p><p>替代查询：{selected.scope.alternatives.join('、')||'无'} · 必须包含：{selected.hard_constraints.must_include.join('、')||'无'} · 排除：{selected.hard_constraints.exclude.join('、')||'无'}</p><p>来源：{selected.scope.sources.join('、')} · 关联：{selected.relations.length?`${selected.relations.length} 项`:'空关联（合法）'}</p>
+  {!isCreateDraft&&isFullView(selected)&&<section className="child-result"><h3>当前完整已提交版本</h3><p>关注问题：{selected.question} <TestTag tags={selected.tags}/></p><p>状态：{statusLabel[selected.status]||selected.status} · 版本 {selected.version}</p><p>追踪中：{(selected.tracked??(selected.status==='following'))?'是':'否'}</p>{selected.was_resolved&&<p>解决记录：{selected.resolved_at!=null?new Date(selected.resolved_at*1000).toLocaleString():'已标记解决'}</p>}<p>原始研究范围：{selected.scope.text}</p><p>替代查询：{selected.scope.alternatives.join('、')||'无'} · 必须包含：{selected.hard_constraints.must_include.join('、')||'无'} · 排除：{selected.hard_constraints.exclude.join('、')||'无'}</p><p>来源：{selected.scope.sources.join('、')} · 关联：{selected.relations.length?`${selected.relations.length} 项`:'空关联（合法）'}</p>
   {selected.status!=='deleted'&&<div className="workbench-actions">
     {selected.status==='following'&&<button type="button" disabled={!!creating||loading||saving} onClick={()=>retrieve(selected)}>{creating===selected.frontier_id?'正在创建检索计划…':'创建检索计划（不检索）'}</button>}
-    {selected.status==='following'&&<><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'paused')}>暂停</button><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'resolved')}>解决</button></>}
-    {(selected.status==='paused'||selected.status==='resolved')&&<button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'following')}>重新关注</button>}
+    {selected.status==='following'&&<><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'paused')}>停止追踪</button><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'resolved')}>标记解决</button></>}
+    {(selected.status==='paused'||selected.status==='resolved')&&<button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'following')}>开始追踪</button>}
     <button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'deleted')}>删除</button>
   </div>}
   </section>}
@@ -200,8 +202,8 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   {frontiers.map(f=><section className="child-result" key={f.frontier_id}><h3>{f.question}</h3><p>范围：{f.scope_text} · 状态：{statusLabel[f.status]||f.status} · 版本 {f.version}</p>
   {f.status==='following'&&<button disabled={!!creating||!!acting} onClick={()=>retrieve(f)}>{creating===f.frontier_id?'正在创建检索计划…':'创建检索计划（不检索）'}</button>}
   {f.status!=='deleted'&&<button disabled={saving} onClick={()=>load(f)}>编辑（读取完整版本）</button>}
-  {f.status==='following'&&<><button disabled={!!acting} onClick={()=>lifecycle(f,'paused')}>暂停</button><button disabled={!!acting} onClick={()=>lifecycle(f,'resolved')}>解决</button></>}
-  {(f.status==='paused'||f.status==='resolved')&&<button disabled={!!acting} onClick={()=>lifecycle(f,'following')}>重新关注</button>}
+  {f.status==='following'&&<><button disabled={!!acting} onClick={()=>lifecycle(f,'paused')}>停止追踪</button><button disabled={!!acting} onClick={()=>lifecycle(f,'resolved')}>标记解决</button></>}
+  {(f.status==='paused'||f.status==='resolved')&&<button disabled={!!acting} onClick={()=>lifecycle(f,'following')}>开始追踪</button>}
   {f.status!=='deleted'&&<button disabled={!!acting} onClick={()=>lifecycle(f,'deleted')}>删除</button>}
   {f.status==='deleted'&&<p>已删除，不能编辑；保留历史检索与资料。</p>}</section>)}</>}
   </div>;
