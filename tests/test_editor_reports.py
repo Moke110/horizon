@@ -207,9 +207,12 @@ def test_synthesis_does_not_count_duplicate_or_reposted_sources_as_corroboration
 
 
 def test_synthesis_excludes_unsourced_and_questionable_background_and_records_partial_coverage(tmp_path, monkeypatch):
+    import json
+
     from hostrun.editor_reports import ReportService
     from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis
     from hostrun.knowledge_cards import KnowledgeCardService
+    from hostrun.managed_database import database_connection
 
     from test_knowledge_cards import captured_source
 
@@ -221,15 +224,37 @@ def test_synthesis_excludes_unsourced_and_questionable_background_and_records_pa
     backed = [citation]
     confirmed = cards.create({"schema_version": 1, "operation_id": "confirmed",
         "title": "Known", "content": excerpt, "sources": backed}, token=token)
+    followed = cards.create({"schema_version": 1, "operation_id": "followed",
+        "title": "Legacy unresolved", "content": excerpt, "sources": backed}, token=token)
+    # Seed the snapshot as written by the old client, before validity and tracking existed.
+    legacy = {key: value for key, value in followed.items() if key not in ("validity", "tracked")}
+    legacy.update(convergence="unresolved", questionable=True)
+    with database_connection(tmp_path) as db:
+        db.execute("UPDATE knowledge_cards SET result=? WHERE card_id=?",
+                   (json.dumps(legacy), followed["card_id"]))
+        db.commit()
     cards.create({"schema_version": 1, "operation_id": "pending",
         "title": "Pending", "content": "Unverified"}, token=token)
     cards.create({"schema_version": 1, "operation_id": "question",
         "title": "Questionable", "content": "In dispute", "questionable": True,
         "sources": backed}, token=token)
+    archived = cards.create({"schema_version": 1, "operation_id": "formerly-known",
+        "title": "Formerly known", "content": excerpt, "sources": backed}, token=token)
+    cards.archive({"schema_version": 1, "operation_id": "archive", "card_id": archived["card_id"],
+                   "expected_version": 1}, token=token)
+    removed = reports.materials.register_text({"schema_version": 1, "operation_id": "withdrawn",
+        "title": "Withdrawn", "source_label": "Field notes", "text": excerpt}, token=token)
+    removed_id = removed["material_id"]
+    cards.create({"schema_version": 1, "operation_id": "partially-backed",
+        "title": "Partial sources", "content": excerpt,
+        "sources": [citation, {**citation, "material_id": removed_id}]}, token=token)
+    reports.materials.archive_material(removed_id, token=token)
+    impact = reports.materials.deletion_impact(removed_id, token=token)
+    reports.materials.delete_material(removed_id, impact["confirmation"], token=token)
     command = {"question": "What changed?", "material_ids": ["missing", saved["material_id"]]}
     context, evidence, versions, reposts = prepare_synthesis(reports, tmp_path, "task", command, token=token)
 
-    assert [item["id"] for item in context["confirmed_knowledge"]] == [confirmed["card_id"]]
+    assert {item["id"] for item in context["confirmed_knowledge"]} == {confirmed["card_id"], followed["card_id"]}
     assert context["gaps"] == [{"material_id": "missing", "reason": "unavailable"}]
     result = commit_synthesis(reports, "no-new", "task", command, context, evidence, versions, reposts,
                               {"outcome": "no_new"}, token=token)
@@ -237,7 +262,7 @@ def test_synthesis_excludes_unsourced_and_questionable_background_and_records_pa
     assert reports.get_by_operation("no-new", "task", command["material_ids"], token=token) is None
 
     output = {"claims": [{"kind": "known", "text": "会议已有两次记录在案的投票。",
-                          "knowledge_id": confirmed["card_id"]}]}
+                          "knowledge_id": followed["card_id"]}]}
     receipt = commit_synthesis(reports, "expand", "task", command, context, evidence, versions, reposts,
                                output, token=token)
     report = reports.get(receipt["report_id"], "task", token=token)
