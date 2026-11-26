@@ -56,7 +56,7 @@ export function TermContents({term}:{term:KnowledgeCard}) {
 }
 
 export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers}:{
-  renderFrontiers:(matches:(text:string,state:string,ids:string[])=>boolean, createRequest:number)=>React.ReactNode;
+  renderFrontiers:(matches:(text:string,state:string,ids:string[],tracked:boolean)=>boolean, createRequest:number)=>React.ReactNode;
   closeDetail:()=>void;
   cardEditor:Pick<React.ComponentProps<typeof KnowledgeCardPanel>,'materials'|'selected'|'viewEvent'|'commandError'>;
   questions:Question[];
@@ -179,15 +179,21 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
   };
 
   const filter=useModuleSearch();
-  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && filter.matches(termLinkLabels(item.prompt+' '+item.answer,terms),item.convergence||'resolved',item.term_ids||[]));
+  const [tracking,setTracking]=useState('all');
+  const matchesTracking=(tracked:boolean)=>tracking==='all'||(tracking==='yes')===tracked;
+  const matchesEntry=(text:string, item:Question|CardSummary, ids:string[])=>{
+    const {validity,tracked}=stateFields(entryState(item));
+    return matchesTracking(tracked)&&filter.matches(text,validity,ids);
+  };
+  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && matchesEntry(termLinkLabels(item.prompt+' '+item.answer,terms),item,item.term_ids||[]));
   const activeTerms=terms.filter(term=>term.status==='active');
   const editTerm=(term:CardSummary|null)=>{
     const nonce=crypto.randomUUID();
     setTermRequest(term?{kind:'open',id:term.card_id,version:term.version,nonce}:{kind:'create',nonce});
     openDetail();
   };
-  const visibleTerms=activeTerms.filter(term=>filter.matches(
-    [term.title,...(term.aliases||[]),term.content||''].join(' '),term.convergence||'resolved',[term.card_id]));
+  const visibleTerms=activeTerms.filter(term=>matchesEntry(
+    [term.title,...(term.aliases||[]),term.content||''].join(' '),term,[term.card_id]));
   const detail=termRequest?<KnowledgeCardPanel {...cardEditor} cards={terms} onCommand={send}
     embedded showList={false} termMode openRequest={termRequest}
     onCommitted={(id,version)=>setTermRequest({kind:'open',id,version,nonce:crypto.randomUUID()})}/>:selectedTerm?<article aria-label="术语">
@@ -219,13 +225,15 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,c
 
   return <section className="hpedia-panel" aria-label="百科">
     <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>entryType==='frontier'?setFrontierCreate(value=>value+1):entryType==='term'?editTerm(null):start(null)}>{entryType==='frontier'?'新增前沿':entryType==='term'?'新增术语':'新增问题'}</Button></ModuleHeading>
-    {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',undefined,
+    {filter.controls(terms,{valid:'有效',questionable:'存疑'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',
+      <label>追踪中<FixedSelect aria-label="追踪中" value={tracking} onChange={event=>setTracking(event.target.value)}>
+        <option value="all">全部</option><option value="yes">是</option><option value="no">否</option></FixedSelect></label>,
       <FixedSelect aria-label="条目类型" value={entryType} onChange={event=>{setEntryType(event.target.value);closeDetail();}}>
-        <option value="question">问题</option><option value="term">术语</option><option value="frontier">前沿</option></FixedSelect>)}
-    {entryType==='frontier'?renderFrontiers(filter.matches,frontierCreate):entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
-      title={term.title} summary={term.content||''} selected={!!detailHost && termRequest?.kind==='open' && termRequest.id===term.card_id}
+        <option value="question">问题</option><option value="term">术语</option><option value="frontier">前沿</option></FixedSelect>,entryType==='frontier')}
+    {entryType==='frontier'?renderFrontiers((text,status,ids,tracked)=>matchesTracking(tracked)&&filter.matches(text,status,ids,true),frontierCreate):entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
+      entry={stateFields(entryState(term))} title={term.title} summary={term.content||''} selected={!!detailHost && termRequest?.kind==='open' && termRequest.id===term.card_id}
       onOpen={()=>editTerm(term)}/>)}</ResultCards>:<ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
-      title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}
+      entry={stateFields(entryState(row))} title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}
       summary={termLinkLabels(row.answer,terms)} selected={!!detailHost && row.question_id===question?.question_id}
       onOpen={()=>show(row.question_id)}/>)}</ResultCards>}
     {detailHost&&createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost)}

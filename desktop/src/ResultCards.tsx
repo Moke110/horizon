@@ -38,9 +38,13 @@ export function ResultCards({children,label}:{children:ReactNode;label:string}) 
   return <div className="module-card-container"><ul ref={ref} className="module-card-list" aria-label={label}>{children}</ul></div>;
 }
 
-export function ResultCard({title,summary,status,selected,onOpen}:{title:ReactNode;summary:string;status?:string;selected:boolean;onOpen:()=>void}) {
-  return <li><Button type="button" data-result aria-current={selected||undefined} onClick={onOpen}>
-    <span className="workbench-result-title">{title}</span>
+export function ResultCard({title,summary,status,entry,selected,onOpen}:{title:ReactNode;summary:string;status?:string;entry?:{validity?:string;tracked:boolean};selected:boolean;onOpen:()=>void}) {
+  const description=entry && [
+    entry.validity && ('状态：'+(entry.validity==='valid'?'有效':'存疑')),
+    '追踪中：'+(entry.tracked?'是':'否')
+  ].filter(Boolean).join('，');
+  return <li><Button type="button" title={description} aria-description={description} data-tracked={entry?.tracked} data-result aria-current={selected||undefined} onClick={onOpen}>
+    <span className="entry-heading"><span className="workbench-result-title">{title}</span>{entry?.validity&&<span aria-hidden="true" className="entry-validity" data-validity={entry.validity}/>}</span>
     {summary&&<span className="module-card-summary">{summary}</span>}
     {status&&<span className="workbench-result-meta"><span>{status}</span></span>}
   </Button></li>;
