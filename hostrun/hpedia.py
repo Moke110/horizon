@@ -6,7 +6,7 @@ import uuid
 
 from hostrun.agent_service import CommandError
 from hostrun.library_tags import new_test_tags
-from hostrun.convergence import validate
+from hostrun.convergence import attributes, compatibility_state, validate
 
 
 _TERM_LINK = re.compile(r"\[\[term:([^\[\]\s]+)\]\]")
@@ -53,7 +53,8 @@ def read(db, question_id):
     row = db.execute("SELECT result FROM hpedia_questions WHERE question_id=?", (question_id,)).fetchone()
     if row is None:
         raise CommandError("not_found", "百科问题不存在")
-    return json.loads(row[0])
+    question = json.loads(row[0])
+    return {**question, **attributes(question)}
 
 
 def referenced_terms(*texts):
@@ -62,7 +63,8 @@ def referenced_terms(*texts):
 
 def list_questions(db):
     rows = db.execute("SELECT result FROM hpedia_questions ORDER BY rowid DESC").fetchall()
-    return [json.loads(row[0]) for row in rows]
+    questions = [json.loads(encoded) for (encoded,) in rows]
+    return [{**question, **attributes(question)} for question in questions]
 
 
 def _text(value, label):
@@ -102,7 +104,10 @@ def apply(db, action, command, *, read_term, check_question_lock, now):
             raise CommandError("invalid_question", "只可引用有效的词典术语")
     question.update(version=question["version"] + 1, updated_at=int(now),
                     prompt=prompt, answer=answer, term_ids=term_ids)
-    if "convergence" in command:
+    question.update(attributes(question, command))
+    if "validity" in command or "tracked" in command:
+        question["convergence"] = compatibility_state(question)
+    elif "convergence" in command:
         question["convergence"] = validate(command["convergence"])
     db.execute("""INSERT INTO hpedia_questions VALUES(?,?)
         ON CONFLICT(question_id) DO UPDATE SET result=excluded.result""",
