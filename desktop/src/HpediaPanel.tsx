@@ -8,9 +8,9 @@ import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React, {useEffect, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
-import type {CardSummary, KnowledgeCard} from './KnowledgeCardPanel';
+import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard} from './KnowledgeCardPanel';
 
-import {ConvergenceSelect,convergenceLabel,type Convergence} from './ConvergenceSelect';
+import {ConvergenceSelect,entryState,stateFields,convergenceLabel,type Convergence} from './ConvergenceSelect';
 
 export type Question = {
   tags?:string[];
@@ -20,7 +20,7 @@ export type Question = {
   answer:string;
   term_ids:string[];
   status?:'deleted';
-  convergence?:Convergence;
+  validity?:"valid"|"questionable";tracked?:boolean;convergence?:Convergence;
 };
 
 function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>void) {
@@ -29,20 +29,20 @@ function referencedText(text:string, terms:CardSummary[], openTerm:(id:string)=>
     const id=part.slice(7,-2);
     const term=terms.find(candidate=>candidate.card_id===id);
     return <button key={index} type="button" className="hpedia-term-link"
-      onClick={()=>openTerm(id)}>{term?.title??'词典术语'}</button>;
+      onClick={()=>openTerm(id)}>{term?.title??'术语'}</button>;
   });
 }
 
 export function termLinkLabels(text:string,terms:CardSummary[]){
   return text.replace(/\[\[term:([^\[\]\s]+)\]\]/g,
-    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??'词典术语');
+    (_,id:string)=>terms.find(term=>term.card_id===id)?.title??'术语');
 }
 
 export function QuestionContents({question,terms,openTerm}:{question:Question;terms:CardSummary[];openTerm:(id:string)=>void}) {
   return <>
     <h2 className="hpedia-text">{referencedText(question.prompt,terms,openTerm)} <TestTag tags={question.tags}/></h2>
     <p className="hpedia-text">{referencedText(question.answer,terms,openTerm)}</p>
-    <p>{convergenceLabel(question.convergence??'resolved','question')}</p>
+    <p>{convergenceLabel(entryState(question),'question')}</p>
   </>;
 }
 
@@ -50,18 +50,25 @@ export function TermContents({term}:{term:KnowledgeCard}) {
   return <>
     <h2>{term.title} <TestTag tags={term.tags}/></h2>
     <p className="hpedia-text">{term.content}</p>
-    <p>{convergenceLabel(term.convergence??(term.questionable?'unresolved':'resolved'),'term')}</p>
+    <p>{convergenceLabel(entryState(term),'term')}</p>
     {!!term.aliases.length&&<p>别名 {term.aliases.join('、')}</p>}
   </>;
 }
 
-export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
+export function HpediaPanel({questions,terms,detailHost,openDetail,closeDetail,cardEditor,send,renderFrontiers,boardLink}:{
+  boardLink?:{kind:string;id:string};
+  renderFrontiers:(matches:(text:string,state:string,ids:string[],tracked:boolean)=>boolean, createRequest:number)=>React.ReactNode;
+  closeDetail:()=>void;
+  cardEditor:Pick<React.ComponentProps<typeof KnowledgeCardPanel>,'materials'|'selected'|'viewEvent'|'commandError'>;
   questions:Question[];
   terms:CardSummary[];
   detailHost:HTMLElement|null;
   openDetail:()=>void;
   send:(command:unknown)=>void;
 }) {
+  const [frontierCreate,setFrontierCreate]=useState(0);
+  const [entryType,setEntryType]=useState('question');
+  const [termRequest,setTermRequest]=useState<React.ComponentProps<typeof KnowledgeCardPanel>['openRequest']>(null);
   const [question,setQuestion]=useState<Question|null>(null);
   const [editing,setEditing]=useState(false);
   const [prompt,setPrompt]=useState('');
@@ -122,10 +129,11 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
   },[]);
 
   const start=(selected:Question|null)=>{
+    setTermRequest(null);
     setQuestion(selected);
     setPrompt(selected?.prompt??'');
     setAnswer(selected?.answer??'');
-    setConvergence(selected?.convergence??'resolved');
+    setConvergence(entryState(selected??undefined));
     setSelectedTerm(null);
     setError('');
     setEditing(true);
@@ -136,6 +144,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     setError('');
     setEditing(false);
     setSelectedTerm(null);
+    setTermRequest(null);
     setQuestion(null);
     openDetail();
     send({action:'question_open',question_id:id});
@@ -148,7 +157,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     setError('');
     send({action,schema_version:1,operation_id:operation.current,
       ...(question?{question_id:question.question_id,expected_version:question.version}:{}),
-      ...(action!=='question_delete'?{prompt,answer,convergence}:{})});
+      ...(action!=='question_delete'?{prompt,answer,...stateFields(convergence)}:{})});
   };
 
   const insertReference=(field:'prompt'|'answer')=>{
@@ -171,9 +180,24 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
   };
 
   const filter=useModuleSearch();
-  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && filter.matches(termLinkLabels(item.prompt+' '+item.answer,terms),item.convergence||'resolved',item.term_ids||[]));
+  const [tracking,setTracking]=useState('all');
+  const matchesTracking=(tracked:boolean)=>tracking==='all'||(tracking==='yes')===tracked;
+  const matchesEntry=(text:string, item:Question|CardSummary, ids:string[])=>{
+    const {validity,tracked}=stateFields(entryState(item));
+    return matchesTracking(tracked)&&filter.matches(text,validity,ids);
+  };
+  const visibleQuestions=questions.filter(item=>item.status!=='deleted' && matchesEntry(termLinkLabels(item.prompt+' '+item.answer,terms),item,item.term_ids||[]));
   const activeTerms=terms.filter(term=>term.status==='active');
-  const detail=selectedTerm?<article aria-label="词典术语">
+  const editTerm=(term:CardSummary|null)=>{
+    const nonce=crypto.randomUUID();
+    setTermRequest(term?{kind:'open',id:term.card_id,version:term.version,nonce}:{kind:'create',nonce});
+    openDetail();
+  };
+  const visibleTerms=activeTerms.filter(term=>matchesEntry(
+    [term.title,...(term.aliases||[]),term.content||''].join(' '),term,[term.card_id]));
+  const detail=termRequest?<KnowledgeCardPanel {...cardEditor} cards={terms} onCommand={send}
+    embedded showList={false} termMode openRequest={termRequest}
+    onCommitted={(id,version)=>setTermRequest({kind:'open',id,version,nonce:crypto.randomUUID()})}/>:selectedTerm?<article aria-label="术语">
     <button type="button" onClick={()=>setSelectedTerm(null)}>返回问题</button>
     <TermContents term={selectedTerm}/>
   </article>:editing?<form className="hpedia-form" onSubmit={event=>{
@@ -183,7 +207,7 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <h2>{question?'编辑问题':'新增问题'}</h2>
     <label>题干<MultilineInput ref={promptInput} value={prompt} required onChange={event=>setPrompt(event.target.value)}/></label>
     <label>解答<MultilineInput ref={answerInput} value={answer} required onChange={event=>setAnswer(event.target.value)}/></label>
-    <ConvergenceSelect kind="question" value={convergence} onChange={setConvergence}/>
+    <ConvergenceSelect value={convergence} onChange={setConvergence}/>
     <div className="hpedia-reference-picker">
       <label>引用术语<FixedSelect value={termChoice} onChange={event=>setTermChoice(event.target.value)}>
         <option value="">选择有效术语</option>
@@ -200,13 +224,37 @@ export function HpediaPanel({questions,terms,detailHost,openDetail,send}:{
     <button type="button" disabled={waiting} onClick={()=>sendChange('question_delete')}>删除问题</button>
   </article>:null;
 
+  useEffect(()=>{
+    if(boardLink?.kind==='question'){
+      send({action:'question_open',question_id:boardLink.id});
+    }else if(boardLink?.kind==='term'){
+      const term=terms.find(row=>row.card_id===boardLink.id);
+      if(term)setTermRequest({kind:'open',id:term.card_id,version:term.version,nonce:crypto.randomUUID()});
+    }
+  },[boardLink]);
+
+  if(boardLink)return detailHost?createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost):null;
   return <section className="hpedia-panel" aria-label="百科">
-    <ModuleHeading icon={<HpediaIcon/>} title="百科"><Button variant="primary" type="button" disabled={waiting} onClick={()=>start(null)}>新增问题</Button></ModuleHeading>
-    {filter.controls(terms,{resolved:'已收敛',unresolved:'尚未收敛',conflicted:'重大矛盾'},'搜索题干和解答')}
-    <ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
-      title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}
+    <ModuleHeading icon={<HpediaIcon/>} title="百科">
+      <Button variant="primary" type="button" disabled={waiting} popoverTarget="hpedia-create">创建</Button>
+      <div id="hpedia-create" popover="auto" role="group" aria-label="创建条目">
+        <Button value="term" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>editTerm(null)}>术语</Button>
+        <Button value="question" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>start(null)}>问题</Button>
+        <Button value="frontier" popoverTarget="hpedia-create" popoverTargetAction="hide" onClick={()=>setFrontierCreate(value=>value+1)}>前沿</Button>
+      </div>
+    </ModuleHeading>
+    {filter.controls(terms,{valid:'有效',questionable:'存疑'},entryType==='frontier'?'搜索前沿题目和范围':entryType==='term'?'搜索名称、别名和释义':'搜索题干和解答',
+      <label>追踪中<FixedSelect aria-label="追踪中" value={tracking} onChange={event=>setTracking(event.target.value)}>
+        <option value="all">全部</option><option value="yes">是</option><option value="no">否</option></FixedSelect></label>,
+      <FixedSelect aria-label="条目类型" value={entryType} onChange={event=>{setEntryType(event.target.value);closeDetail();}}>
+        <option value="question">问题</option><option value="term">术语</option><option value="frontier">前沿</option></FixedSelect>,entryType==='frontier')}
+    <div hidden={entryType!=='frontier'}>{renderFrontiers((text,status,ids,tracked)=>matchesTracking(tracked)&&filter.matches(text,status,ids,true),frontierCreate)}</div>
+    {entryType==='frontier'?null:entryType==='term'?<ResultCards label="百科术语结果">{visibleTerms.map(term=><ResultCard key={term.card_id}
+      entry={stateFields(entryState(term))} title={term.title} summary={term.content||''} selected={!!detailHost && termRequest?.kind==='open' && termRequest.id===term.card_id}
+      onOpen={()=>editTerm(term)}/>)}</ResultCards>:<ResultCards label="百科问题结果">{visibleQuestions.map(row=><ResultCard key={row.question_id}
+      entry={stateFields(entryState(row))} title={<>{termLinkLabels(row.prompt,terms)} <TestTag tags={row.tags}/></>}
       summary={termLinkLabels(row.answer,terms)} selected={!!detailHost && row.question_id===question?.question_id}
-      onOpen={()=>show(row.question_id)}/>)}</ResultCards>
+      onOpen={()=>show(row.question_id)}/>)}</ResultCards>}
     {detailHost&&createPortal(<>{detail}{error&&<p role="alert">{error}</p>}</>,detailHost)}
   </section>;
 }

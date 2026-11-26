@@ -33,7 +33,10 @@ def test_test_records_are_tagged_and_cleanup_only_removes_test_progress_under_re
                       content="测试进展", source_ids=[source["source_id"]])
     assert all(record["tags"] == ["测试"] for record in (term, question, source, frontier, progress))
     assert "tags" not in real and "tags" not in real_progress
-    assert len(librarian.bulletin_links(token=TOKEN)) == 2
+    assert {(row["kind"], row["id"]) for row in librarian.bulletin_links(token=TOKEN)} == {
+        ("term", term["card_id"]), ("question", question["question_id"]),
+        ("frontier", frontier["frontier_id"]), ("frontier", real["frontier_id"]),
+    }
 
     plan = librarian.preview_test_cleanup(token=TOKEN)
     assert {row["kind"] for row in plan["entries"] if not row["blocked"]} == {"term", "question", "source", "frontier", "progress"}
@@ -51,7 +54,8 @@ def test_test_records_are_tagged_and_cleanup_only_removes_test_progress_under_re
         librarian.decide("clean", "confirm", token=TOKEN, origin=AGENT)
     result = librarian.decide("clean", "confirm", token=TOKEN, origin=GUI)
     assert len(result["results"]) == 5
-    assert librarian.bulletin_links(token=TOKEN) == []
+    remaining, = librarian.bulletin_links(token=TOKEN)
+    assert (remaining["kind"], remaining["id"]) == ("frontier", real["frontier_id"])
     assert librarian.view_frontier(real["frontier_id"], token=TOKEN) == real
     assert librarian.list_progress(real["frontier_id"], token=TOKEN) == [real_progress]
     assert librarian.preview_test_cleanup(token=TOKEN)["entries"] == []

@@ -99,6 +99,23 @@ def _validate_status(status):
     return status
 
 
+def _tracking_status(command, fallback):
+    if "tracked" not in command:
+        return _validate_status(command.get("status", fallback))
+    if type(command["tracked"]) is not bool or "status" in command:
+        raise CommandError("invalid_status", "请单独指定追踪选择或前沿状态")
+    if command["tracked"]:
+        return ACTIVE_STATUS
+    return "resolved" if fallback == "resolved" else "paused"
+
+
+def _project(frontier):
+    frontier["tracked"] = frontier["status"] == ACTIVE_STATUS
+    if frontier["status"] == "resolved":
+        frontier["was_resolved"] = True
+    return frontier
+
+
 def _validate_relations(relations):
     if relations != []:
         raise CommandError("invalid_scope", "此版本的 Frontier 关联须为空列表")
@@ -204,7 +221,7 @@ class FrontierService:
         if row:
             if row[0] != encoded:
                 raise CommandError("operation_conflict", "operation_id conflicts")
-            return encoded, json.loads(row[1])
+            return encoded, _project(json.loads(row[1]))
         return encoded, None
 
     def _notify(self, frontier):
@@ -232,7 +249,7 @@ class FrontierService:
 
     @staticmethod
     def history_project(frontier, removed):
-        return frontier
+        return _project(frontier)
 
     @staticmethod
     def history_undoable(record):
@@ -255,7 +272,7 @@ class FrontierService:
             set_path(updated, path, value)
         updated["scope"] = _validate_scope(updated["scope"])
         updated["hard_constraints"] = _validate_constraints(updated["hard_constraints"])
-        return updated
+        return _project(updated)
 
     def create(self, command, *, token):
         self._authorize(token)
@@ -293,7 +310,7 @@ class FrontierService:
                 "frontier_id": frontier_id,
                 "version": 1,
                 "question": _validate_question(command.get("question")),
-                "status": _validate_status(command.get("status", ACTIVE_STATUS)),
+                "status": _tracking_status(command, ACTIVE_STATUS),
                 "scope": _validate_scope(command.get("scope")),
                 "hard_constraints": _validate_constraints(command.get("hard_constraints")),
                 "relations": _validate_relations(command.get("relations", [])),
@@ -301,6 +318,9 @@ class FrontierService:
                 "created_at": now,
                 "updated_at": now,
             }
+            if frontier["status"] == "resolved":
+                frontier["resolved_at"] = now
+            _project(frontier)
             db.execute("INSERT INTO frontiers VALUES(?,?)", (frontier_id, json.dumps(frontier)))
             db.execute("INSERT INTO frontier_operations VALUES(?,?,?)",
                        (command["operation_id"], encoded, json.dumps(frontier)))
@@ -328,8 +348,8 @@ class FrontierService:
                 updated["scope"] = _validate_scope(command["scope"])
             if "hard_constraints" in command:
                 updated["hard_constraints"] = _validate_constraints(command["hard_constraints"])
-            if "status" in command:
-                updated["status"] = _validate_status(command["status"])
+            if "status" in command or "tracked" in command:
+                updated["status"] = _tracking_status(command, frontier["status"])
             if "relations" in command:
                 updated["relations"] = _validate_relations(command["relations"])
             event_type = "frontier.updated"
@@ -338,6 +358,9 @@ class FrontierService:
             event_type = "frontier.deleted"
         updated["version"] = frontier["version"] + 1
         updated["updated_at"] = int(self.clock())
+        if updated["status"] == "resolved" and frontier["status"] != "resolved":
+            updated["resolved_at"] = updated["updated_at"]
+        _project(updated)
         db.execute("UPDATE frontiers SET result=? WHERE frontier_id=?",
                    (json.dumps(updated), frontier_id))
         db.execute("INSERT INTO frontier_operations VALUES(?,?,?)",
@@ -354,7 +377,7 @@ class FrontierService:
     def query_all_in_transaction(cls, db):
         """Read every committed Frontier, newest row first, on the caller's transaction."""
         rows = db.execute("SELECT result FROM frontiers ORDER BY rowid DESC").fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [_project(json.loads(row[0])) for row in rows]
 
     def list(self, *, token):
         self._authorize(token)
@@ -366,6 +389,7 @@ class FrontierService:
     def _summary(frontier):
         return {"frontier_id": frontier["frontier_id"], "version": frontier["version"],
                 "question": frontier["question"], "status": frontier["status"],
+                "tracked": frontier["tracked"],
                 "scope_text": frontier["scope"]["text"][:256],
                 "term_ids": referenced_terms(frontier["question"], frontier["scope"]["text"]), "updated_at": frontier["updated_at"],
                 **visible_tags(frontier)}
@@ -382,7 +406,7 @@ class FrontierService:
         row = db.execute("SELECT result FROM frontiers WHERE frontier_id=?", (frontier_id,)).fetchone()
         if not row:
             raise CommandError("not_found", "Unknown Frontier")
-        return json.loads(row[0])
+        return _project(json.loads(row[0]))
 
     @classmethod
     def read_in_transaction(cls, db, frontier_id):

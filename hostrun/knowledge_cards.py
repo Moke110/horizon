@@ -27,7 +27,7 @@ from pathlib import Path
 
 from hostrun.agent_service import CommandError
 from hostrun.library_tags import new_test_tags, visible_tags
-from hostrun.convergence import current as current_convergence, validate as validate_convergence
+from hostrun.convergence import attributes, compatibility_state, current as current_convergence, validate as validate_convergence
 from hostrun.knowledge_history import set_path, validate_reason
 from hostrun.managed_database import database_connection
 from hostrun.voyager_materials import MaterialsService
@@ -96,6 +96,7 @@ def _bounded_sources(value):
 def _read_snapshot(encoded):
     card = json.loads(encoded)
     card.pop("recall_terms", None)
+    card.update(attributes(card))
     return card
 
 
@@ -124,8 +125,10 @@ class KnowledgeCardService:
         "event_type": "knowledge_card.undo",
         "editable": (("title",), ("content",), ("aliases",),
                      ("sources",), ("relations",),
-                     ("questionable",), ("convergence",)),
-        "defaults": {("convergence",): current_convergence},
+                     ("questionable",), ("convergence",), ("validity",), ("tracked",)),
+        "defaults": {("convergence",): current_convergence,
+                     ("validity",): lambda record: attributes(record)["validity"],
+                     ("tracked",): lambda record: attributes(record)["tracked"]},
     }
 
     def __init__(self, home, *, token, clock=time.time, on_change=None, materials=None):
@@ -218,7 +221,7 @@ class KnowledgeCardService:
         """Project a stored snapshot without reporting removed sources live."""
         if "recall_terms" in card:
             card = {field: value for field, value in card.items() if field != "recall_terms"}
-        return self._project_sources(card, removed)
+        return self._project_sources({**card, **attributes(card)}, removed)
 
     @staticmethod
     def history_undoable(record):
@@ -239,6 +242,7 @@ class KnowledgeCardService:
         updated = json.loads(json.dumps(record))
         for path, value in fields.items():
             set_path(updated, path, value)
+        updated.update(attributes(updated))
         if ("relations",) in fields:
             self._relations(db, record["card_id"], updated["relations"])
         updated["provenance"], updated["source_pending"] = _provenance(
@@ -356,6 +360,10 @@ class KnowledgeCardService:
                 "created_at": now,
                 "updated_at": now,
             }
+            card.update(attributes({}, command))
+            if "validity" in command or "tracked" in command:
+                card["questionable"] = card["validity"] == "questionable"
+                fields["convergence"] = compatibility_state(card)
             if "convergence" in fields:
                 card["convergence"] = fields["convergence"]
             db.execute("INSERT INTO knowledge_cards VALUES(?,?)",
@@ -375,6 +383,8 @@ class KnowledgeCardService:
                 fields["convergence"] = (
                     "resolved" if not fields["questionable"] else
                     "unresolved" if card["convergence"] == "resolved" else card["convergence"])
+            if "validity" in command or "tracked" in command:
+                fields.update(attributes(card, command))
             if type(command.get("expected_version")) is not int \
                     or command["expected_version"] != card["version"]:
                 self._conflict(command, card, fields)
@@ -389,6 +399,10 @@ class KnowledgeCardService:
             updated = dict(card)
             updated["operation_id"] = command["operation_id"]
             updated.update(fields)
+            updated.update(attributes(card, command))
+            if "validity" in command or "tracked" in command:
+                updated["questionable"] = updated["validity"] == "questionable"
+                updated["convergence"] = compatibility_state(updated)
             updated["provenance"], updated["source_pending"] = _provenance(
                 updated["sources"])
             updated["known"] = True
@@ -469,12 +483,14 @@ class KnowledgeCardService:
             "card_id": card["card_id"],
             "version": card["version"],
             "title": card["title"],
+            "content": card["content"],
             "aliases": card.get("aliases", []),
             "status": card["status"],
             "provenance": card["provenance"],
             "source_pending": card["source_pending"],
             "source_removed": any(source.get("status") == "removed" for source in card["sources"]),
             "questionable": card["questionable"],
+            **attributes(card),
             **({"convergence": card["convergence"]} if "convergence" in card else {}),
             **visible_tags(card),
             "updated_at": card["updated_at"],
@@ -505,11 +521,11 @@ class KnowledgeCardService:
         submitted = {}
         changed = []
         for name in ("title", "content", "aliases", "sources",
-                     "relations", "questionable", "convergence"):
+                     "relations", "questionable", "convergence", "validity", "tracked"):
             if name not in fields:
                 continue
             submitted[name] = fields[name]
-            current_value = card[name]
+            current_value = current_convergence(card) if name == "convergence" else card[name]
             if name == "sources":
                 current_value = [{key: source[key] for key in _SOURCE_FIELDS} for source in current_value]
             if fields[name] != current_value:

@@ -34,16 +34,39 @@ function blankPdf() {
 
 const libraryState = {
   chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
-  cards:[{card_id:'related-term',version:1,title:'Related term',status:'active',updated_at:1}],
+  cards:[{card_id:'related-term',version:1,title:'Related term',aliases:['Ａlternate name'],content:'Definition only',status:'active',updated_at:1}],
+  questions:[{question_id:'q1',version:1,prompt:'Prompt marker',answer:'Answer marker [[term:related-term]]',term_ids:['related-term']}],
+  bulletin_links:[
+    {kind:'term',id:'related-term',title:'Related term',summary:'Definition only',term_ids:['related-term'],validity:'valid'},
+    {kind:'question',id:'q1',title:'Prompt marker',summary:'Answer marker',term_ids:['related-term'],validity:'valid'},
+    {kind:'frontier',id:'following',title:'following',summary:'',term_ids:[]}
+  ],
   children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}],
   providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
 };
+libraryState.frontiers=['following','paused'].map(status=>({frontier_id:status,version:1,question:status,status,tracked:status==='following'}));
+for(const [prompt,validity] of [['q2','valid'],['q3','questionable']]) {
+  libraryState.questions.push({question_id:prompt,prompt,answer:'',term_ids:[],validity,tracked:true});
+}
 const pdfFileName = 'chooser-fixture.pdf';
 const pdfFixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), pdfFileName);
 fs.writeFileSync(pdfFixture, Buffer.from(blankPdf(), 'base64'));
 dialog.showOpenDialog = async () => ({canceled:false, filePaths:[pdfFixture]});
 let registeredPdf = false;
 const server = net.createServer(socket => socket.on('data', chunk => {
+  for (const line of chunk.toString().trim().split('\n')) {
+    if(line.includes('"action":"frontier_open"')){
+      socket.write(JSON.stringify({kind:'frontier_view',data:{...libraryState.frontiers[0],
+        operation_id:'seed',read_operation_id:JSON.parse(line).operation_id,
+        scope:{text:'',alternatives:[],sources:[]},hard_constraints:{must_include:[],exclude:[]},relations:[]}})+'\n');
+    }
+    if (!line.includes('"action":"question_open"') && !line.includes('"action":"card_open"')) continue;
+    const command = JSON.parse(line);
+    const view = command.action === 'question_open'
+      ? {kind:'question_view',data:libraryState.questions.find(row=>row.question_id===command.question_id)}
+      : {kind:'card_view',data:{...libraryState.cards[0],questionable:true,sources:[],relations:[],known:true,read_operation_id:command.operation_id}};
+    socket.write(JSON.stringify(view)+'\n');
+  }
   const pdfLine = chunk.toString().split('\n').find(line => line.includes('"action":"materials_pdf_register"'));
   if (pdfLine) {
     const command = JSON.parse(pdfLine);
@@ -117,8 +140,84 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       if (navigator.userAgent.includes('Windows') && (!overlay?.height || overlay.width >= innerWidth)) {
         throw Error('The native caption does not reserve space for Windows window buttons');
       }
-      navigation.querySelector('button[aria-label="词典"]').click();
+      if (navigation.querySelector('button[aria-label="词典"]')) throw Error('Dictionary still has separate navigation');
+      navigation.querySelector('button[aria-label="百科"]').click();
+      const entryType = await wait(() => document.querySelector('select[aria-label="条目类型"]'));
+      if (entryType.value !== 'question') throw Error('Expected questions on entry');
+      const switchType = type => {
+        entryType.value=type;
+        entryType.dispatchEvent(new Event('change',{bubbles:true}));
+      };
       const search = await wait(() => document.querySelector('form[aria-label="搜索导航栏"]'));
+      const query = search.querySelector('input[type="search"]');
+      const searchFor = async value => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(query,value);
+        query.dispatchEvent(new Event('input',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
+        search.requestSubmit();
+        await new Promise(resolve=>setTimeout(resolve,0));
+      };
+      const results = () => cards()[0];
+      const status=search.querySelector('.dictionary-scope'), tracking=search.querySelector('select[aria-label="追踪中"]');
+      if(!tracking||tracking.value!=='all'||status.value!=='all') throw Error('Missing initial encyclopedia filters');
+      const choose=async (select,value)=>{
+        select.value=value;
+        select.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
+      };
+      const cards=()=>[...document.querySelectorAll('.hpedia-panel [data-result]')].filter(card=>card.checkVisibility());
+      const verifyMark=(card,label,dot)=>{
+        if(!card||card.title!==label||card.getAttribute('aria-description')!==label) throw Error('Missing accessible state '+label);
+        const mark=card.querySelector('.entry-validity');
+        if((mark?getComputedStyle(mark).backgroundColor:null)!==dot) throw Error('Wrong validity dot '+label);
+        const yellow=getComputedStyle(card).borderTopColor==='rgb(232, 190, 76)';
+        if(yellow!==label.endsWith('追踪中：是')) throw Error('Wrong tracking border '+label);
+      };
+      const green='rgb(98, 195, 135)', yellow='rgb(232, 190, 76)';
+      verifyMark(cards()[0],'状态：有效，追踪中：否',green);
+      verifyMark(cards()[1],'状态：有效，追踪中：是',green);
+      verifyMark(cards()[2],'状态：存疑，追踪中：是',yellow);
+      await choose(status,'questionable');
+      await choose(tracking,'no');
+      if(cards().length) throw Error('Filters must intersect');
+      await choose(tracking,'yes');
+      if(cards().length!==1||!cards()[0].textContent.includes('q3')) throw Error('Missing questionable followed question');
+      switchType('frontier');
+      await wait(()=>status.disabled && status.selectedOptions[0].textContent==='不适用');
+      verifyMark(cards()[0],'追踪中：是',null);
+      if(cards().length!==1) throw Error('Lost tracking filter');
+      await choose(tracking,'no');
+      verifyMark(cards()[0],'追踪中：否',null);
+      switchType('term');
+      await wait(()=>!status.disabled && status.value==='questionable');
+      if(cards().length) throw Error('Type switch lost validity filter');
+      await choose(status,'valid');
+      verifyMark(cards()[0],'状态：有效，追踪中：否',green);
+      await choose(status,'all');
+      await choose(tracking,'all');
+      switchType('question');
+      for (const value of ['Prompt marker','Answer marker']) {
+        await searchFor(value);
+        if (!results()?.textContent.includes('Prompt marker')) throw Error('Missing question for '+value);
+      }
+      results().click();
+      (await wait(()=>document.querySelector('.hpedia-term-link'))).click();
+      const linkedTerm=await wait(()=>document.querySelector('article[aria-label="术语"]'));
+      if(!linkedTerm.textContent.includes('Definition only')) throw Error('Linked term content missing');
+      if(!linkedTerm.textContent.includes('存疑 · 追踪中')) throw Error('Missing legacy questionable state');
+      linkedTerm.querySelector('button').click();
+      (await wait(()=>document.querySelector('[aria-label="关闭详情"]'))).click();
+      switchType('term');
+      await wait(()=>document.querySelector('[aria-label="百科术语结果"]'));
+      if(query.value!=='Answer marker'||results()) throw Error('Type switch lost query or mixed results');
+      for (const value of ['Related term','Alternate name','Definition only']) {
+        await searchFor(value);
+        if(!results()?.textContent.includes('Related term')) throw Error('Missing term for '+value);
+      }
+      results().click();
+      await wait(()=>Array.from(document.querySelectorAll('textarea')).some(field=>field.value==='Definition only'));
+      document.querySelector('[aria-label="关闭详情"]').click();
+      await searchFor('');
       const queryBox = search.querySelector('input[type="search"]').getBoundingClientRect();
       const submitButton = search.querySelector('button[type="submit"]');
       const searchIcon = submitButton.getBoundingClientRect();
@@ -132,6 +231,13 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       picker.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
       await wait(() => picker.getAttribute('aria-expanded') === 'false');
       (await wait(() => document.querySelector('.dictionary-heading button'))).click();
+      (await wait(() => document.querySelector('#hpedia-create:popover-open [value=question]'))).click();
+      await wait(() => document.querySelector('[aria-label="工作区详情"] form'));
+      document.querySelector('[aria-label="关闭详情"]').click();
+      await wait(() => !document.querySelector('[aria-label="工作区详情"]'));
+      if (document.querySelector('[aria-label="条目类型"]').value !== 'term') throw Error('Cancel lost source type');
+      document.querySelector('.dictionary-heading button').click();
+      (await wait(() => document.querySelector('#hpedia-create:popover-open [value=term]'))).click();
       const termField = await wait(() => Array.from(document.querySelectorAll('form label'))
         .find(label => label.textContent.trim() === '释义')?.querySelector('textarea'));
       const singleLineHeight = termField.getBoundingClientRect().height;
@@ -259,7 +365,8 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       pdf.click();
       await wait(() => document.querySelector('[aria-label="工作区详情"] canvas')?.height === 300);
       navigation.querySelector('button[aria-label="百科"]').click();
-      (await wait(() => Array.from(main.querySelectorAll('button')).find(button => button.textContent === '新增问题'))).click();
+      (await wait(() => Array.from(main.querySelectorAll('button')).find(button => button.textContent === '创建'))).click();
+      (await wait(() => document.querySelector('#hpedia-create [value=question]'))).click();
       const question = await wait(() => document.querySelector('form.hpedia-form'));
       const termPicker = question.querySelector('.hpedia-reference-picker select');
       if (getComputedStyle(termPicker).appearance !== 'base-select') throw Error('Question reference is not a fixed single-select');
@@ -321,10 +428,17 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     if (await currentType() !== 'frontier') throw Error('Board must start on frontiers');
     for (const kind of ['term', 'question', 'frontier']) {
       await chooseType(kind);
-      await renderer("document.querySelector('.bulletin-panel .dictionary-heading button').click()");
-      if (!await renderer("!!document.querySelector('.detail-body .frontier-detail form')")) {
-        throw Error('New frontier form missing from board type ' + kind);
-      }
+      await renderer("document.querySelector('.bulletin-panel [data-result]').click()");
+      const marker={term:'Related term',question:'Prompt marker',frontier:'following'}[kind];
+      await renderer(`(async()=>{
+        for(let n=0;n<100;n++){
+          const body=document.querySelector('.detail-body');
+          if(body && (body.textContent.includes(${JSON.stringify(marker)}) ||
+              [...body.querySelectorAll('input,textarea')].some(el=>el.value===${JSON.stringify(marker)})))return;
+          await new Promise(r=>setTimeout(r,25));
+        }
+        throw Error('Missing original board detail '+${JSON.stringify(kind)});
+      })()`);
       await renderer("document.querySelector('[aria-label=关闭详情]').click()");
     }
     await chooseType('term');
@@ -399,6 +513,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     win.webContents.focus();
     await mouseClick('#workspace-navigation button[aria-label="百科"]');
     await mouseClick('.hpedia-panel .dictionary-heading button');
+    await mouseClick('#hpedia-create [value=question]');
     const termPicker = '.hpedia-reference-picker select';
     await mouseClick(termPicker);
     if (!await win.webContents.executeJavaScript(`document.querySelector('${termPicker}').matches(':open')`)) {
@@ -427,8 +542,10 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
         document.querySelector('${termPicker}').value === ''`)) {
       throw Error('Escape did not close the picker while keeping the selection');
     }
-    await mouseClick('#workspace-navigation button[aria-label="词典"]');
+    await mouseClick('#workspace-navigation button[aria-label="百科"]');
+    await renderer("const type = document.querySelector('select[aria-label=条目类型]'); type.value='term'; type.dispatchEvent(new Event('change',{bubbles:true}))");
     await mouseClick('.dictionary-heading button');
+    await mouseClick('#hpedia-create [value=term]');
     const sourceToggle = await win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button[aria-expanded][aria-controls]'))
       .find(button => button.firstElementChild?.textContent === '来源')?.getAttribute('aria-controls')`);
     if (!sourceToggle) throw Error('Native mouse did not open the Term draft');
@@ -447,7 +564,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
     if (!registeredPdf) throw Error('PDF chooser did not send the selected PDF through the bridge');
-    finish(result + '; PDF picker and registration, saved HTML formatting, all board creation routes and native minimize/restore threshold', 0);
+    finish(result + '; PDF picker and registration, saved HTML formatting, all board detail links and native minimize/restore threshold', 0);
   } catch (error) {
     finish(String(error), 1);
   }
