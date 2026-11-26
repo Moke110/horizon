@@ -560,6 +560,8 @@ def bulletin_board_command(librarian, command, *, token):
         identity = command.get("id")
         if command.get("kind") == "term":
             return "bulletin_term", librarian.view(identity, token=token)
+        if command.get("kind") == "frontier":
+            return "bulletin_frontier", librarian.view_frontier(identity, token=token)
         if command.get("kind") == "question":
             return "bulletin_question", librarian.view_question(identity, token=token)
     raise CommandError("invalid_command", "不支持的白板操作")

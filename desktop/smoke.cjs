@@ -36,10 +36,15 @@ const libraryState = {
   chats:[{task_id:'smoke', title:'Smoke', messages:[]}], current:0, busy:false,
   cards:[{card_id:'related-term',version:1,title:'Related term',aliases:['Alternate name'],content:'Definition only',status:'active',updated_at:1}],
   questions:[{question_id:'q1',version:1,prompt:'Prompt marker',answer:'Answer marker [[term:related-term]]',term_ids:['related-term']}],
+  bulletin_links:[
+    {kind:'term',id:'related-term',title:'Related term',summary:'Definition only',term_ids:['related-term'],validity:'valid'},
+    {kind:'question',id:'q1',title:'Prompt marker',summary:'Answer marker',term_ids:['related-term'],validity:'valid'},
+    {kind:'frontier',id:'following',title:'following',summary:'',term_ids:[]}
+  ],
   children:[{child_id:'report',role:'editor',status:'succeeded',result:JSON.stringify({report_id:'report',version:1})}],
   providers:[], materials:[{material_id:'material', title:'Test source', source:{label:'Source'}}, {material_id:'pdf', title:'Test PDF', source:{label:'Source'}}],
 };
-libraryState.frontiers=['following','paused'].map(status=>({frontier_id:status,question:status,status,tracked:status==='following'}));
+libraryState.frontiers=['following','paused'].map(status=>({frontier_id:status,version:1,question:status,status,tracked:status==='following'}));
 for(const [prompt,validity] of [['q2','valid'],['q3','questionable']]) {
   libraryState.questions.push({question_id:prompt,prompt,answer:'',term_ids:[],validity,tracked:true});
 }
@@ -50,6 +55,11 @@ dialog.showOpenDialog = async () => ({canceled:false, filePaths:[pdfFixture]});
 let registeredPdf = false;
 const server = net.createServer(socket => socket.on('data', chunk => {
   for (const line of chunk.toString().trim().split('\n')) {
+    if(line.includes('"action":"frontier_open"')){
+      socket.write(JSON.stringify({kind:'frontier_view',data:{...libraryState.frontiers[0],
+        operation_id:'seed',read_operation_id:JSON.parse(line).operation_id,
+        scope:{text:'',alternatives:[],sources:[]},hard_constraints:{must_include:[],exclude:[]},relations:[]}})+'\n');
+    }
     if (!line.includes('"action":"question_open"') && !line.includes('"action":"card_open"')) continue;
     const command = JSON.parse(line);
     const view = command.action === 'question_open'
@@ -417,10 +427,17 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     if (await currentType() !== 'frontier') throw Error('Board must start on frontiers');
     for (const kind of ['term', 'question', 'frontier']) {
       await chooseType(kind);
-      await renderer("document.querySelector('.bulletin-panel .dictionary-heading button').click()");
-      if (!await renderer("!!document.querySelector('.detail-body .frontier-detail form')")) {
-        throw Error('New frontier form missing from board type ' + kind);
-      }
+      await renderer("document.querySelector('.bulletin-panel [data-result]').click()");
+      const marker={term:'Related term',question:'Prompt marker',frontier:'following'}[kind];
+      await renderer(`(async()=>{
+        for(let n=0;n<100;n++){
+          const body=document.querySelector('.detail-body');
+          if(body && (body.textContent.includes(${JSON.stringify(marker)}) ||
+              [...body.querySelectorAll('input,textarea')].some(el=>el.value===${JSON.stringify(marker)})))return;
+          await new Promise(r=>setTimeout(r,25));
+        }
+        throw Error('Missing original board detail '+${JSON.stringify(kind)});
+      })()`);
       await renderer("document.querySelector('[aria-label=关闭详情]').click()");
     }
     await chooseType('term');
@@ -546,7 +563,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
     if (!registeredPdf) throw Error('PDF chooser did not send the selected PDF through the bridge');
-    finish(result + '; PDF picker and registration, saved HTML formatting, all board creation routes and native minimize/restore threshold', 0);
+    finish(result + '; PDF picker and registration, saved HTML formatting, all board detail links and native minimize/restore threshold', 0);
   } catch (error) {
     finish(String(error), 1);
   }
