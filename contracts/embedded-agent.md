@@ -21,7 +21,7 @@ Tool policies:
 | `intent_judgement` | none; JSON classification only |
 | `kb_read` | `read_file`; extracted source text only, no mutations |
 | Legacy business runs without a persisted desktop turn ID | `read_file`, `write_file`, `horizon_cli`, `delegate` |
-| Persisted desktop Explorer turn | `read_file`, `delegate`, `dictionary`, `hpedia_question`, `archive_source`, `frontier_tracking`, `library_test_cleanup` |
+| Persisted desktop Explorer turn | `read_file`, `delegate`, `dictionary`, `hpedia_question`, `archive_source`, `archive_report`, `frontier_tracking`, `library_test_cleanup` |
 | Editor, Voyager and Keeper children | Only their own read-only context tool |
 
 `horizon_cli` spawns an allowlisted business module with argv, without a shell.
@@ -50,6 +50,16 @@ retain a different original.
 unavailable after import. `restore` takes the same `sourceId` and fields
 `expected_version` and `file_id`. The cached file's hash must equal the entry's
 SHA-256. Both actions require Explorer confirmation.
+
+For `archive_report`, `stage` caches the HTML in the current task and returns
+its `draft_id`. `create` takes `draft_id`, `title`, `summary`, and nonempty
+`covered_docs` containing the documents actually discussed in the report.
+`import` takes a `report` entry with the original `report_id`, `sha256`,
+`title`, `summary`, and ordered `covered_docs`. If its HTML is available,
+also provide a `draft_id` from `stage` with the same SHA-256. The Explorer
+confirms both actions. Import retains each known document ID even if its file
+is offline, and replaces each missing entry at its original position with
+`d-unknown`. Those positions remain fixed after confirmation.
 
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,

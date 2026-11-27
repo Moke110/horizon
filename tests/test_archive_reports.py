@@ -93,3 +93,59 @@ def test_registered_report_rejects_in_place_changes(tmp_path):
         }, token=TOKEN, origin=ORIGIN)
     assert error.value.code == "immutable_report"
     assert service.open_report(report["report_id"], token=TOKEN) == {"report": report, "html": HTML}
+
+
+def test_import_report_without_html_preserves_id_hash_and_coverage_positions(tmp_path):
+    service = librarian(tmp_path)
+    missing_first, present_offline, missing_last = ["d-" + value * 32 for value in "abc"]
+    report_id = "r-" + "d" * 32
+    digest = hashlib.sha256(HTML.encode("utf-8")).hexdigest()
+
+    def import_offline_document(identity, operation_id):
+        service.request_source("import", {"operation_id": operation_id, "document": {
+            "source_id": identity, "sha256": "1" * 64, "title": "Offline evidence", "summary": "No local copy",
+        }}, token=TOKEN, origin=ORIGIN)
+        return service.decide(operation_id, "confirm", token=TOKEN, origin=ORIGIN)["results"][0]
+
+    assert import_offline_document(present_offline, "offline")["file_path"] is None
+    request = {"operation_id": "report-import", "report": {
+        "report_id": report_id, "sha256": digest, "title": "Imported report",
+        "summary": "Original HTML is unavailable",
+        "covered_docs": [missing_first, present_offline, missing_last],
+    }}
+    service.request_report("import", request, token=TOKEN, origin=ORIGIN)
+    assert service.list_reports(token=TOKEN) == []
+    decision = service.decide("report-import", "confirm", token=TOKEN, origin=ORIGIN)
+    assert decision["status"] == "confirmed"
+    imported, = decision["results"]
+    assert imported["report_id"] == report_id
+    assert imported["sha256"] == digest
+    assert imported["file_path"] is None
+    assert imported["status"] == "completed"
+    assert imported["covered_docs"] == ["d-unknown", present_offline, "d-unknown"]
+    assert [row["source_id"] for row in service.list_sources(token=TOKEN)] == [present_offline]
+
+    import_offline_document(missing_first, "found-first")
+    import_offline_document(missing_last, "found-last")
+    assert librarian(tmp_path).open_report(report_id, token=TOKEN) == {"report": imported, "html": None}
+
+
+def test_import_report_attaches_only_matching_cached_html(tmp_path):
+    service = librarian(tmp_path)
+    draft = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
+    report_id = "r-" + "b" * 32
+    request = {"operation_id": "import-with-html", "draft_id": draft["draft_id"], "report": {
+        "report_id": report_id, "sha256": "4" * 64, "title": "Original HTML available",
+        "summary": "Transferred report", "covered_docs": ["d-unknown"],
+    }}
+    with pytest.raises(CommandError) as error:
+        service.request_report("import", request, token=TOKEN, origin=ORIGIN)
+    assert error.value.code == "hash_mismatch"
+    request["report"]["sha256"] = draft["sha256"]
+    service.request_report("import", request, token=TOKEN, origin=ORIGIN)
+    result = service.decide("import-with-html", "confirm", token=TOKEN, origin=ORIGIN)
+    entry, = result["results"]
+    assert librarian(tmp_path).open_report(report_id, token=TOKEN) == {"report": entry, "html": HTML}
+    with pytest.raises(CommandError) as error:
+        service.request_report("import", {**request, "operation_id": "unrelated-import"}, token=TOKEN, origin=ORIGIN)
+    assert error.value.code == "immutable_report"

@@ -32,6 +32,9 @@ description: "Horizon built-in Pi agent workflow for bounded source retrieval, p
   讨论的文档 ID，背景脚注与未采用材料不列入。同一文档可被多篇报道覆盖。Librarian
   确认后，Archive 才登记原文与条目并显示「已完成」，返回永久的 `r-` 报道 ID。
   已登记 HTML、条目和覆盖列表均不可原地修改。中断或未确认的任务不会留下已发布报道。
+  导入已有报道时，用 `archive_report` 的 `import` 提交原 ID、SHA-256、标题、简介及按原
+  顺序排列的文档 ID。找不到 HTML 时仍能导入，已找到的 HTML 先缓存并核对 SHA-256。
+  缺少条目的引用在原位置记为 `d-unknown`，仅原件离线的文档保留真实 ID。
 - 检索推送：先用 `hostrun.cli run --intent daily` 检查闸门与续接状态。
   获准写作后读取 `skills/horizon-run/references/workflow.md`，完成检索、排序、写作、
   校验和交付，一次仅推送一篇。尊重未答问题、待复核标记和已发送状态。

@@ -129,7 +129,7 @@ class Librarian:
 
     def request_report(self, action, command, *, token, origin):
         self.library.authorize(token)
-        if action != "create":
+        if action not in ("create", "import"):
             raise CommandError("immutable_report", "已登记报道不能修改")
         if not isinstance(command, dict):
             raise CommandError("invalid_report", "需要有效的报道登记请求")
@@ -361,7 +361,7 @@ class Librarian:
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
                    "source": ("create", "register", "import", "restore", "update", "delete"),
-                   "report": ("create",),
+                   "report": ("create", "import"),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
@@ -413,7 +413,7 @@ class Librarian:
                         if action not in ("register", "create"):
                             term_ids.add("archive:" + proposed["source_id"])
                     elif entity == "report":
-                        proposed = self.library.reports.create(db, command, origin=origin, publish=False)
+                        proposed = self.library.reports.apply(db, action, command, origin=origin, publish=False)
                         summaries.append(proposed["title"])
                     elif entity == "frontier":
                         proposed, _ = self.library.apply_frontier(db, action, command, token=token, now=now)
@@ -482,7 +482,7 @@ class Librarian:
                         elif card.get("entity") == "source":
                             results.append(self.library.archive.apply(db, action, command, publish=True))
                         elif card.get("entity") == "report":
-                            results.append(self.library.reports.create(db, command, origin=origin, publish=True))
+                            results.append(self.library.reports.apply(db, action, command, origin=origin, publish=True))
                         elif card.get("entity") == "frontier":
                             frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
                             results.append(frontier)
