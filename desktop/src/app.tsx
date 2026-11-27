@@ -13,7 +13,7 @@ import './window-caption.css';
 import {SubscriptionPanel,type Subscription} from './SubscriptionPanel';
 import {VoyagerPanel,type VoyagerSummary} from './VoyagerPanel';
 import {SchedulePanel,type Schedule} from './SchedulePanel';
-import {ArchiveSourcesPanel,type ArchiveSource} from './ArchiveSourcesPanel';
+import {ArchiveDocumentView,ArchiveSourcesPanel,type ArchiveDocument,type ArchiveSource} from './ArchiveSourcesPanel';
 import {MaterialsPanel,type MaterialSummary,type MaterialPackage} from './MaterialsPanel';
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
@@ -43,7 +43,7 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
   },[card.status,card.expires_at]);
   const status=elapsed&&card.status==='pending'?'expired':card.status;
   const labels:Record<string,string>={aliases:'别名',sources:'来源',relations:'关系',
-    validity:'状态',tracked:'追踪中',questionable:'存疑',convergence:'收敛状态',reason:'修改理由',label:'来源说明',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
+    validity:'状态',tracked:'追踪中',questionable:'存疑',convergence:'收敛状态',reason:'修改理由',summary:'简介',citation:'学术引用',source_files:'缓存原件',label:'来源说明',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
   const fieldText=(field:string,value:unknown)=>{
     if(field==='validity') return value==='questionable'?'存疑':'有效';
     if(field==='tracked') return value?'是':'否';
@@ -66,7 +66,7 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
     <div className="author">图书管理员</div>
     {card.cleanup&&<CleanupEntries plan={card.cleanup}/>}
     {card.changes.map(([action,change],index)=><div key={index}>
-      <strong>{({create:'新增',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
+      <strong>{({create:'新增',register:'登记文档',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
       {card.entity!=='progress'&&previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
       <dl>{Object.entries(change).filter(([field])=>field in labels).map(([field,value])=><React.Fragment key={field}>
         <dt>{labels[field]}</dt><dd>{field==='convergence'?convergenceLabel(value as Convergence,card.entity==='question'?'question':'term'):fieldText(field,value)}</dd>
@@ -98,9 +98,10 @@ const sessionNeedle=sessionQuery.trim().toLocaleLowerCase();
 const matchingSessions=state.chats.map((chat,index)=>({chat,index})).filter(({chat})=>!sessionNeedle||chat.title.toLocaleLowerCase().includes(sessionNeedle));
 const requestedSource=useRef<string|null>(null);
 const [sourceUrl,setSourceUrl]=useState<string|null>(null);
+const [archiveDocument,setArchiveDocument]=useState<ArchiveDocument|null>(null);
 const [selectedMaterial,setSelectedMaterial]=useState<MaterialPackage|null>(null);
 const [detailHost,setDetailHost]=useState<HTMLDivElement|null>(null);
-const [detail,setDetail]=useState<'material'|'report'|'html'|'term'|'hpedia'|'bulletin'|'source-url'|'frontier'|null>(null);
+const [detail,setDetail]=useState<'material'|'report'|'html'|'term'|'hpedia'|'bulletin'|'archive-document'|'source-url'|'frontier'|null>(null);
 const [localHtml,setLocalHtml]=useState<{name:string;content:React.ReactNode}|null>(null);
 const htmlRequest=useRef(0);
 const [detailWidth,setDetailWidth]=useState(440);
@@ -108,7 +109,7 @@ const workzone=useRef<HTMLDivElement>(null);
 const dragStart=useRef<{x:number;width:number}|null>(null);
 const requestedMaterial=useRef<string|null>(null);
 const resizeDetail=(width:number)=>setDetailWidth(Math.max(240,Math.min(width,(workzone.current?.clientWidth||900)-320)));
-const closeDetail=()=>{setBoardLink(null);htmlRequest.current++;requestedMaterial.current=null;requestedSource.current=null;setDetail(null);setLocalHtml(null);setSourceUrl(null);};
+const closeDetail=()=>{setBoardLink(null);htmlRequest.current++;requestedMaterial.current=null;requestedSource.current=null;setDetail(null);setLocalHtml(null);setSourceUrl(null);setArchiveDocument(null);};
 const [feedbackHandoff,setFeedbackHandoff]=useState<FeedbackHandoff|null>(null);
 const [provider,setProvider]=useState(''),[configuring,setConfiguring]=useState(false),[configError,setConfigError]=useState('');
 const [voyagerView,setVoyagerView]=useState<any>(null),[voyagerHistory,setVoyagerHistory]=useState<{request_id:string}|null>(null),[frontierView,setFrontierView]=useState<Frontier|null>(null),[frontierViewEvent,setFrontierViewEvent]=useState<FrontierViewEvent|null>(null),[frontierError,setFrontierError]=useState<FrontierCommandError|null>(null);
@@ -118,7 +119,7 @@ const [keeperCount,setKeeperCount]=useState<number|null>(null),[keeperReview,set
 const pending=useRef<Record<string,string>>({});
 const bottom=useRef<HTMLDivElement>(null);
 const send=window.horizon.send;
-useEffect(()=>{const unsubscribe=window.horizon.subscribe(e=>{if(e.kind==='archive_source_url'&&e.data.source_id===requestedSource.current){setSourceUrl(e.data.url);setDetail('source-url');}if(e.kind==='material_package' && requestedMaterial.current && (!e.data || e.data.material_id===requestedMaterial.current)){setSelectedMaterial(e.data);setDetail(e.data?'material':null);}if(e.kind==='voyager_view'){setVoyagerView(e.data);setVoyagerHistory(current=>current?.request_id===e.data?.request_id?current:null);}if(e.kind==='voyager_history')setVoyagerHistory(e.data);if(e.kind==='frontier_view'){setFrontierView(e.data);setFrontierViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setFrontierError(null);}if(e.kind==='card_view'){setCardView(e.data);setCardViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setCardError(null);}if(e.kind==='theme_view'){setThemeView(e.data);setThemeViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setThemeError(null);}if(e.kind==='keeper_review'){setKeeperCount(null);setKeeperReview(n=>n+1);}if(e.kind==='configuration_saved'){setConfiguring(false);setSettings(false);setConfigError('');}if(e.kind==='configuration_error'){setConfiguring(false);setConfigError(e.data);}if(e.kind==='state'){setState(e.data);if(e.data.busy)pending.current={};if(!e.data.busy)setStream('');} if(e.kind==='agent'){if(e.data.type==='retry')setNotice(`请求暂时失败，正在重试 ${e.data.attempt}/3，等待 ${Math.ceil(e.data.delayMs/1000)} 秒`);if(e.data.type==='text')setStream(s=>s+e.data.text);if(e.data.type==='error')setStream(s=>s+'\n错误：'+e.data.message);if(e.data.type==='tool_call'||e.data.type==='tool_result')setTools(s=>[...s,`${e.data.type==='tool_call'?'调用':'完成'} · ${e.data.name}${e.data.isError?' · 失败':''}`]);}if(e.kind==='command_error'){setNotice(e.data.code==='unfinished_turn'?'请先继续或放弃未完成的轮次，再发送新消息。':e.data.message);setFrontierError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message});setCardError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});setThemeError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});const saved=pending.current[e.data.operation_id];if(saved!==undefined){setText(current=>current||saved);delete pending.current[e.data.operation_id];}}if(e.kind==='notice')setNotice(e.data);});send({action:'ready'});return unsubscribe;},[]);
+useEffect(()=>{const unsubscribe=window.horizon.subscribe(e=>{if(e.kind==='archive_document'&&e.data.document.source_id===requestedSource.current){setArchiveDocument(e.data);setDetail('archive-document');}if(e.kind==='archive_source_url'&&e.data.source_id===requestedSource.current){setSourceUrl(e.data.url);setDetail('source-url');}if(e.kind==='material_package' && requestedMaterial.current && (!e.data || e.data.material_id===requestedMaterial.current)){setSelectedMaterial(e.data);setDetail(e.data?'material':null);}if(e.kind==='voyager_view'){setVoyagerView(e.data);setVoyagerHistory(current=>current?.request_id===e.data?.request_id?current:null);}if(e.kind==='voyager_history')setVoyagerHistory(e.data);if(e.kind==='frontier_view'){setFrontierView(e.data);setFrontierViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setFrontierError(null);}if(e.kind==='card_view'){setCardView(e.data);setCardViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setCardError(null);}if(e.kind==='theme_view'){setThemeView(e.data);setThemeViewEvent({source:'view',operation_id:e.data?.operation_id,nonce:crypto.randomUUID()});setThemeError(null);}if(e.kind==='keeper_review'){setKeeperCount(null);setKeeperReview(n=>n+1);}if(e.kind==='configuration_saved'){setConfiguring(false);setSettings(false);setConfigError('');}if(e.kind==='configuration_error'){setConfiguring(false);setConfigError(e.data);}if(e.kind==='state'){setState(e.data);if(e.data.busy)pending.current={};if(!e.data.busy)setStream('');} if(e.kind==='agent'){if(e.data.type==='retry')setNotice(`请求暂时失败，正在重试 ${e.data.attempt}/3，等待 ${Math.ceil(e.data.delayMs/1000)} 秒`);if(e.data.type==='text')setStream(s=>s+e.data.text);if(e.data.type==='error')setStream(s=>s+'\n错误：'+e.data.message);if(e.data.type==='tool_call'||e.data.type==='tool_result')setTools(s=>[...s,`${e.data.type==='tool_call'?'调用':'完成'} · ${e.data.name}${e.data.isError?' · 失败':''}`]);}if(e.kind==='command_error'){setNotice(e.data.code==='unfinished_turn'?'请先继续或放弃未完成的轮次，再发送新消息。':e.data.message);setFrontierError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message});setCardError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});setThemeError({operation_id:e.data.operation_id,code:e.data.code,message:e.data.message,details:e.data.details});const saved=pending.current[e.data.operation_id];if(saved!==undefined){setText(current=>current||saved);delete pending.current[e.data.operation_id];}}if(e.kind==='notice')setNotice(e.data);});send({action:'ready'});return unsubscribe;},[]);
 useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth'});},[stream,state.chats,tab]);
 const openSettings=()=>{setProvider(state.provider||state.providers[0]?.id||'deepseek');setConfigError('');setSettings(true);};
 useEffect(()=>window.horizon.subscribe(event=>{
@@ -271,7 +272,7 @@ ${JSON.stringify(command)}`)}/>}
       expected_versions:proposal.changes.map(change=>change.expected_version??null),
       decision:choice==='confirm'?'approve':'reject'})}/>;
 })}{state.busy&&<article className="assistant"><div className="author">◈ Horizon <span className="pulse">●</span></div><Markdown>{stream||'正在思考…'}</Markdown></article>}<div ref={bottom}/></div><div className="compose-wrap">{tools.length>0&&<div className="activity">⌁ {tools[tools.length-1]}</div>}<div className="composer"><MultilineInput aria-label="发送消息" placeholder="发送消息，开始你的研究…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();submit();}}}/><div className="compose-footer"><span>◈ 研究助手</span>{state.configured?<><FixedSelect aria-label="选择模型" value={state.model} disabled={state.busy||state.configuring||configuring} onChange={e=>send({action:'select_model',model:e.target.value})}>{Array.from(new Set([state.model,...(state.models||[])])).filter(Boolean).map(m=><option key={m} value={m}>{m}</option>)}</FixedSelect><button disabled={state.busy||state.configuring||configuring} title="刷新模型列表" aria-label="刷新模型列表" onClick={()=>send({action:'refresh_models'})}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.34 5.66M20 12a8 8 0 0 0-2.34-5.66"/></svg></button></>:<button onClick={openSettings}>配置模型 <span aria-hidden="true" className="disclosure-indicator"/></button>}{state.busy?<button className="send" aria-label="停止" onClick={()=>send({action:'stop'})}>■</button>:<button className="send" aria-label="发送" disabled={!text.trim()||state.configuring} onClick={submit}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button>}</div></div><footer>{state.busy?'Agent 正在运行':'就绪'} · Enter 发送 · Shift + Enter 换行</footer></div></>}
-{tab==='materials'&&<ArchiveSourcesPanel sources={state.archive_sources||[]} materials={state.materials||[]} send={send} onOpen={openArchiveSource}/>}
+{tab==='materials'&&<ArchiveSourcesPanel sources={state.archive_sources||[]} send={send} onOpen={openArchiveSource}/>}
 <MaterialsPanel showList={tab==='materials'} onOpenHtml={openHtml} jobs={state.web_jobs||[]} materials={state.materials||[]} selectedPackage={detail==='material'?selectedMaterial:null} detailHost={detailHost} taskId={chat?.task_id} onCommand={materialsCommand}/></main>
   {detail && <>
     <div className="detail-resize" role="separator" tabIndex={0} aria-label="调整详情宽度" aria-orientation="vertical"
@@ -284,6 +285,7 @@ ${JSON.stringify(command)}`)}/>}
     <section className="workspace-detail" aria-label="工作区详情" style={{width:detailWidth}}>
       <div className="detail-toolbar"><Button aria-label="关闭详情" onClick={closeDetail}>×</Button></div>
       <div className="detail-body" ref={setDetailHost}>
+        {detail==='archive-document'&&archiveDocument&&<ArchiveDocumentView entry={archiveDocument} send={send}/>}
         {detail==='source-url'&&sourceUrl&&<section aria-label="原始来源链接">
           <p>{sourceUrl}</p>
           <button type="button" onClick={()=>send({action:'open_source_url',url:sourceUrl})}>在浏览器打开原文</button>
