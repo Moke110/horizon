@@ -18,7 +18,7 @@ type Tracking={frontier_id:string;progress:Progress[];history:VoyagerSummary[]};
 const statusText:Record<string,string>={following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 
 export function FrontierTracking({frontiers,terms,deleted={},matches,createRequest,sources,frontier,viewEvent,error,detailHost,openDetail,
-  send,openSource,openVoyager,lookup,boardFrontier}:{
+  send,openSource,openVoyager,onRetrieve,lookup,boardFrontier}:{
   lookup?:{id:string;version:number;nonce:string};
   boardFrontier?:FrontierSummary;
   frontiers:FrontierSummary[];
@@ -35,6 +35,7 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
   send:(command:Record<string,unknown>)=>void;
   openSource:(source:ArchiveSource)=>void;
   openVoyager:(requestId:string)=>void;
+  onRetrieve:(frontier:Frontier)=>void;
 }){
   const [selection,setSelection]=useState<Selection|null>(()=>boardFrontier?{kind:'open',id:boardFrontier.frontier_id,version:boardFrontier.version,nonce:crypto.randomUUID()}:null);
   const [tracking,setTracking]=useState<Tracking|null>(null);
@@ -85,7 +86,7 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
     {detailHost&&selection&&createPortal(<div aria-label="前沿详情" className="frontier-detail">
       {selectedId&&<CopyEntryId id={selectedId}/>}
       <KnowledgePanel frontiers={frontiers} selected={selected} viewEvent={viewEvent} commandError={error}
-        onCommand={send} embedded showList={false} openRequest={selection} titleOnly
+        onCommand={send} onRetrieve={onRetrieve} embedded showList={false} openRequest={selection} titleOnly
         onCommitted={(id,version)=>setSelection(current=>current?{kind:'open',id,version,nonce:current.nonce}:current)}/>
       {selectedId&&tracking?.frontier_id===selectedId&&<section aria-label="前沿进展">
         <h3>进展</h3>

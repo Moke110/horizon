@@ -91,8 +91,7 @@ def _build(source: Path, out: Path, **over):
         "compat": {
             "os": "windows",
             "arch": "x86_64",
-            "dsh": "0.2.1",
-            "python": "3.13",
+                "python": "3.13",
         },
     }
     options.update(over)
@@ -182,7 +181,6 @@ def test_manifest_covers_every_packaged_file_with_correct_bytes_and_digest(sourc
     assert manifest["compat"] == {
         "os": "windows",
         "arch": "x86_64",
-        "dsh": "0.2.1",
         "python": "3.13",
     }
 
@@ -283,7 +281,7 @@ def test_manifest_schema_file_declares_the_same_contract():
         "files",
     }
     assert schema["properties"]["channel"]["enum"] == ["stable", "prerelease"]
-    assert set(schema["properties"]["compat"]["required"]) == {"os", "arch", "dsh", "python"}
+    assert set(schema["properties"]["compat"]["required"]) == {"os", "arch", "python"}
     assert set(schema["properties"]["files"]["items"]["required"]) == {
         "path",
         "bytes",

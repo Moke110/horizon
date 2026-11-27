@@ -114,7 +114,6 @@ def _source_lock(**overrides) -> dict:
         "source_url": REPO_URL,
         "installed_at": "2026-10-31T10:00:00+08:00",
         "requires": {},
-        "skill_digest": "",
     }
     lock.update(overrides)
     return lock
@@ -157,7 +156,6 @@ def test_workspace_install_records_a_truthful_source_lock(tmp_path, capsys, monk
     assert lock["dirty"] is False
     assert lock["source_url"] == REPO_URL
     assert lock["requires"] == {}
-    assert lock["skill_digest"] == ""
     datetime.fromisoformat(lock["installed_at"])
     # A source install must never invent package evidence.
     for key in (
@@ -311,7 +309,6 @@ def test_install_lock_schema_documents_both_distributions():
         "source_url",
         "installed_at",
         "requires",
-        "skill_digest",
     }
     assert {"commit", "dirty"} <= set(schema["properties"])
     branches = json.dumps(schema, ensure_ascii=False)

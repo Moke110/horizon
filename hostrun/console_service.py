@@ -715,7 +715,7 @@ def run_control(
     """Write one control request and wait (bounded) for the console's response.
 
     ``status`` falls back to a local read-only snapshot when no console is
-    running, so the host agent always gets an answer.  ``start``/``stop``/``push``
+    running, so the CLI caller always gets an answer.  ``start``/``stop``/``push``
     report ``consumed: false`` rather than pretending the console acted.
     """
     home = Path(home)

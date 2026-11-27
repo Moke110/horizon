@@ -315,7 +315,8 @@ def test_cli_reports_install_status_as_json(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
 
     assert code == 0
-    assert payload["steps"]["host"] == "pending"
+    assert payload["steps"]["workspace"] == "pending"
+    assert {"host", "skill"}.isdisjoint(payload["steps"])
 
 
 def test_cli_feedback_setup_and_status_offline(configured_home, offline_base, capsys):

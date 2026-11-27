@@ -346,7 +346,6 @@ def test_build_argv_carries_release_inputs_and_explicit_compat():
         ("--os", "windows"),
         ("--arch", "x86_64"),
         ("--python", "3.13"),
-        ("--dsh", "*"),
     ]:
         assert flag in argv
         assert argv[argv.index(flag) + 1] == value

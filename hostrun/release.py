@@ -57,7 +57,7 @@ ENTRY_FIELDS = (
     "published_at",
     "release_url",
 )
-COMPAT_FIELDS = ("os", "arch", "dsh", "python")
+COMPAT_FIELDS = ("os", "arch", "python")
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: Semver core.  Numeric components and numeric prerelease identifiers reject
@@ -191,7 +191,7 @@ def _validate_compat(compat) -> None:
     if not isinstance(compat, dict):
         raise ReleaseError("release entry compat must be an object")
     missing = [field for field in COMPAT_FIELDS if field not in compat]
-    unexpected = sorted(set(compat) - set(COMPAT_FIELDS))
+    unexpected = sorted(set(compat) - (set(COMPAT_FIELDS) | {"dsh"}))
     if missing:
         raise ReleaseError(
             f"release entry compat is missing fields: {', '.join(missing)}"
@@ -200,7 +200,7 @@ def _validate_compat(compat) -> None:
         raise ReleaseError(
             f"release entry compat has unknown fields: {', '.join(unexpected)}"
         )
-    for field in COMPAT_FIELDS:
+    for field in compat:
         value = compat[field]
         if not isinstance(value, str) or not value.strip():
             raise ReleaseError(
@@ -292,7 +292,7 @@ def canonical_entry(entry) -> dict:
         "artifact_sha256": entry["artifact_sha256"],
         "artifact_name": entry["artifact_name"],
         "manifest_sha256": entry["manifest_sha256"],
-        "compat": {field: entry["compat"][field] for field in COMPAT_FIELDS},
+        "compat": {field: entry["compat"][field] for field in (*COMPAT_FIELDS, "dsh") if field in entry["compat"]},
         "published_at": entry["published_at"],
         "release_url": entry["release_url"],
     }
@@ -749,15 +749,15 @@ def release_notes(
         "",
         "### Compatibility",
         "",
-        "| os | arch | dsh | python |",
-        "| --- | --- | --- | --- |",
-        f"| {compat['os']} | {compat['arch']} | {compat['dsh']} | {compat['python']} |",
+        "| os | arch | python |",
+        "| --- | --- | --- |",
+        f"| {compat['os']} | {compat['arch']} | {compat['python']} |",
         "",
         "### Install",
         "",
         "1. Download the `.zip` and its `.digest.json` from this release.",
         "2. Verify the zip's SHA-256 against the digest before extracting.",
-        "3. Install it as a distribution package with the host agent; users do "
+        "3. Install it as a Horizon distribution package; users do "
         "not need git, uv or a system Python.",
         "",
         f"The machine-readable release index is `releases/index.json` in "
@@ -798,10 +798,11 @@ def build_argv(
     merged = {
         "os": "windows",
         "arch": "x86_64",
-        "dsh": "*",
         "python": "3.13",
     }
     for key, value in (compat or {}).items():
+        if key == "dsh":
+            continue
         if key not in merged:
             raise ReleaseError(
                 f"unknown compat field {key!r}; expected {', '.join(merged)}"
@@ -832,8 +833,6 @@ def build_argv(
         merged["arch"],
         "--python",
         merged["python"],
-        "--dsh",
-        merged["dsh"],
     ]
 
 

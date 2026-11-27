@@ -165,7 +165,6 @@ def test_install_lock_schema_declares_the_same_contract():
         "source_url",
         "installed_at",
         "requires",
-        "skill_digest",
     }
     assert schema["properties"]["distribution"]["enum"] == ["package", "source"]
     assert schema["properties"]["channel"]["enum"] == ["stable", "prerelease"]
@@ -190,7 +189,6 @@ def test_install_lock_schema_declares_the_same_contract():
     assert set(package["properties"]["requires"]["required"]) == {
         "os",
         "arch",
-        "dsh",
         "python",
     }
     assert set(source["required"]) == {"commit", "dirty"}
@@ -245,7 +243,7 @@ def test_install_extracts_the_package_and_writes_the_complete_lock(tmp_path):
     assert lock["artifact_sha256"] == result["artifact"]["sha256"]
     assert lock["source_url"] == source_url
     assert lock["requires"] == manifest["compat"]
-    assert lock["skill_digest"] == ""
+    assert "skill_digest" not in lock
     assert lock["package_file_count"] == len(manifest["files"])
     assert lock["manifest_sha256"] == hashlib.sha256(
         (code / "manifest.json").read_bytes()
@@ -525,107 +523,14 @@ def _recorded_dsh(code: Path, path: Path) -> None:
     )
 
 
-def _version_runner(output: str, *, returncode: int = 0):
-    class Proc:
-        pass
-
-    proc = Proc()
-    proc.returncode = returncode
-    proc.stdout = output
-    proc.stderr = ""
-    return lambda argv, **kwargs: proc
 
 
-@pytest.mark.parametrize("requirement", [">=0.2.1", "0.2.3"])
-def test_dsh_compat_match_is_reported(tmp_path, requirement):
-    compat = _host_compat()
-    compat["dsh"] = requirement
-    result = _build(tmp_path, compat=compat)
-    code = tmp_path / "code"
-    dsh = tmp_path / "dsh.exe"
-    dsh.write_text("", encoding="utf-8")
-    _recorded_dsh(code, dsh)
-
-    payload = dist.install_package(
-        code,
-        from_source=str(result["artifact"]["path"]),
-        runner=_version_runner("dsh 0.2.3\n"),
-    )
-
-    assert payload["ok"] is True
-    assert payload["compat_dsh"]["status"] == "ok"
-    assert payload["compat_dsh"]["host"] == "0.2.3"
 
 
-def test_dsh_compat_mismatch_blocks_before_extraction(tmp_path):
-    compat = _host_compat()
-    compat["dsh"] = ">=0.2.1"
-    result = _build(tmp_path, compat=compat)
-    code = tmp_path / "code"
-    dsh = tmp_path / "dsh.exe"
-    dsh.write_text("", encoding="utf-8")
-    _recorded_dsh(code, dsh)
-
-    payload = dist.install_package(
-        code,
-        from_source=str(result["artifact"]["path"]),
-        runner=_version_runner("dsh 0.1.0\n"),
-    )
-
-    assert payload["status"] == "blocked"
-    assert payload["reason"] == "compat_dsh_mismatch"
-    assert payload["field"] == "compat.dsh"
-    assert not (code / "manifest.json").exists()
-    assert not (code / ".horizon" / "dist.lock.json").exists()
-    assert not (code / ".horizon" / "staging").exists()
 
 
-@pytest.mark.parametrize(
-    ("runner", "note_fragment"),
-    [
-        (_version_runner("not a version"), "无法从"),
-        (_version_runner("dsh 0.2.3", returncode=1), "退出码非零"),
-    ],
-    ids=["unparsable", "runner-failure"],
-)
-def test_dsh_compat_unavailable_is_unverified_never_silent(
-    tmp_path, runner, note_fragment
-):
-    compat = _host_compat()
-    compat["dsh"] = ">=0.2.1"
-    result = _build(tmp_path, compat=compat)
-    code = tmp_path / "code"
-    dsh = tmp_path / "dsh.exe"
-    dsh.write_text("", encoding="utf-8")
-    _recorded_dsh(code, dsh)
-
-    payload = dist.install_package(
-        code,
-        from_source=str(result["artifact"]["path"]),
-        runner=runner,
-    )
-
-    assert payload["ok"] is True
-    assert payload["compat_dsh"]["status"] == "unverified"
-    assert note_fragment in payload["compat_dsh"]["note"]
-    assert "宿主 dsh 兼容性未验证" in payload["note"]
 
 
-def test_dsh_compat_without_a_recorded_dsh_is_unverified(tmp_path):
-    compat = _host_compat()
-    compat["dsh"] = ">=0.2.1"
-    result = _build(tmp_path, compat=compat)
-    code = tmp_path / "code"
-
-    payload = dist.install_package(
-        code,
-        from_source=str(result["artifact"]["path"]),
-        runner=_version_runner("dsh 0.2.3\n"),
-    )
-
-    assert payload["ok"] is True
-    assert payload["compat_dsh"]["status"] == "unverified"
-    assert "未记录 paths.dsh" in payload["compat_dsh"]["note"]
 
 
 def test_wildcard_compatibility_accepts_every_host(tmp_path):
@@ -1049,3 +954,25 @@ def test_cli_channel_flag_is_recorded_in_the_lock(tmp_path, capsys):
         )
     )
     assert lock["channel"] == "prerelease"
+
+
+def test_legacy_dsh_metadata_never_executes_a_host(tmp_path, monkeypatch):
+    result = _build(tmp_path)
+    artifact = Path(result["artifact"]["path"])
+    with zipfile.ZipFile(artifact) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert "dsh" not in manifest["compat"]
+    manifest["compat"]["dsh"] = ">=99.0.0"
+    artifact.write_bytes(_rewrite_zip(artifact, replace={"manifest.json": json.dumps(manifest).encode()}))
+    code = tmp_path / "code"
+    dsh = tmp_path / "dsh.exe"
+    dsh.touch()
+    _recorded_dsh(code, dsh)
+
+    def reject(*args, **kwargs):
+        pytest.fail("Installation attempted to run an external host")
+
+    monkeypatch.setattr("subprocess.Popen", reject)
+    payload = dist.install_package(code, from_source=str(artifact), sha256=hashlib.sha256(artifact.read_bytes()).hexdigest())
+    assert payload["ok"] is True
+    assert dist.read_lock(code)["requires"]["dsh"] == ">=99.0.0"

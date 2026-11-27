@@ -48,6 +48,19 @@ libraryState.frontiers=['following','paused'].map(status=>({frontier_id:status,v
 for(const [prompt,validity] of [['q2','valid'],['q3','questionable']]) {
   libraryState.questions.push({question_id:prompt,prompt,answer:'',term_ids:[],validity,tracked:true});
 }
+const archivedSearch = {
+  request_id:'archived-search', version:2, status:'complete',
+  scope:{kind:'frontier', frontier_id:'following', frontier_version:1, text:'Archived scope snapshot',
+    must_include:['scope marker'], exclude:[], sources:['arxiv']},
+  window:{from_at:1700000000,until_at:1700100000,basis:'published',mode:'initial'},
+  used:{seconds:1,queries:1,candidates:1,fulltexts:0}, limits:{seconds:20,queries:4,candidates:10,fulltexts:2},
+  successful_cursors:{}, queries:[], gaps:[], gap_count:0, candidate_count:1,
+  candidate_groups:[{identity:'archived-source',change:'new',candidate_indexes:[0],is_new:true,scope_links:[]}],
+  candidates:[{title:'Archived source citation',source:'arxiv',source_id:'2301.00001',
+    url:'https://arxiv.org/abs/2301.00001',query_ids:[],missing_fields:[]}],
+};
+let unexpectedDraftPlans = 0;
+let submittedFrontierSearch = false;
 const pdfFileName = 'chooser-fixture.pdf';
 const pdfFixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), pdfFileName);
 fs.writeFileSync(pdfFixture, Buffer.from(blankPdf(), 'base64'));
@@ -55,10 +68,23 @@ dialog.showOpenDialog = async () => ({canceled:false, filePaths:[pdfFixture]});
 let registeredPdf = false;
 const server = net.createServer(socket => socket.on('data', chunk => {
   for (const line of chunk.toString().trim().split('\n')) {
+    if(line.includes('"action":"voyager_create"'))unexpectedDraftPlans++;
+    if(line.includes('"action":"send"')&&JSON.parse(line).text.includes('Current frontier scope')){
+      submittedFrontierSearch = true;
+      socket.write(JSON.stringify({kind:'agent',data:{type:'tool_call',name:'arxiv_search'}})+'\n');
+    }
+    if(line.includes('"action":"voyager_open"')){
+      socket.write(JSON.stringify({kind:'voyager_view',data:archivedSearch})+'\n');
+    }
+    if(line.includes('"action":"frontier_tracking"')){
+      socket.write(JSON.stringify({kind:'frontier_tracking',data:{frontier_id:JSON.parse(line).frontier_id,
+        progress:[],history:[{request_id:archivedSearch.request_id,scope_text:archivedSearch.scope.text}]}})+'\n');
+    }
     if(line.includes('"action":"frontier_open"')){
       socket.write(JSON.stringify({kind:'frontier_view',data:{...libraryState.frontiers[0],
         operation_id:'seed',read_operation_id:JSON.parse(line).operation_id,
-        scope:{text:'',alternatives:[],sources:[]},hard_constraints:{must_include:[],exclude:[]},relations:[]}})+'\n');
+        scope:{text:'Current frontier scope',alternatives:['alternative phrase'],sources:['arxiv']},
+        hard_constraints:{must_include:['keep marker'],exclude:['exclude marker']},relations:[]}})+'\n');
     }
     if (!line.includes('"action":"question_open"') && !line.includes('"action":"card_open"')) continue;
     const command = JSON.parse(line);
@@ -332,7 +358,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       clickNamed('删除关联术语 Related term');
       await wait(() => !relations.textContent.includes('Related term'));
       dialog = await openDialog('关联术语');
-      navigation.querySelector('button[aria-label="资料"]').click();
+      navigation.querySelector('button[aria-label="资料库"]').click();
       await wait(() => !dialog.isConnected && !document.querySelector('main > [inert]'));
 
       const filePicker = document.querySelector('[aria-label="打开 HTML"]');
@@ -441,6 +467,49 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       })()`);
       await renderer("document.querySelector('[aria-label=关闭详情]').click()");
     }
+    await chooseType('frontier');
+    await renderer("document.querySelector('.bulletin-panel [data-result]').click()");
+    await renderer(`(async()=>{
+      const findButton=text=>[...document.querySelectorAll('.detail-body button')].find(button=>button.textContent.includes(text));
+      for(let n=0;n<100;n++){
+        const launch=findButton('在会话中检索');
+        if(launch){launch.click();break;}
+        await new Promise(r=>setTimeout(r,25));
+      }
+      for(let n=0;n<100;n++){
+        const draft=document.querySelector('textarea[aria-label="发送消息"]')?.value||'';
+        if(['following','Current frontier scope','alternative phrase','keep marker','exclude marker']
+          .every(marker=>draft.includes(marker))){
+          document.querySelector('button[aria-label="发送"]').click();
+          for(let attempt=0;attempt<100;attempt++){
+            if(document.querySelector('.activity')?.textContent.includes('arxiv_search'))return;
+            await new Promise(r=>setTimeout(r,25));
+          }
+          throw Error('Frontier search did not reach the Agent session');
+        }
+        await new Promise(r=>setTimeout(r,25));
+      }
+      throw Error('Frontier retrieval did not open a session with the committed scope');
+    })()`);
+    await renderer("document.querySelector('button[aria-label=白板]').click()");
+    await renderer("document.querySelector('.bulletin-panel [data-result]').click()");
+    await renderer(`(async()=>{
+      for(let n=0;n<100;n++){
+        const old=[...document.querySelectorAll('.detail-body button')]
+          .find(button=>button.textContent.includes('Archived scope snapshot'));
+        if(old){old.click();break;}
+        await new Promise(r=>setTimeout(r,25));
+      }
+      for(let n=0;n<100;n++){
+        const main=document.querySelector('main')?.textContent||'';
+        if(['检索历史','Archived scope snapshot','前沿版本 1','Archived source citation','arxiv.org/abs/2301.00001']
+          .every(marker=>main.includes(marker)))return;
+        await new Promise(r=>setTimeout(r,25));
+      }
+      throw Error('Old Frontier search scope or provenance unavailable');
+    })()`);
+    if(!submittedFrontierSearch||unexpectedDraftPlans)throw Error('Frontier Agent submission used the wrong command');
+    await renderer("document.querySelector('button[aria-label=白板]').click()");
     await chooseType('term');
     await renderer("document.querySelector('button[aria-label=百科]').click()");
     await renderer("document.querySelector('button[aria-label=白板]').click()");
@@ -466,7 +535,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     }
     const fixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), 'research-view.html');
     fs.writeFileSync(fixture, '<h1>Saved HTML report</h1><script>throw Error("unsafe")</script><p><strong>Report emphasis</strong></p>');
-    await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="资料"]').click()`);
+    await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="资料库"]').click()`);
     win.webContents.debugger.attach('1.3');
     try {
       const {root} = await win.webContents.debugger.sendCommand('DOM.getDocument');
@@ -564,7 +633,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       fs.writeFileSync(process.env.HORIZON_SMOKE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
     if (!registeredPdf) throw Error('PDF chooser did not send the selected PDF through the bridge');
-    finish(result + '; PDF picker and registration, saved HTML formatting, all board detail links and native minimize/restore threshold', 0);
+    finish(result + '; PDF picker and registration, saved HTML formatting, all board detail links, Frontier Agent retrieval, historical search provenance and native minimize/restore threshold', 0);
   } catch (error) {
     finish(String(error), 1);
   }

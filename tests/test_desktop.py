@@ -536,3 +536,36 @@ def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypat
     committed, = app.service.list_turns(app.task_id, token='s')
     assert committed['status'] == 'completed'
     assert committed['result'] == '{"report_id":"report","version":2}'
+
+def test_desktop_turn_exposes_retriever_catalog_without_configuration(tmp_path, monkeypatch):
+    import json
+    from hostrun import desktop_worker as module
+    from retriever.registry import configure_source, toggle_source
+
+    app = worker(tmp_path)
+    app.turn = {"turn_id": "test-turn"}
+    app._attempt = lambda turn: None
+    configure_source(tmp_path, "openalex", "test-secret")
+    toggle_source(tmp_path, "openalex", True)
+    monkeypatch.setattr(module.embedded_agent, "argv", lambda *a, **kw: ["node", "agent"])
+    environments = []
+
+    class Process:
+        stdin = io.StringIO()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def wait(self):
+            return 0
+
+    def launch(*args, **kwargs):
+        environments.append(kwargs["env"])
+        return Process()
+
+    monkeypatch.setattr(module.subprocess, "Popen", launch)
+    app.run_agent("Search graph theory")
+    raw = environments[0]["HORIZON_RETRIEVER_SOURCES"]
+    assert "test-secret" not in raw
+    sources = {source["id"]: source for source in json.loads(raw)}
+    assert sources["openalex"] == {"id": "openalex", "name": "OpenAlex", "enabled": True}
+    assert all(set(source) == {"id", "name", "enabled"} for source in sources.values())

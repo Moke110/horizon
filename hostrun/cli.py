@@ -1,4 +1,4 @@
-"""hostrun CLI: the entry points a host agent calls.
+"""Horizon runtime and maintenance commands.
 
     python -m hostrun.cli install check|status|report|record
     python -m hostrun.cli install package --from <artifact> [--digest <json>] [--sha256 <hex>]
@@ -36,18 +36,6 @@ from hostrun import executor, facilities, feedback, initialize, install, intents
 from hostrun import layout as layout_mod
 from hostrun import workspace as workspace_mod
 from hostrun.base import HostRunError, load_config
-
-
-def _host_declaration(args) -> dict | None:
-    if not args.host_product:
-        return None
-    return {
-        "product": args.host_product,
-        "version": args.host_version or "",
-        "mode": args.host_mode or "",
-        "local_execution": bool(args.host_local_execution),
-        "permissions": [p for p in (args.permissions or "").split(",") if p.strip()],
-    }
 
 
 def _add_resource_token_args(parser: argparse.ArgumentParser) -> None:
@@ -88,11 +76,6 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--lark-cli", dest="lark_cli")
     c.add_argument("--python", dest="python_path")
     c.add_argument("--timezone", dest="timezone_name")
-    c.add_argument("--host-product")
-    c.add_argument("--host-version")
-    c.add_argument("--host-mode")
-    c.add_argument("--host-local-execution", action="store_true")
-    c.add_argument("--permissions", help="comma separated granted scopes")
     c.add_argument("--workspace-root", help="installation workspace recorded by install workspace")
     _add_resource_token_args(c)
     isub.add_parser("status")
@@ -136,10 +119,6 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--uv", dest="uv_path")
     t.add_argument("--python-version", default=workspace_mod.DEFAULT_PYTHON)
     t.add_argument("--clear", action="store_true", help="rebuild a missing or broken data-root interpreter")
-    sk = isub.add_parser("skill", help="register the horizon-run launcher for the host")
-    sk.add_argument("--root", required=True)
-    sk.add_argument("--target", required=True, help="host skill directory for horizon-run")
-    sk.add_argument("--dry-run", action="store_true")
     loc = isub.add_parser("locate", help="print the nearest workspace record")
     loc.add_argument("--start")
 
@@ -286,7 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--by",
             dest="control_by",
             default="",
-            help="initiator recorded in the console event stream (default: host agent)",
+            help="initiator recorded in the console event stream (default: Horizon CLI)",
         )
         action.add_argument(
             "--wait",
@@ -405,7 +384,7 @@ def _dispatch(args, root: Path, offline: bool, resolved: dict | None = None) -> 
             payload = console_service.run_control(
                 root,
                 args.control_action,
-                initiator=getattr(args, "control_by", "") or "host-agent",
+                initiator=getattr(args, "control_by", "") or "horizon-cli",
                 wait_seconds=getattr(args, "control_wait", 2.0),
             )
             return (0 if payload.get("ok") else 1), payload
@@ -587,32 +566,6 @@ def _install(args, root: Path, resolved: dict | None = None) -> tuple[int, dict]
             )
         return (0 if result["ok"] else 1), result
 
-    if args.action == "skill":
-        result = workspace_mod.register_skill(args.root, args.target, dry_run=args.dry_run)
-        record = workspace_mod.load_record(args.root)
-        data_root = Path(record.get("home") or root)
-        if not args.dry_run:
-            ensure_dir(data_root / "install")
-            install.record(
-                data_root,
-                "skill",
-                "ok" if result["ok"] else "blocked",
-                note=(
-                    f"入口 {result.get('skill')}"
-                    if result["ok"]
-                    else "；".join(result.get("problems") or [result.get("note", "")])
-                ),
-                evidence={
-                    "skill": result.get("skill"),
-                    "entry": result.get("entry"),
-                    "references": result.get("references"),
-                },
-                recheck=True,
-            )
-            if result["ok"]:
-                update_config(data_root, paths={"skill": result["skill"]})
-        return (0 if result["ok"] else 1), result
-
     if args.action == "locate":
         record = workspace_mod.locate(args.start)
         if not record:
@@ -623,7 +576,6 @@ def _install(args, root: Path, resolved: dict | None = None) -> tuple[int, dict]
         result = install.check(
             root,
             repo=args.repo,
-            host=_host_declaration(args),
             lark_cli=args.lark_cli,
             python=args.python_path,
             timezone_name=args.timezone_name,

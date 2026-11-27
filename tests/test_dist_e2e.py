@@ -56,7 +56,6 @@ RUNTIME_FILES = {
 DOCUMENTED_INSTALL_STEPS = (
     "install package",
     "console install",
-    "install skill",
     "install verify",
     "install report",
     "install rollback",
@@ -73,7 +72,6 @@ INSTALL_CHOICES = {
     "rollback",
     "workspace",
     "toolchain",
-    "skill",
     "locate",
 }
 CONSOLE_CHOICES = {"control", "install"}
@@ -183,7 +181,7 @@ def test_readme_documented_install_steps_exist_and_are_in_order() -> None:
     assert "install" in _walk_subparsers(console)
 
 
-def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path, capsys):
+def test_distribution_package_install_upgrade_rollback_end_to_end(tmp_path, capsys):
     v1 = _build_package(tmp_path, version="1.0.0", commit="1111111", marker="V1")
     v2 = _build_package(tmp_path, version="2.0.0", commit="2222222", marker="V2")
     v1_manifest = _manifest(v1)
@@ -194,9 +192,6 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     archive = workspace_root / "archive"
     code.mkdir(parents=True)
     archive.mkdir(parents=True)
-    host_skills = workspace_root / "host-skills" / "horizon-run"
-    fake_dsh = tmp_path / "dsh.cmd"
-    fake_dsh.write_text("@echo off\n", encoding="utf-8")
 
     # 1. install package -> lock, current pointer and bundled wrapper.
     exit_code, payload, _ = _cli(
@@ -234,93 +229,6 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     )
     assert "python.exe" not in console_text
 
-    # 3. install skill -> pointer derived from the package lock, not a fake
-    #    source record; the workspace record is persisted only after this write.
-    exit_code, payload, _ = _cli(
-        capsys,
-        code,
-        archive,
-        "install",
-        "skill",
-        "--root",
-        str(code),
-        "--target",
-        str(host_skills),
-    )
-    assert exit_code == 0
-    assert payload["ok"] is True
-    assert payload["distribution"] == "package"
-
-    pointer_path = host_skills / "SKILL.md"
-    pointer = pointer_path.read_text(encoding="utf-8")
-    lock = dist.read_lock(code)
-    digest = workspace.entry_digest(code)
-    assert "发行来源：package" in pointer
-    assert "发行版本：1.0.0" in pointer
-    assert "发行渠道：prerelease" in pointer
-    assert f"制品摘要：{v1['artifact']['sha256']}" in pointer
-    assert f"发行包来源：{lock['source_url']}" in pointer
-    assert f"技能摘要：{digest}" in pointer
-    assert f"安装锁：{code / '.horizon' / 'dist.lock.json'}" in pointer
-    assert f"- 入口点：{code / 'bin' / 'horizon.cmd'}" in pointer
-    assert "使用上面记录的入口点" in pointer
-    assert "不要自行拼接 `-m hostrun.cli`" in pointer
-
-    record = workspace.load_record(code)
-    assert record["repo"] == str(code.resolve())
-    assert record["home"] == str((code / ".horizon").resolve())
-    assert record["root"] == str(code.resolve())
-    assert record["repo_url"] == lock["source_url"]
-    assert record["commit"] == v1_manifest["built_from_commit"]
-    assert record["python"] == str(code / "runtime" / "python.exe")
-    assert record["entry"] == str(code / "bin" / "horizon.cmd")
-    assert record["dirty"] is False
-    assert lock["distribution"] == "package"
-    assert lock["version"] == "1.0.0"
-    assert lock["artifact_sha256"] == v1["artifact"]["sha256"]
-    assert lock["skill_digest"] == digest
-
-    status = workspace.verify_skill(record)
-    assert status["ok"] is True
-    assert status["distribution"] == "package"
-    assert status["version"] == "1.0.0"
-    assert status["reasons"] == []
-
-    # 4. a tampered lock version or pointer/lock digest blocks verification.
-    lock_bytes = (code / ".horizon" / "dist.lock.json").read_bytes()
-    tampered = json.loads(lock_bytes)
-    tampered["version"] = "9.9.9"
-    (code / ".horizon" / "dist.lock.json").write_text(
-        json.dumps(tampered), encoding="utf-8"
-    )
-    status = workspace.verify_skill(workspace.load_record(code))
-    assert status["ok"] is False
-    assert "lock_version_mismatch" in status["reasons"]
-    (code / ".horizon" / "dist.lock.json").write_bytes(lock_bytes)
-
-    pointer_bytes = pointer_path.read_bytes()
-    pointer_path.write_text(
-        pointer.replace(
-            f"制品摘要：{lock['artifact_sha256']}",
-            f"制品摘要：{'0' * 64}",
-        ),
-        encoding="utf-8",
-    )
-    status = workspace.verify_skill(workspace.load_record(code))
-    assert status["ok"] is False
-    assert "lock_artifact_mismatch" in status["reasons"]
-    pointer_path.write_bytes(pointer_bytes)
-
-    pointer_path.write_text(
-        pointer.replace(f"技能摘要：{digest}", f"技能摘要：{'0' * 64}"),
-        encoding="utf-8",
-    )
-    status = workspace.verify_skill(workspace.load_record(code))
-    assert status["ok"] is False
-    assert "skill_digest_mismatch" in status["reasons"]
-    pointer_path.write_bytes(pointer_bytes)
-    assert workspace.verify_skill(workspace.load_record(code))["ok"] is True
-
     # 5. run state survives every package swap byte for byte.
     # A package swap must leave every runtime file alone.  This sentinel is not
     # ``install/state.json`` because re-running the documented ``install skill``
@@ -357,26 +265,6 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert console_path.read_bytes() == console_before
     assert (code / "bin" / "horizon.cmd").read_bytes() == wrapper_before
 
-    # 6b. the documented remediation: re-run install skill, then verify_skill.
-    exit_code, payload, _ = _cli(
-        capsys,
-        code,
-        archive,
-        "install",
-        "skill",
-        "--root",
-        str(code),
-        "--target",
-        str(host_skills),
-    )
-    assert exit_code == 0
-    assert payload["ok"] is True
-    refreshed = workspace.load_record(code)
-    assert refreshed["version"] == "2.0.0"
-    assert refreshed["commit"] == v2_manifest["built_from_commit"]
-    assert workspace.verify_skill(refreshed)["ok"] is True
-    assert "发行版本：2.0.0" in pointer_path.read_text(encoding="utf-8")
-
     # 7. rollback -> v1 again, same run state, launcher still valid, verify passes.
     exit_code, payload, _ = _cli(capsys, code, archive, "install", "rollback")
     assert exit_code == 0
@@ -389,26 +277,6 @@ def test_distribution_package_install_skill_upgrade_rollback_end_to_end(tmp_path
     assert console_path.read_bytes() == console_before
     assert (code / "bin" / "horizon.cmd").read_bytes() == wrapper_before
     assert dist.verify_install(code)["status"] == "verified"
-
-    # 7b. the same refresh works after rollback.
-    exit_code, payload, _ = _cli(
-        capsys,
-        code,
-        archive,
-        "install",
-        "skill",
-        "--root",
-        str(code),
-        "--target",
-        str(host_skills),
-    )
-    assert exit_code == 0
-    assert payload["ok"] is True
-    refreshed = workspace.load_record(code)
-    assert refreshed["version"] == "1.0.0"
-    assert refreshed["commit"] == v1_manifest["built_from_commit"]
-    assert workspace.verify_skill(refreshed)["ok"] is True
-    assert "发行版本：1.0.0" in pointer_path.read_text(encoding="utf-8")
 
     # 8. report shows the active v1 and the retained v2.
     _, report, _ = _cli(capsys, code, archive, "install", "report")

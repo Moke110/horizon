@@ -1063,6 +1063,46 @@ def _serve(resolved, executable, managed):
                             subscription_busy.add(identity)
                             threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
                             state()
+                    elif action in ('retriever_sources', 'retriever_configure', 'retriever_toggle',
+                                    'retriever_test', 'retriever_refresh', 'retriever_tavily_budget'):
+                        from retriever.connection import refresh_sources, test_connection
+                        from retriever.registry import (
+                            configure_source, discover_sources, invalidate_connection, list_sources, toggle_source,
+                        )
+                        source = cmd.get('source')
+                        added = []
+                        try:
+                            if action == 'retriever_sources':
+                                _, added = discover_sources(service.home)
+                            elif action == 'retriever_configure':
+                                configure_source(service.home, source, cmd.get('key'))
+                            elif action == 'retriever_toggle':
+                                toggle_source(service.home, source, cmd.get('enabled'))
+                            elif action == 'retriever_tavily_budget':
+                                voyager.save_tavily_budget_setting(
+                                    cmd.get('paygo_disabled'), cmd.get('monthly_limit'), token=token,
+                                )
+                                invalidate_connection(service.home, 'tavily')
+                            elif action in ('retriever_test', 'retriever_refresh'):
+                                def probe(probe_action=action, source_id=source):
+                                    try:
+                                        if probe_action == 'retriever_refresh':
+                                            cards, discovered = refresh_sources(service.home)
+                                        else:
+                                            test_connection(service.home, source_id)
+                                            cards, discovered = list_sources(service.home), []
+                                        emit('retriever_sources', {'cards': cards, 'added': discovered,
+                                                                   'completed_probe': True})
+                                    except Exception:
+                                        emit('retriever_error', '无法测试信息源，请重试。')
+                                threading.Thread(target=probe, daemon=True).start()
+                                continue
+                            emit('retriever_sources', {'cards': list_sources(service.home), 'added': added})
+                        except CommandError as exc:
+                            emit('retriever_error', str(exc))
+                        except Exception:
+                            emit('retriever_error', '无法读取或更新信息源，请重试。')
+                        continue
                     elif action in ('voyager_source_settings', 'voyager_save_source_key', 'voyager_save_tavily_budget'):
                         try:
                             kind, data = voyager_command(voyager, cmd, token=token)

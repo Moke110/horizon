@@ -20,6 +20,9 @@ class DesktopWorker:
         from hostrun.knowledge_cards import KnowledgeCardService
         from hostrun.librarian import Librarian
         token = self.service_token
+        if event.get("type") == "retriever_search_request":
+            from retriever.registry import search_source
+            return search_source(self.home, event.get("source"), event.get("query"))
         librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
         operation = event.get("action")
         if event.get("type") == "source_request":
@@ -176,6 +179,12 @@ class DesktopWorker:
             if session_id is not None and history:
                 argv.append('--history-stdin')
             env = dict(os.environ, HORIZON_PYTHON=sys.executable)
+            if turn:
+                from retriever.registry import list_sources
+                env['HORIZON_RETRIEVER_SOURCES'] = json.dumps([
+                    {key: card[key] for key in ('id', 'name', 'enabled')}
+                    for card in list_sources(self.home)
+                ], ensure_ascii=False)
             self.process = subprocess.Popen(argv, cwd=self.resolved['code'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             self.record_diagnostic('task_started', pid=getattr(self.process, 'pid', None), parent_pid=os.getpid())
             # Drain stderr without exposing provider credentials in UI logs.
@@ -190,12 +199,16 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request'):
+                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request', 'retriever_search_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)
                     except CommandError as exc:
                         result = {"status": "returned", "message": str(exc)}
+                    except Exception:
+                        if event['type'] != 'retriever_search_request':
+                            raise
+                        result = {"error_code": "source_failed", "message": "检索来源暂时不可用。"}
                     self.process.stdin.write(json.dumps({"requestId": event["requestId"],
                                                         "result": result}) + "\n")
                     self.process.stdin.flush()

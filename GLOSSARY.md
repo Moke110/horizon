@@ -213,7 +213,7 @@ The agent run that maps a message outside the instruction whitelist to at most o
 _Avoid_: classifier, NLU
 
 **Agent run（agent 运行）**:
-A bounded host-agent run the Console starts for work that needs judgement, such as sorting and writing one push. It holds the same single-executor lease and is not a second executor.
+A bounded run of the built-in Pi Agent that the Console starts for work requiring judgement, such as sorting and writing one push. It holds the same single-executor lease and is not a second executor.
 _Avoid_: headless agent, child session, bot run
 
 **Code directory（代码目录）**:

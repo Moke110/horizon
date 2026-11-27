@@ -94,7 +94,6 @@ def _smoke_args(built: dict, smoke: Path, **overrides: str) -> list[str]:
         "--zip": str(built["artifact"]["path"]),
         "--code": str(smoke / "code"),
         "--archive": str(smoke / "archive"),
-        "--skills-target": str(smoke / "host-skills" / "horizon-run"),
         "--bootstrap": str(smoke / "bootstrap"),
     }
     values.update(overrides)
@@ -141,21 +140,17 @@ def test_ci_install_smoke_installs_verifies_and_reports_a_package(tmp_path):
     assert lock["artifact_sha256"] == built["artifact"]["sha256"]
     assert (code / "manifest.json").is_file()
     assert (smoke / "bootstrap" / "runtime" / "python.exe").is_file()
-    # `install skill` writes the host pointer; `console install` writes its script.
-    assert (
-        smoke / "host-skills" / "horizon-run" / "SKILL.md"
-    ).is_file()
     assert (code / "bin" / "horizon-console.cmd").is_file()
+    assert (code / "skills" / "horizon-run" / "SKILL.md").is_file()
+    assert "skill_digest" not in lock
 
     commands = {row["name"]: row for row in payload["commands"]}
     assert commands["install"]["status"] == "ok"
     assert commands["verify"]["status"] == "verified"
     assert commands["console"]["status"] == "ok"
     assert commands["console"]["processes_started"] is False
-    assert commands["skill"]["ok"] is True
     assert commands["report"]["release"]["distribution"] == "package"
     assert commands["report"]["release"]["version"] == "0.1.0"
-    assert commands["report"]["steps"]["skill"]["status"] == "ok"
     # The wrapper-execution check is opt-in; without --check-wrapper this smoke
     # stays a pure install check and never executes the synthetic runtime.
     assert "wrapper" not in commands
@@ -261,4 +256,3 @@ def test_ci_install_smoke_check_wrapper_fails_clearly_on_a_synthetic_runtime(tmp
     # The check runs after install/skill, so the package and lock already exist.
     assert (smoke / "code" / "manifest.json").is_file()
     assert (smoke / "code" / ".horizon" / "dist.lock.json").is_file()
-    assert (smoke / "host-skills" / "horizon-run" / "SKILL.md").is_file()
