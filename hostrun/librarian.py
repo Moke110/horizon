@@ -116,7 +116,7 @@ class Librarian:
         return self.library.archive.documents.download(url)
 
     def request_source(self, action, command, *, token, origin):
-        if action not in ("create", "register", "update", "delete") or not isinstance(command, dict):
+        if action not in ("create", "register", "import", "restore", "update", "delete") or not isinstance(command, dict):
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
         return self.request_batch(command.get("operation_id"), [(action, command)],
                                   token=token, origin=origin, entity="source")
@@ -360,7 +360,7 @@ class Librarian:
             raise CommandError("invalid_command", "确认请求需要来源、标识和 1 至 100 项变更")
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
-                   "source": ("create", "register", "update", "delete"),
+                   "source": ("create", "register", "import", "restore", "update", "delete"),
                    "report": ("create",),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
@@ -371,7 +371,7 @@ class Librarian:
                 raise CommandError("invalid_command", "无效的术语变更")
         for action, command in changes:
             if "test_data" in command and (
-                type(command["test_data"]) is not bool or action not in ("create", "register") or not origin.startswith("agent:")
+                type(command["test_data"]) is not bool or action not in ("create", "register", "import") or not origin.startswith("agent:")
             ):
                 raise CommandError("invalid_command", "只有 Agent 新建的测试条目可以标记为测试")
         normalized = [list(change) for change in changes]
@@ -408,9 +408,9 @@ class Librarian:
                                 term_ids.add(term_id)
                     elif entity == "source":
                         proposed = self.library.archive.apply(db, action, command)
-                        if action == "register":
+                        if action in ("register", "import", "restore"):
                             summaries.append(proposed["title"])
-                        elif action != "create":
+                        if action not in ("register", "create"):
                             term_ids.add("archive:" + proposed["source_id"])
                     elif entity == "report":
                         proposed = self.library.reports.create(db, command, origin=origin, publish=False)

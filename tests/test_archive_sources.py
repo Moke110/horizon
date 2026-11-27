@@ -150,3 +150,52 @@ def test_document_selection_can_register_equal_files_and_cannot_replace_an_origi
     with pytest.raises(CommandError, match="原文不可用或已更改"):
         librarian.source_original(source_ids[0], token=token)
     assert librarian.source_original(source_ids[1], token=token)[1] == b"<p>Same original</p>"
+
+
+
+def test_imported_offline_document_recovers_only_with_the_same_original(tmp_path):
+    token = "desktop"
+    origin = "agent:offline-import"
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=token), token=token)
+    document_id = "d-72891c893b864dfaa10b698ecc647f3b"
+    digest = "dfabed9b097986025c235f3c1b5ae23dfdf0605f15eb8751652bd69853c1a948"
+    original = b"<!doctype html><p>Original document</p>"
+    imported = {"source_id": document_id, "sha256": digest, "title": "离线资料", "summary": "附件尚未迁移",
+                "file_path": "D:/previous-workspace/original.html"}
+    librarian.request_source("import", {"operation_id": "import", "document": imported}, token=token, origin=origin)
+    assert librarian.list_sources(token=token) == []
+    librarian.decide("import", "confirm", token=token, origin=origin)
+    record = librarian.view_source(document_id, token=token)
+    assert record["source_id"] == document_id
+    assert record["sha256"] == digest
+    assert record["file_path"] is None
+    assert librarian.open_source(document_id, token=token)["available"] is False
+    assert librarian.source_original(document_id, token=token)[1] is None
+
+    wrong = librarian.cache_source(b"<p>Different document</p>", "text/html", token=token)
+    restore = {"operation_id": "restore", "source_id": document_id, "expected_version": record["version"]}
+    with pytest.raises(CommandError, match="SHA-256"):
+        librarian.request_source("restore", {**restore, "file_id": wrong["file_id"]}, token=token, origin=origin)
+    assert librarian.view_source(document_id, token=token) == record
+
+    matching = librarian.cache_source(original, "text/html", token=token)
+    librarian.request_source("restore", {**restore, "file_id": matching["file_id"]}, token=token, origin=origin)
+    assert librarian.open_source(document_id, token=token)["available"] is False
+    librarian.decide("restore", "confirm", token=token, origin=origin)
+
+    reopened = Librarian(KnowledgeCardService(tmp_path, token=token), token=token)
+    restored = reopened.open_source(document_id, token=token)
+    assert restored["available"] is True
+    assert restored["document"]["source_id"] == document_id
+    assert restored["document"]["sha256"] == digest
+    assert Path(restored["document"]["file_path"]).read_bytes() == original
+    assert reopened.source_original(document_id, token=token)[1] == original
+
+
+def test_import_requires_a_document_identity_and_sha256(tmp_path):
+    token = "desktop"
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=token), token=token)
+    with pytest.raises(CommandError, match="文档 ID.*SHA-256"):
+        librarian.request_source("import", {"operation_id": "url-only",
+            "document": {"title": "Only a title", "url": "https://example.com/"}}, token=token, origin="gui")
+    assert librarian.list_sources(token=token) == []

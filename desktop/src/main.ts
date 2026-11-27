@@ -44,8 +44,8 @@ function optionsItems(): Electron.MenuItemConstructorOptions[] {
   ];
 }
 ipcMain.on('command',async(event,value)=>{
- if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='source_register_file'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
- if(value?.action==='choose_archive_source'){
+ if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='source_register_file'||value?.action==='source_restore_file'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
+ if(value?.action==='choose_archive_source'||value?.action==='choose_archive_restore'){
   const selected=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'源文档',extensions:Object.keys(documentTypes)}]});
   if(selected.canceled)return;
   try{
@@ -59,8 +59,11 @@ ipcMain.on('command',async(event,value)=>{
     const data=Buffer.alloc(status.size);
     const {bytesRead}=await source.read(data);
     if(bytesRead!==status.size||(await source.stat()).size!==status.size)throw Error('Source file changed');
-    bridge.write(JSON.stringify({action:'source_register_file',operation_id:randomUUID(),title:value.title,
-      summary:value.summary,citation:value.citation,media_type:mediaType,original_base64:data.toString('base64')})+'\n');
+    const request=value.action==='choose_archive_restore'
+      ? {action:'source_restore_file',source_id:value.source_id,expected_version:value.expected_version}
+      : {action:'source_register_file',title:value.title,summary:value.summary,citation:value.citation};
+    bridge.write(JSON.stringify({...request,operation_id:randomUUID(),media_type:mediaType,
+      original_base64:data.toString('base64')})+'\n');
    }finally{await source.close();}
   }catch{send({kind:'notice',data:'请选择可读取且不超过 10 MiB 的源文档。'});}
   return;

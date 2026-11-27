@@ -25,6 +25,7 @@ EXTENSIONS = {
 }
 MEDIA_TYPES = {suffix: media_type for media_type, suffix in EXTENSIONS.items()}
 DOCUMENT_ID = re.compile(r"d-[0-9a-f]{32}")
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class ArchiveDocuments:
@@ -85,28 +86,64 @@ class ArchiveDocuments:
         files = command.get("source_files")
         if not isinstance(files, list) or len(files) != 1:
             raise CommandError("invalid_document", "首次登记需要恰好一份源文件")
-        file_id = files[0]
+        digest, media_type, original = self._cached_original(db, files[0])
+        identity = f"horizon:archive-document:{digest}:{command['operation_id']}"
+        source_id = "d-" + uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
+        path = self._path(source_id, media_type)
+        record = self._record(command, source_id, digest, media_type, str(path))
+        if publish:
+            self.publish(path, original, digest)
+        return {**record, **new_test_tags(command)}
+
+    def prepare_import(self, command):
+        fields = command.get("document")
+        if not isinstance(fields, dict) or set(command) - {"operation_id", "document", "test_data"}:
+            raise CommandError("invalid_document", "导入需要已有的文档条目")
+        source_id = fields.get("source_id")
+        digest = fields.get("sha256")
+        if (not isinstance(source_id, str) or not DOCUMENT_ID.fullmatch(source_id)
+                or not isinstance(digest, str) or not SHA256.fullmatch(digest)):
+            raise CommandError("invalid_document", "导入需要既有的文档 ID 和 SHA-256")
+        media_type = fields.get("media_type")
+        if media_type is not None and (not isinstance(media_type, str) or media_type not in EXTENSIONS):
+            raise CommandError("invalid_document", "不支持的源文档格式")
+        return {**self._record(fields, source_id, digest, media_type, None), **new_test_tags(command)}
+
+    def restore(self, db, command, record, *, publish):
+        if set(command) - {"operation_id", "source_id", "expected_version", "file_id"}:
+            raise CommandError("invalid_document", "文档恢复包含未知字段")
+        digest, media_type, original = self._cached_original(db, command.get("file_id"))
+        if digest != record["sha256"]:
+            raise CommandError("hash_mismatch", "所选文件的 SHA-256 与原文不一致")
+        media_type = record["media_type"] or media_type
+        path = self._path(record["source_id"], media_type)
+        if publish:
+            self.publish(path, original, digest)
+        if str(path) == record["file_path"] and media_type == record["media_type"]:
+            return record
+        return {**record, "media_type": media_type, "file_path": str(path), "version": record["version"] + 1}
+
+    def _cached_original(self, db, file_id):
         match = re.fullmatch(r"([0-9a-f]{64})\.([a-z]+)", file_id) if isinstance(file_id, str) else None
         if not match or match[2] not in MEDIA_TYPES:
             raise CommandError("invalid_document", "需要已缓存的源文档")
         digest, extension = match.groups()
-        identity = f"horizon:archive-document:{digest}:{command['operation_id']}"
-        source_id = "d-" + uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
-        path = self.original_directory("documents") / f"{source_id}.{extension}"
-        summary = self._text(command, "summary", 2000)
-        record = {
-            "source_id": source_id, "version": 1, "status": "active", "title": self._text(command, "title", 500),
-            "summary": summary, "label": summary, "citation": self._text(command, "citation", 2000, optional=True),
-            "media_type": MEDIA_TYPES[extension], "sha256": digest, "file_path": str(path),
-            "material_id": None, "url": None, **new_test_tags(command),
-        }
         self.initialize(db)
         cached = db.execute("SELECT original FROM library_source_cache WHERE file_id=?", (file_id,)).fetchone()
         if cached is None or hashlib.sha256(cached[0]).hexdigest() != digest:
             raise CommandError("source_unavailable", "缓存中的源文档不可用或已更改")
-        if publish:
-            self.publish(path, cached[0], digest)
-        return record
+        return digest, MEDIA_TYPES[extension], cached[0]
+
+    def _record(self, fields, source_id, digest, media_type, file_path):
+        summary = self._text(fields, "summary", 2000)
+        return {
+            "source_id": source_id, "version": 1, "status": "active", "title": self._text(fields, "title", 500),
+            "summary": summary, "label": summary, "citation": self._text(fields, "citation", 2000, optional=True),
+            "media_type": media_type, "sha256": digest, "file_path": file_path, "material_id": None, "url": None,
+        }
+
+    def _path(self, source_id, media_type):
+        return self.original_directory("documents") / f"{source_id}.{EXTENSIONS[media_type]}"
 
     def publish(self, path, data, digest):
         if managed_paths(self.home) is None:
@@ -124,8 +161,9 @@ class ArchiveDocuments:
             raise CommandError("source_unavailable", "无法保存源文档") from error
 
     def read(self, record):
-        extension = EXTENSIONS[record["media_type"]]
-        path = self.original_directory("documents") / f"{record['source_id']}.{extension}"
+        if record["file_path"] is None:
+            raise CommandError("source_unavailable", "原文不可用")
+        path = self._path(record["source_id"], record["media_type"])
         return self.read_file(path, record["sha256"])
 
     def read_file(self, path, digest):

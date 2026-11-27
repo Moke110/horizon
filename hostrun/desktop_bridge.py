@@ -1194,7 +1194,8 @@ def _serve(resolved, executable, managed):
                         if kind == 'question_confirmation':
                             show_librarian_return(data)
                             state()
-                    elif action in ('source_create', 'source_register_file', 'source_update', 'source_delete', 'source_confirm'):
+                    elif action in ('source_create', 'source_register_file', 'source_import', 'source_restore_file',
+                                    'source_update', 'source_delete', 'source_confirm'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if action == 'source_confirm':
                             receipt = librarian.decide(cmd.get('operation_id'), cmd.get('choice'),
@@ -1202,7 +1203,8 @@ def _serve(resolved, executable, managed):
                             show_librarian_return(receipt)
                         else:
                             payload = {k:v for k,v in cmd.items() if k!='action'}
-                            if action == 'source_register_file':
+                            operation = action.removeprefix('source_')
+                            if action in ('source_register_file', 'source_restore_file'):
                                 import base64
                                 encoded = payload.pop('original_base64', None)
                                 if not isinstance(encoded, str) or len(encoded) > 14 * 1024 * 1024:
@@ -1212,8 +1214,14 @@ def _serve(resolved, executable, managed):
                                 except ValueError as error:
                                     raise CommandError('invalid_document', '需要一份有效的源文件') from error
                                 cached = librarian.cache_source(original, payload.pop('media_type', None), token=token)
-                                payload['source_files'] = [cached['file_id']]
-                            operation = 'register' if action in ('source_create', 'source_register_file') else action.removeprefix('source_')
+                                if action == 'source_restore_file':
+                                    operation = 'restore'
+                                    payload['file_id'] = cached['file_id']
+                                else:
+                                    operation = 'register'
+                                    payload['source_files'] = [cached['file_id']]
+                            elif action == 'source_create':
+                                operation = 'register'
                             librarian.request_source(operation, payload, token=token, origin='gui')
                         state()
                     elif action == 'archive_report_open':
