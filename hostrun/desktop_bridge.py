@@ -1063,6 +1063,30 @@ def _serve(resolved, executable, managed):
                             subscription_busy.add(identity)
                             threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
                             state()
+                    elif action in ('retriever_sources', 'retriever_configure', 'retriever_toggle', 'retriever_test'):
+                        from retriever.connection import test_connection
+                        from retriever.registry import configure_source, list_sources, toggle_source
+                        source = cmd.get('source')
+                        try:
+                            if action == 'retriever_configure':
+                                configure_source(service.home, source, cmd.get('key'))
+                            elif action == 'retriever_toggle':
+                                toggle_source(service.home, source, cmd.get('enabled'))
+                            elif action == 'retriever_test':
+                                def probe(source_id=source):
+                                    try:
+                                        test_connection(service.home, source_id)
+                                        emit('retriever_sources', list_sources(service.home))
+                                    except Exception:
+                                        emit('retriever_error', '无法测试此信息源，请重试。')
+                                threading.Thread(target=probe, daemon=True).start()
+                                continue
+                            emit('retriever_sources', list_sources(service.home))
+                        except CommandError as exc:
+                            emit('retriever_error', str(exc))
+                        except Exception:
+                            emit('retriever_error', '无法读取或更新信息源，请重试。')
+                        continue
                     elif action in ('voyager_source_settings', 'voyager_save_source_key', 'voyager_save_tavily_budget'):
                         try:
                             kind, data = voyager_command(voyager, cmd, token=token)

@@ -284,6 +284,14 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       type: "term_request", testData: p.testData, action: p.action, termId: p.termId, fields: p.fields ? JSON.parse(p.fields) : {},
     }, signal),
   });
+  const openAlexSearch = defineTool({
+    name: "openalex_search", label: "OpenAlex search",
+    description: "Search OpenAlex academic works when the user asks to use OpenAlex. Returns source identifiers and links. Read-only.",
+    parameters: Type.Object({query: Type.String({minLength: 1, maxLength: 512})}),
+    execute: (callId, p, signal) => requestLibrary(callId, {
+      type: "retriever_search_request", source: "openalex", query: p.query,
+    }, signal),
+  });
   const archiveSource = defineTool({
     name: "archive_source", label: "Library archive source",
     description: "List, view or open original source records through the Librarian. Create, update and delete require Explorer confirmation. Use JSON fields title, label, and at least one existing material_id or HTTP(S) url when creating. For update and delete provide sourceId and expected_version in fields; update may include changed source fields.",
@@ -355,10 +363,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   } else if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
   else {
     tools.push(delegate);
-    if (values["turn-id"]) tools.push(dictionary, archiveSource, frontierTracking, hpediaQuestion, libraryTestCleanup);
+    if (values["turn-id"]) tools.push(openAlexSearch, dictionary, archiveSource, frontierTracking, hpediaQuestion, libraryTestCleanup);
   }
   const allowedTools = keeper ? tools.filter(t => t.name === "keeper_context") : editor ? tools.filter(t => t.name === "editor_context") : voyager ? tools.filter(t => t.name === "voyager_context") :
-    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+    values["turn-id"] && !childRole ? tools.filter(t => ["read_file", "delegate", "openalex_search", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name)) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -495,7 +503,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
           for (const call of calls) {
             if (after.some(message => message.role === "toolResult" && message.toolCallId === call.id)) continue;
             const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-            if (!tool || !["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
+            if (!tool || !["read_file", "delegate", "openalex_search", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name)) throw new Error("Unsafe pending tool cannot be recovered");
             const output = await tool.execute(call.id, call.arguments, undefined);
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });
           }
