@@ -1,6 +1,6 @@
 """Installation: capability probes, resumable progress, honest report.
 
-The host agent drives installation (ADR 0005). This module is what it calls so
+Horizon uses this module for installation diagnostics so
 that "installed" means something checkable:
 
 - every step is recorded with one of ``ok / blocked / untested / pending``;
@@ -39,10 +39,8 @@ from hostrun.base import (
 
 STATE_STATUSES = ("ok", "blocked", "untested", "pending")
 STEPS = (
-    "host",
     "workspace",
     "dependencies",
-    "skill",
     "lark_cli",
     "identity",
     "permissions",
@@ -50,10 +48,8 @@ STEPS = (
     "knowledge",
 )
 STEP_NOTES = {
-    "host": "宿主产品、版本、本机执行与实际权限",
     "workspace": "代码目录与资料目录分离（运行时区在代码目录内），已有副本检查与续接",
     "dependencies": "私有 uv、解释器、PyYAML/pypdf 导入探针与仓库副本",
-    "skill": "horizon-run 入口指针及参考文件可读",
     "lark_cli": "飞书 CLI 由显式私有路径解析（仅可执行，未证明已登录）",
     "identity": "飞书 user / bot 身份与登录有效期",
     "permissions": "运行时区与 CLI 凭据目录写入、Base/Drive 资源读取与消息权限的真实预检",
@@ -113,7 +109,7 @@ def record(
 
     ``ok`` is terminal for a declared capability, so a flaky re-check cannot
     erase verified evidence.  ``recheck=True`` is for components that can
-    actually break (workspace paths, interpreter, registered skill): it may
+    actually break (workspace paths and interpreter): it may
     downgrade the status but keeps ``first_ok_at``.
     """
     if step not in STEPS:
@@ -560,47 +556,6 @@ def probe_identity(lark_cli_path: str, *, runner=None, timeout: int = 30) -> dic
     }
 
 
-def probe_host(host: dict | None) -> dict:
-    """The agent declares what it actually verified on this product/version."""
-    host = host or {}
-    product = str(host.get("product") or "").strip()
-    version = str(host.get("version") or "").strip()
-    local = host.get("local_execution")
-    missing = [
-        name
-        for name, value in (
-            ("product", product),
-            ("version", version),
-            ("local_execution", local),
-        )
-        if value in (None, "", False)
-    ]
-    if missing:
-        return {
-            "status": "untested" if product else "pending",
-            "note": "未确认宿主能力：" + ("、".join(missing) if missing else "无"),
-            "evidence": {
-                "product": product,
-                "version": version,
-                "local_execution": bool(local),
-                "permissions": host.get("permissions") or [],
-            },
-        }
-    return {
-        "status": "ok",
-        "note": f"{product} {version} 已确认本机执行",
-        "evidence": {
-            "product": product,
-            "version": version,
-            "mode": host.get("mode") or "",
-            "local_execution": True,
-            "permissions": host.get("permissions") or [],
-            "checked_at": host.get("checked_at") or now(),
-            "source": host.get("source") or "宿主 agent 实测",
-        },
-    }
-
-
 _TZ_ALIASES = {
     "中国标准时间": "Asia/Shanghai",
     "China Standard Time": "Asia/Shanghai",
@@ -626,7 +581,6 @@ def check(
     home: Path,
     *,
     repo: str | Path | None = None,
-    host: dict | None = None,
     lark_cli: str | None = None,
     python: str | None = None,
     timezone_name: str | None = None,
@@ -650,7 +604,6 @@ def check(
     ensure_dir(home / "bin")
 
     results: dict[str, dict] = {}
-    results["host"] = probe_host(host)
     workspace_python = ""
 
     if workspace_root:
@@ -692,16 +645,6 @@ def check(
             },
         }
         workspace_python = str(ws.get("python") or "")
-        skill = workspace_mod.verify_skill(ws)
-        results["skill"] = {
-            "status": "ok" if skill["ok"] else "blocked",
-            "note": f"入口 {skill['skill']}" if skill["ok"] else "；".join(skill["problems"]),
-            "evidence": {
-                "skill": skill["skill"],
-                "entry": skill["entry"],
-                "references": skill["references"],
-            },
-        }
         if ws.get("repo"):
             repo_path = Path(ws["repo"])
         update_config(
@@ -710,7 +653,6 @@ def check(
                 "root": ws.get("root"),
                 "repo": ws.get("repo"),
                 "home": ws.get("home"),
-                "skill": ws.get("skill"),
             },
         )
         if ws.get("python"):
@@ -805,10 +747,8 @@ def check(
         },
     }
     for step in (
-        "host",
         "workspace",
         "dependencies",
-        "skill",
         "lark_cli",
         "identity",
         "permissions",
@@ -823,37 +763,20 @@ def check(
             note=result["note"],
             evidence=result["evidence"],
             recheck=step
-            in {"workspace", "dependencies", "skill", "identity", "permissions"},
+            in {"workspace", "dependencies", "identity", "permissions"},
         )
 
-    host_permissions = (
-        list(host.get("permissions") or [])
-        if host and host.get("product")
-        else None
-    )
     permissions_update = {
         "scope": authz.get("granted") or [],
         "missing": authz.get("missing") or [],
         "checked_at": now(),
     }
-    if host_permissions is not None:
-        permissions_update["host_scope"] = host_permissions
-        permissions_update["granted_at"] = now()
     update_config(
         home,
         paths={"repo": str(repo_path), "lark_cli": lark_path or config["paths"].get("lark_cli", "")},
         permissions=permissions_update,
         timezone=timezone_name or config.get("timezone") or default_timezone(),
     )
-    if host and host.get("product"):
-        update_config(
-            home,
-            host={
-                "product": str(host.get("product") or ""),
-                "version": str(host.get("version") or ""),
-                "mode": str(host.get("mode") or ""),
-            },
-        )
     return summary(home)
 
 
@@ -887,7 +810,7 @@ def _public_permissions(permissions: dict) -> dict:
     return {
         key: value
         for key, value in (permissions or {}).items()
-        if key not in {"owner", "owner_verified_at"}
+        if key not in {"owner", "owner_verified_at", "host_scope"}
     }
 
 
@@ -975,8 +898,7 @@ def report(home: Path) -> dict:
         "generated_at": now(),
         "ok": result["ok"],
         "partial": result["partial"],
-        "host": config.get("host") or {},
-        "paths": config.get("paths") or {},
+        "paths": {key: value for key, value in (config.get("paths") or {}).items() if key not in {"dsh", "skill"}},
         "workspace": workspace,
         "release": _release_report(home),
         "timezone": config.get("timezone") or default_timezone(),

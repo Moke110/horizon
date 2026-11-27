@@ -14,24 +14,14 @@ from hostrun.base import HostRunError, resolve_executable
 from conftest import cli_locations
 
 
-def _host(**over):
-    payload = {
-        "product": "WorkBuddy",
-        "version": "1.6.110",
-        "mode": "desktop",
-        "local_execution": True,
-        "permissions": ["shell", "file_write"],
-    }
-    payload.update(over)
-    return payload
 
 
 # ------------------------------------------------------------------ record
 def test_ok_is_terminal_and_rechecks_do_not_erase_it(tmp_path):
-    install.record(tmp_path, "host", "ok", note="首次确认")
-    install.record(tmp_path, "host", "blocked", note="复检失败")
+    install.record(tmp_path, "workspace", "ok", note="首次确认")
+    install.record(tmp_path, "workspace", "blocked", note="复检失败")
 
-    entry = install.load_state(tmp_path)["steps"]["host"]
+    entry = install.load_state(tmp_path)["steps"]["workspace"]
     assert entry["status"] == "ok"
     assert entry["note"] == "首次确认"
     assert entry["first_ok_at"]
@@ -41,19 +31,17 @@ def test_record_rejects_unknown_step_and_status(tmp_path):
     with pytest.raises(HostRunError):
         install.record(tmp_path, "nope", "ok")
     with pytest.raises(HostRunError):
-        install.record(tmp_path, "host", "probably")
+        install.record(tmp_path, "workspace", "probably")
 
 
 def test_state_is_resumable_across_calls(tmp_path):
-    install.record(tmp_path, "host", "ok")
     install.record(tmp_path, "workspace", "ok")
     install.record(tmp_path, "dependencies", "ok")
-    install.record(tmp_path, "skill", "ok")
     install.record(tmp_path, "lark_cli", "blocked", note="未安装")
 
     assert install.next_step(tmp_path) == "lark_cli"
     status = install.step_status(tmp_path)
-    assert status["host"] == "ok"
+    assert status["workspace"] == "ok"
     assert status["facilities"] == "pending"
 
     # a fresh call reads the same state from disk
@@ -61,7 +49,7 @@ def test_state_is_resumable_across_calls(tmp_path):
 
 
 def test_report_separates_working_blocked_untested(tmp_path):
-    install.record(tmp_path, "host", "ok")
+    install.record(tmp_path, "workspace", "ok")
     install.record(tmp_path, "dependencies", "ok")
     install.record(tmp_path, "lark_cli", "blocked", note="飞书 CLI 未找到")
     install.record(tmp_path, "identity", "untested", note="未验证")
@@ -69,7 +57,7 @@ def test_report_separates_working_blocked_untested(tmp_path):
     report = install.report(tmp_path)
     assert report["ok"] is False
     assert report["partial"] is False
-    assert report["working"] == ["host", "dependencies"]
+    assert report["working"] == ["workspace", "dependencies"]
     assert [row["step"] for row in report["blocked"]] == ["lark_cli"]
     assert [row["step"] for row in report["untested"]] == ["identity"]
     assert any("飞书 CLI" in line for line in report["limitations"])
@@ -90,16 +78,6 @@ def test_report_never_contains_credentials(tmp_path):
 
 
 # ------------------------------------------------------------------ probes
-def test_probe_host_asks_instead_of_assuming(tmp_path):
-    pending = install.probe_host(None)
-    assert pending["status"] == "pending"
-
-    untested = install.probe_host({"product": "ChatGPT"})
-    assert untested["status"] == "untested"
-
-    ok = install.probe_host(_host())
-    assert ok["status"] == "ok"
-    assert ok["evidence"]["local_execution"] is True
 
 
 def _seed_repo_files(repo: Path) -> None:
@@ -253,9 +231,6 @@ def _package_install_tree(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    assert workspace_mod.register_skill(
-        repo, tmp_path / "host-skills" / "horizon-run"
-    )["ok"] is True
     return repo
 
 
@@ -267,7 +242,6 @@ def test_install_check_for_a_package_reports_workspace_and_bundled_dependencies(
     result = install.check(
         repo / ".horizon",
         workspace_root=repo,
-        host=_host(),
         runner=_import_probe_runner(["3.13.1", "6.0.1", "1.24.0"]),
     )
 
@@ -374,10 +348,9 @@ def test_check_works_with_chinese_and_space_paths(tmp_path, monkeypatch):
     _seed_repo_files(repo)
 
     result = install.check(
-        home, repo=repo, host=_host(), store_dir=tmp_path / "lark-cli-home"
+        home, repo=repo, store_dir=tmp_path / "lark-cli-home"
     )
 
-    assert result["steps"]["host"] == "ok"
     assert result["steps"]["dependencies"] == "ok"
     evidence = install.load_state(home)["steps"]["dependencies"]["evidence"]
     assert evidence["outside_repo"] is True
@@ -386,7 +359,6 @@ def test_check_works_with_chinese_and_space_paths(tmp_path, monkeypatch):
     assert result["steps"]["lark_cli"] == "blocked"
     assert result["steps"]["permissions"] == "blocked"
     config = json.loads((home / "install" / "config.json").read_text(encoding="utf-8"))
-    assert config["host"]["product"] == "WorkBuddy"
     assert config["timezone"]
     # The Chinese/space layout round-trips into the persisted config and the
     # report without being mangled or crashing anything.
@@ -416,7 +388,6 @@ def test_check_never_falls_back_to_the_running_interpreter(tmp_path, monkeypatch
 
     result = install.check(
         home,
-        host=_host(),
         workspace_root=root,
         store_dir=tmp_path / "lark-cli-home",
     )
@@ -429,33 +400,6 @@ def test_check_never_falls_back_to_the_running_interpreter(tmp_path, monkeypatch
     assert install.load_state(home)["steps"]["dependencies"]["evidence"]["recorded"] is False
 
 
-def test_check_merges_host_and_lark_permissions_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("PATH", "")
-    home = tmp_path / "home"
-    binary = home / "bin" / "lark-cli"
-    binary.parent.mkdir(parents=True)
-    binary.write_text("", encoding="utf-8")
-    _seed_repo_files(tmp_path / "repo")
-
-    def runner(argv, **kwargs):
-        if "auth" in argv:
-            return _Proc(stdout=json.dumps(_auth_payload()))
-        return _Proc(stdout="{}")
-
-    install.check(
-        home,
-        repo=tmp_path / "repo",
-        host=_host(),
-        python=__import__("sys").executable,
-        runner=runner,
-        store_dir=tmp_path / "lark-cli-home",
-    )
-
-    config = json.loads((home / "install" / "config.json").read_text(encoding="utf-8"))
-    permissions = config["permissions"]
-    assert permissions["scope"] == sorted(GRANULAR_SCOPES)
-    assert permissions["host_scope"] == ["shell", "file_write"]
-    assert permissions["granted_at"]
 
 
 def test_cli_rejected_layout_records_workspace_blocked(tmp_path):
@@ -488,12 +432,12 @@ def test_cli_rejected_layout_records_workspace_blocked(tmp_path):
 
 
 def test_stale_evidence_flags_old_steps(tmp_path):
-    install.record(tmp_path, "host", "ok")
+    install.record(tmp_path, "workspace", "ok")
     state = install.load_state(tmp_path)
-    state["steps"]["host"]["at"] = "2020-01-01T00:00:00+00:00"
+    state["steps"]["workspace"]["at"] = "2020-01-01T00:00:00+00:00"
     install.save_state(tmp_path, state)
 
-    assert "host" in install.stale_evidence(tmp_path, days=7)
+    assert "workspace" in install.stale_evidence(tmp_path, days=7)
 
 
 def test_cli_install_check_accepts_explicit_read_only_tokens(tmp_path, monkeypatch):
@@ -587,7 +531,6 @@ def test_check_blocks_permissions_when_a_write_probe_is_denied(tmp_path):
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         # Offline: never let the probe pick up a PATH ``lark-cli`` from the
         # developer machine and run it for real. A stale explicit path is
         # enough to exercise the write-probe branch under test.
@@ -632,7 +575,6 @@ def test_check_reads_explicit_tokens_without_attaching_the_library(tmp_path):
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         store_dir=tmp_path / "lark-cli-home",
         base_token="bas_probe",
         folders=["fld_probe_one", "fld_probe_two"],
@@ -823,7 +765,6 @@ def test_check_records_the_permissions_step_from_the_real_preflight(tmp_path):
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         runner=runner,
         store_dir=tmp_path / "lark-cli-home",
     )
@@ -876,7 +817,6 @@ def test_check_reads_facilities_folders_for_the_resource_preflight(tmp_path):
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         runner=runner,
         store_dir=tmp_path / "lark-cli-home",
     )
@@ -900,7 +840,6 @@ def test_check_without_a_cli_records_permissions_blocked(tmp_path, monkeypatch):
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         store_dir=tmp_path / "lark-cli-home",
     )
 
@@ -965,7 +904,6 @@ def test_check_normalizes_a_missing_runner_for_the_resource_preflight(tmp_path, 
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         base_token="bas_probe",
         folders=["fld_probe"],
     )
@@ -1022,7 +960,6 @@ def test_check_no_longer_records_listener_steps(tmp_path, monkeypatch):
     result = install.check(
         home,
         repo=Path(__file__).resolve().parents[1],
-        host=_host(),
         runner=_empty_runner(),
         store_dir=tmp_path / "lark-cli-home",
     )

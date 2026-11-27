@@ -27,7 +27,6 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -119,7 +118,6 @@ def source_lock(
     dirty: bool,
     source_url: str,
     installed_at: str | None = None,
-    skill_digest: str = "",
 ) -> dict:
     """The truthful lock for a source installation (#97).
 
@@ -137,7 +135,6 @@ def source_lock(
         "source_url": str(source_url or ""),
         "installed_at": str(installed_at or now()),
         "requires": dict(SOURCE_REQUIRES),
-        "skill_digest": str(skill_digest or ""),
     }
 
 
@@ -148,7 +145,6 @@ def write_source_lock(
     dirty: bool,
     source_url: str,
     installed_at: str | None = None,
-    skill_digest: str = "",
 ) -> dict:
     """Write (or refresh) a source install lock for the code directory.
 
@@ -176,7 +172,6 @@ def write_source_lock(
         installed_at=installed_at
         or str(previous.get("installed_at") or "")
         or now(),
-        skill_digest=skill_digest or str(previous.get("skill_digest") or ""),
     )
     path = write_lock(code_path, lock)
     return {
@@ -187,7 +182,6 @@ def write_source_lock(
         "dirty": lock["dirty"],
         "source_url": lock["source_url"],
         "installed_at": lock["installed_at"],
-        "skill_digest": lock["skill_digest"],
         "lock": str(path),
     }
 
@@ -637,7 +631,7 @@ def _validate_manifest(manifest: object) -> list[str]:
         unknown_compat = sorted(set(compat) - _COMPAT_KEYS)
         if unknown_compat:
             errors.append(f"compat 含未知字段：{', '.join(unknown_compat)}")
-        for key in ("os", "arch", "dsh", "python"):
+        for key in ("os", "arch", "python"):
             if not isinstance(compat.get(key), str) or not compat[key].strip():
                 errors.append(f"缺少 compat.{key}")
     files = manifest.get("files")
@@ -896,145 +890,6 @@ def _version_tuple(text: str) -> tuple[int, int, int]:
 def _parse_host_version(output: str) -> str:
     match = _VERSION_NUMBER_RE.search(output or "")
     return match.group(0) if match else ""
-
-
-def _dsh_requirement_matches(requirement: str, version: str) -> bool | None:
-    """Return True/False for a parsable requirement, ``None`` when unparsable."""
-    requirement = str(requirement or "").strip()
-    if requirement == "*":
-        return True
-    match = _VERSION_COMPONENT_RE.fullmatch(requirement)
-    if not match:
-        return None
-    wanted = _version_tuple(match.group("version"))
-    actual = _version_tuple(version)
-    operator = match.group("op") or "=="
-    if operator in ("==", "="):
-        return actual == wanted
-    if operator == ">=":
-        return actual >= wanted
-    if operator == ">":
-        return actual > wanted
-    if operator == "<=":
-        return actual <= wanted
-    if operator == "<":
-        return actual < wanted
-    return None
-
-
-def dsh_compatibility(
-    code: str | Path,
-    requirement: str,
-    *,
-    runner=subprocess.run,
-) -> dict:
-    """Check the optional ``compat.dsh`` requirement against the recorded dsh.
-
-    A wildcard passes.  A recorded ``paths.dsh`` that runs and prints a parsable
-    version yields ``ok`` or ``mismatch``.  Anything that prevents a trustworthy
-    answer yields ``unverified`` with a note: the install is not silently
-    reported as compatible.
-    """
-    requirement = str(requirement or "").strip() or "*"
-    if requirement == "*":
-        return {
-            "status": "ok",
-            "required": requirement,
-            "host": "",
-            "note": "compat.dsh=*；不做宿主版本限制",
-            "evidence": {"checked": False},
-        }
-    code_path = Path(code).expanduser().resolve()
-    config = read_json(code_path / ".horizon" / "install" / "config.json") or {}
-    dsh = str(((config.get("paths") or {}).get("dsh") or "")).strip()
-    if not dsh:
-        return {
-            "status": "unverified",
-            "required": requirement,
-            "host": "",
-            "note": "compat.dsh 非 *，但未记录 paths.dsh；宿主 dsh 版本未验证",
-            "evidence": {"checked": False, "dsh": ""},
-        }
-    if not Path(dsh).is_absolute() or not Path(dsh).is_file():
-        return {
-            "status": "unverified",
-            "required": requirement,
-            "host": "",
-            "note": f"compat.dsh 非 *，但记录的 paths.dsh 不存在或不是绝对路径：{dsh}；宿主版本未验证",
-            "evidence": {"checked": False, "dsh": dsh},
-        }
-    try:
-        proc = runner(
-            [dsh, "--version"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
-            "status": "unverified",
-            "required": requirement,
-            "host": "",
-            "note": f"compat.dsh 非 *，但运行 {dsh} --version 失败：{exc}；宿主版本未验证",
-            "evidence": {"checked": False, "dsh": dsh, "error": str(exc)},
-        }
-    if proc.returncode != 0:
-        return {
-            "status": "unverified",
-            "required": requirement,
-            "host": "",
-            "note": f"compat.dsh 非 *，但 {dsh} --version 退出码非零；宿主版本未验证",
-            "evidence": {"checked": False, "dsh": dsh, "returncode": proc.returncode},
-        }
-    output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
-    host = _parse_host_version(output)
-    if not host:
-        return {
-            "status": "unverified",
-            "required": requirement,
-            "host": "",
-            "note": f"compat.dsh 非 *，但无法从 {dsh} --version 解析版本；宿主版本未验证",
-            "evidence": {"checked": False, "dsh": dsh, "output": output.strip()[:200]},
-        }
-    matched = _dsh_requirement_matches(requirement, host)
-    if matched is None:
-        return {
-            "status": "unverified",
-            "required": requirement,
-            "host": host,
-            "note": f"compat.dsh 要求 {requirement!r} 无法解析；宿主 dsh {host} 未判定",
-            "evidence": {"checked": False, "dsh": dsh, "host": host},
-        }
-    return {
-        "status": "ok" if matched else "mismatch",
-        "required": requirement,
-        "host": host,
-        "note": (
-            f"宿主 dsh {host} 满足 compat.dsh {requirement}"
-            if matched
-            else f"发行包要求 compat.dsh {requirement}，当前宿主 dsh 为 {host}"
-        ),
-        "evidence": {"checked": True, "dsh": dsh, "host": host},
-    }
-
-
-def _check_dsh_compat(code: Path, manifest: dict, *, runner=None) -> dict:
-    result = dsh_compatibility(
-        code,
-        manifest.get("compat", {}).get("dsh", "*"),
-        runner=runner or subprocess.run,
-    )
-    if result["status"] == "mismatch":
-        _stop(
-            "compat_dsh_mismatch",
-            result["note"],
-            field="compat.dsh",
-            required=result["required"],
-            host=result["host"],
-        )
-    return result
 
 
 # -------------------------------------------------------------- pending marker
@@ -1354,7 +1209,6 @@ def _success(
     extracted: bool,
     installed_at: str,
     previous_version: str = "",
-    dsh_compat: dict | None = None,
 ) -> dict:
     manifest_files = manifest["files"]
     total_bytes = sum(row["bytes"] for row in manifest_files)
@@ -1365,8 +1219,6 @@ def _success(
         )
     else:
         note = "同一版本且校验通过，本次未重复解压，安装锁与磁盘均未改动"
-    if dsh_compat and dsh_compat.get("status") == "unverified":
-        note = f"{note}；宿主 dsh 兼容性未验证：{dsh_compat.get('note', '')}"
     return {
         "ok": True,
         "status": "ok",
@@ -1387,7 +1239,6 @@ def _success(
         "bytes": total_bytes,
         "extracted": extracted,
         "installed_at": installed_at,
-        "compat_dsh": dsh_compat or {},
         "note": note,
     }
 
@@ -1399,7 +1250,6 @@ def install_package(
     digest_path: str | Path | None = None,
     sha256: str | None = None,
     channel: str | None = None,
-    runner=subprocess.run,
 ) -> dict:
     """Install a distribution package and write its install lock.
 
@@ -1450,7 +1300,6 @@ def install_package(
         )
         try:
             _check_compat(manifest)
-            dsh_compat = _check_dsh_compat(code_path, manifest, runner=runner)
 
             lock = read_lock(code_path)
             if (
@@ -1469,7 +1318,6 @@ def install_package(
                         effective_channel,
                         False,
                         str(lock.get("installed_at") or ""),
-                        dsh_compat=dsh_compat,
                     )
 
             conflicts = _foreign_entries(code_path)
@@ -1590,7 +1438,6 @@ def install_package(
             "source_url": source_url,
             "installed_at": installed_at,
             "requires": dict(manifest["compat"]),
-            "skill_digest": "",
             "package_file_count": len(manifest["files"]),
             "manifest_sha256": manifest_sha,
         }
@@ -1624,7 +1471,6 @@ def install_package(
             True,
             installed_at,
             previous_version,
-            dsh_compat=dsh_compat,
         )
     except _InstallBlocked as exc:
         return exc.payload
@@ -2027,7 +1873,6 @@ def verify_install(code: str | Path) -> dict:
             "dirty": bool(lock.get("dirty")),
             "source_url": lock.get("source_url"),
             "installed_at": lock.get("installed_at"),
-            "skill_digest": lock.get("skill_digest"),
             "code": str(code_path),
             "lock": str(lock_path(code_path)),
             "manifest": None,

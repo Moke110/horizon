@@ -426,7 +426,6 @@ def _default_compat() -> dict[str, str]:
     return {
         "os": normalize_os(sys.platform),
         "arch": normalize_arch(platform_mod.machine()),
-        "dsh": "*",
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
 
@@ -457,6 +456,8 @@ def normalize_arch(machine: str | None) -> str:
 def _compat(overrides: dict | None) -> dict[str, str]:
     compat = _default_compat()
     for key, value in (overrides or {}).items():
+        if key == "dsh":  # Older tooling may still pass this inert field.
+            continue
         if key not in compat:
             raise BuildError(f"unknown compat field {key!r}; expected {', '.join(compat)}")
         text = str(value or "").strip()
@@ -670,7 +671,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--os", dest="os_name", help="compat.os (default: this host)")
     parser.add_argument("--arch", help="compat.arch (default: this host)")
-    parser.add_argument("--dsh", dest="dsh", help="compat.dsh minimum (default: *)")
     parser.add_argument("--python", dest="python_version", help="compat.python (default: this interpreter)")
     parser.add_argument(
         "--runtime-dir",
@@ -691,7 +691,6 @@ def main(argv: list[str] | None = None) -> int:
         for key, value in {
             "os": args.os_name,
             "arch": args.arch,
-            "dsh": args.dsh,
             "python": args.python_version,
         }.items()
         if value

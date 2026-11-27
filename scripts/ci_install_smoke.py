@@ -9,7 +9,6 @@ against separate temporary directories:
     install package  --from <zip> --sha256 <artifact sha256>
     install verify
     console install (bundled Pi Agent)
-    install skill    --root <code> --target <temp skills dir>
     <code>\\bin\\horizon.cmd --code <code> --archive <archive> --help
     install report
 
@@ -24,7 +23,7 @@ The point is the *installed tree*, not the runner's Python: the runner's
 interpreter executes the CLI from the source checkout, while the package is
 installed into an otherwise empty code directory.  Every command's JSON is
 checked, and the final report must describe a package installation whose
-``skill`` step is ``ok``.  Other install probes may legitimately be
+Other install probes may legitimately be
 pending/blocked in CI (no Feishu, no host agent), so they are not asserted.
 
 Exit status is 0 only when every check passes.  A failure prints one JSON object
@@ -358,7 +357,6 @@ def run_smoke(
     *,
     code: str | Path,
     archive: str | Path,
-    skills_target: str | Path,
     bootstrap: str | Path | None = None,
     python: str | None = None,
     expected_sha256: str | None = None,
@@ -369,7 +367,6 @@ def run_smoke(
     artifact = Path(zip_path).expanduser().resolve()
     code_dir = Path(code).expanduser().resolve()
     archive_dir = Path(archive).expanduser().resolve()
-    skills_dir = Path(skills_target).expanduser().resolve()
 
     if not artifact.is_file():
         raise SmokeError("artifact", f"artifact is missing: {artifact}")
@@ -384,7 +381,6 @@ def run_smoke(
             f"artifact sha256 mismatch: expected {expected}, got {actual_sha}",
         )
     _empty_dir(code_dir, "code")
-    _empty_dir(skills_dir, "skills-target")
     if bootstrap is None:
         bootstrap_dir = Path(tempfile.mkdtemp(prefix="horizon-install-smoke-"))
     else:
@@ -433,19 +429,6 @@ def run_smoke(
     _require(console, name="console", ok=True, status="ok", processes_started=False)
     commands.append({"name": "console", **_command_view(console)})
 
-    skill = _run_cli(
-        interpreter,
-        code_dir,
-        archive_dir,
-        ["install", "skill", "--root", str(code_dir), "--target", str(skills_dir)],
-        name="skill",
-    )
-    _require(skill, name="skill", ok=True)
-    pointer = skills_dir / "SKILL.md"
-    if not pointer.is_file():
-        raise SmokeError("skill", f"install skill wrote no pointer: {pointer}")
-    commands.append({"name": "skill", **_command_view(skill)})
-
     wrapper_result = None
     if check_wrapper:
         wrapper_result = run_wrapper_check(code_dir, archive_dir)
@@ -489,15 +472,9 @@ def run_smoke(
         version=version,
         channel=channel,
     )
-    skill_step = (report.get("steps") or {}).get("skill") or {}
-    _require(skill_step, name="report.steps.skill", status="ok")
     blocked_steps = [
         row.get("step") for row in report.get("blocked") or [] if isinstance(row, dict)
     ]
-    if "skill" in blocked_steps:
-        raise SmokeError(
-            "report", "the install report lists the skill step as blocked"
-        )
     commands.append(
         {
             "name": "report",
@@ -527,7 +504,6 @@ def run_smoke(
         "bootstrap": str(bootstrap_dir),
         "code": str(code_dir),
         "archive": str(archive_dir),
-        "skills_target": str(skills_dir),
         "artifact_entries": extracted["entries"],
         "commands": commands,
         "lock": str(_lock_path(code_dir)),
@@ -571,17 +547,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python scripts/ci_install_smoke.py",
         description=(
             "Install a built distribution artifact into temporary directories "
-            "and verify the install commands, console script, skill pointer and report."
+            "and verify the install commands, console script and report."
         ),
     )
     parser.add_argument("--zip", required=True, help="built distribution artifact (.zip)")
     parser.add_argument("--code", required=True, help="empty code directory to install into")
     parser.add_argument("--archive", required=True, help="archive directory for the install")
-    parser.add_argument(
-        "--skills-target",
-        required=True,
-        help="empty host skills directory for the horizon-run pointer",
-    )
     parser.add_argument(
         "--bootstrap",
         default=None,
@@ -614,7 +585,6 @@ def main(argv: list[str] | None = None) -> int:
             args.zip,
             code=args.code,
             archive=args.archive,
-            skills_target=args.skills_target,
             bootstrap=args.bootstrap,
             python=args.python,
             expected_sha256=args.expected_sha256,

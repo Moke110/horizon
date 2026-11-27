@@ -27,7 +27,7 @@ BASE_REL = Path("knowledge") / "base.json"
 #: Config keys the retired listener section used to own but the Console's Agent
 #: runs still consume.  ``load_config`` maps an old ``listener`` record onto the
 #: current ``agent_run`` section so a migrated installation keeps its overlay.
-AGENT_RUN_KEYS = ("feedback_lease_minutes", "derived_timeout_seconds", "dsh_args")
+AGENT_RUN_KEYS = ("feedback_lease_minutes", "derived_timeout_seconds")
 
 DEFAULT_HOST = "unknown"
 REDACT_KEYS = ("token", "secret", "password", "cookie", "code", "key")
@@ -48,7 +48,6 @@ def default_config(home: Path, *, repo: Path | None = None) -> dict:
             "home": str(home),
             "python": sys.executable,
             "lark_cli": "",
-            "dsh": "",
         },
         "timezone": "",
         "permissions": {"scope": [], "granted_at": None},
@@ -58,10 +57,6 @@ def default_config(home: Path, *, repo: Path | None = None) -> dict:
         "agent_run": {
             "feedback_lease_minutes": 45,
             "derived_timeout_seconds": 1200,
-            # Extra argv inserted between ``--profile headless`` and the task
-            # text for an Agent run (e.g. ["--patch", "<overlay.yml>"] when a
-            # host's headless profile has no model credential of its own).
-            "dsh_args": [],
         },
     }
 
@@ -143,49 +138,6 @@ def lark_bin(home: Path) -> str:
     home = Path(home)
     cfg = read_json(home / CONFIG_REL) or {}
     return str((cfg.get("paths") or {}).get("lark_cli") or "lark-cli")
-
-
-def dsh_bin(home: Path) -> str:
-    """The recorded absolute ``dsh`` path, or ``""``.
-
-    ADR 0009 §10 requires the Console's Agent runs to use an explicitly recorded
-    absolute path — ``dsh`` is not on PATH, so there is no fallback here:
-    unrecorded, relative or missing all mean "not usable".
-    """
-    home = Path(home)
-    cfg = read_json(home / CONFIG_REL) or {}
-    recorded = str((cfg.get("paths") or {}).get("dsh") or "").strip()
-    if not recorded:
-        return ""
-    path = Path(recorded).expanduser()
-    if not path.is_absolute() or not path.is_file():
-        return ""
-    return str(path)
-
-
-def require_dsh(home: Path) -> str:
-    """Return the recorded ``dsh`` path or raise with an actionable repair.
-
-    The repair hint points at the recorded config file and the console
-    installer, so the user can fix it by hand or re-run
-    ``console install --dsh``.
-    """
-    home = Path(home)
-    config_path = home / CONFIG_REL
-    repair = (
-        f"在 {config_path} 的 paths.dsh 写入 dsh 的绝对路径"
-        "（或运行 hostrun.cli console install --dsh <绝对路径>）"
-    )
-    cfg = read_json(config_path) or {}
-    recorded = str((cfg.get("paths") or {}).get("dsh") or "").strip()
-    if not recorded:
-        raise HostRunError(f"missing recorded dsh: paths.dsh 未记录；{repair}")
-    path = Path(recorded).expanduser()
-    if not path.is_absolute():
-        raise HostRunError(f"invalid recorded dsh: paths.dsh 不是绝对路径 ({recorded!r})；{repair}")
-    if not path.is_file():
-        raise HostRunError(f"invalid recorded dsh: paths.dsh 指向的文件不存在 ({path})；{repair}")
-    return str(path)
 
 
 def base_client(

@@ -257,10 +257,7 @@ def _migrate_config(
     for key in ("feedback_lease_minutes", "derived_timeout_seconds", "dsh_args"):
         if key in legacy_listener and key not in agent_run:
             agent_run[key] = legacy_listener[key]
-    # Recorded per-run arguments can carry absolute paths (e.g. the credentials
-    # ``--patch`` overlay).  Those files move out of the legacy data root, so a
-    # stale path would make every real agent run fail; remap them with the rest
-    # of the installation.
+    # Preserve historical overlay path references when relocating legacy files.
     if isinstance(agent_run.get("dsh_args"), list):
         agent_run["dsh_args"] = [
             _remap_inside(item, legacy, runtime) if isinstance(item, str) else item

@@ -24,7 +24,7 @@ clean seam (``route_text`` -> ``intent_judgement``).
 
 All executables are offline-testable through injectable context seams
 (``status``, ``queue``, ``run``, ``write_state``, ``send``, ``target``); no
-``lark-cli``, Base, network or real ``dsh`` is involved.
+``lark-cli``, Base or network is involved.
 """
 
 from __future__ import annotations
