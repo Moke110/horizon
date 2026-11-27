@@ -761,3 +761,15 @@ Automated checks covered all-source refresh including disabled sources, first su
 Spec 12 acceptance covers Horizon’s embedded Pi runtime. The Explorer removed the external host requirement from the acceptance scope.
 
 At `745498f`, the desktop type check and build passed. An isolated run through the checkout’s `Horizon.cmd` started the Python desktop owner and an Electron main window. The test used a temporary data home and left the live profile and source switches untouched.
+
+## Spec 13 Archive and immutable reports — 2026-11-28
+
+The production Windows Electron desktop, embedded Pi Agent, and Librarian ran against isolated data with deterministic localhost model responses. The desktop confirmed writes, shut down, and reopened the same originals and entries. [Spec 13](https://github.com/Moke110/horizon/issues/288)
+
+- The Agent downloaded public IANA HTML and rejected attempts to register zero or multiple originals. Two deliberate registrations of identical bytes received distinct IDs. An offline import kept its existing ID and SHA-256, and the desktop restored access when the matching file was supplied. [Registration](https://github.com/Moke110/horizon/issues/289#issuecomment-7221521968) · [Offline restoration](https://github.com/Moke110/horizon/issues/290#issuecomment-7221866708)
+- Completed reports opened with their original HTML and SHA-256. Stopping a turn before publication left no report entry. Offline import preserved the ordered missing, present, missing document references. A reliability reassessment left the report bytes and coverage intact. [Publication](https://github.com/Moke110/horizon/issues/291#issuecomment-7221954244) · [Offline import](https://github.com/Moke110/horizon/issues/292#issuecomment-7222246917) · [Reliability](https://github.com/Moke110/horizon/issues/293#issuecomment-7222685922)
+- A Frontier progress entry opened both Archive originals by ID. Deleting the progress left both originals accessible. Failed replacement left the old report readable. Successful replacement created a new ID and left a deletion notice at the old reference. [Frontier references](https://github.com/Moke110/horizon/issues/294#issuecomment-7222358129) · [Replacement](https://github.com/Moke110/horizon/issues/295#issuecomment-7222797144)
+
+The scheduled late-full-text check seeded a PDF and confirmed registration in Archive without creating legacy Editor rows. Review regressions covered the replacement journal, offline import, cleanup, and Archive ownership. A forced operating-system termination can leave a hidden `.pending-*` staging file without registering a partial report.
+
+The reviewed integration at `cbf3d0a` passed 1,786 Windows Python tests with 15 skips and two pre-existing warnings. Desktop type checking and build passed, along with the embedded Agent build and runtime check.
