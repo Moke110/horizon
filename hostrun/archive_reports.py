@@ -6,10 +6,11 @@ import re
 import uuid
 
 from hostrun.agent_service import CommandError
-from hostrun.archive_documents import DOCUMENT_ID, MAX_SOURCE_BYTES
+from hostrun.archive_documents import DOCUMENT_ID, MAX_SOURCE_BYTES, SHA256
 
 
 REPORT_ID = re.compile(r"r-[0-9a-f]{32}")
+UNKNOWN_DOCUMENT = "d-unknown"
 
 
 class ArchiveReports:
@@ -51,6 +52,11 @@ class ArchiveReports:
     def path(self, report_id):
         return self.files.original_directory("reports") / f"{report_id}.html"
 
+    def apply(self, db, action, command, *, origin, publish):
+        if action == "import":
+            return self.import_existing(db, command, origin=origin, publish=publish)
+        return self.create(db, command, origin=origin, publish=publish)
+
     def create(self, db, command, *, origin, publish):
         fields = {"operation_id", "draft_id", "title", "summary", "covered_docs"}
         if set(command) != fields:
@@ -63,25 +69,70 @@ class ArchiveReports:
         for identity in covered:
             self.sources.read_in_transaction(db, identity)
         draft_id = command["draft_id"]
-        if not isinstance(draft_id, str) or not re.fullmatch(r"[0-9a-f]{64}", draft_id):
+        original = self.read_draft(db, origin, draft_id)
+        identity = uuid.uuid5(uuid.NAMESPACE_URL, f"horizon:archive-report:{command['operation_id']}:{draft_id}")
+        report_id = "r-" + identity.hex
+        record = self.entry(report_id, draft_id, command, covered, self.path(report_id))
+        return self.register(db, record, original, publish=publish)
+
+    def import_existing(self, db, command, *, origin, publish):
+        fields = command.get("report")
+        if not isinstance(fields, dict) or set(command) - {"operation_id", "report", "draft_id"}:
+            raise CommandError("invalid_report", "导入需要已有的报道条目")
+        report_id, digest = fields.get("report_id"), fields.get("sha256")
+        if (not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id)
+                or not isinstance(digest, str) or not SHA256.fullmatch(digest)):
+            raise CommandError("invalid_report", "导入需要原报道 ID 和 SHA-256")
+        imported_docs = fields.get("covered_docs")
+        if (not isinstance(imported_docs, list) or not imported_docs
+                or any(not isinstance(item, str)
+                       or (item != UNKNOWN_DOCUMENT and not DOCUMENT_ID.fullmatch(item)) for item in imported_docs)):
+            raise CommandError("invalid_report", "导入需要有序的被报道文档 ID")
+        covered = [self.imported_document_id(db, identity) for identity in imported_docs]
+        draft_id = command.get("draft_id")
+        if draft_id is not None and draft_id != digest:
+            raise CommandError("hash_mismatch", "导入的 HTML 与原报道 SHA-256 不一致")
+        original = self.read_draft(db, origin, draft_id) if draft_id is not None else None
+        record = self.entry(report_id, digest, fields, covered, self.path(report_id) if original is not None else None)
+        return self.register(db, record, original, publish=publish)
+
+    def imported_document_id(self, db, identity):
+        if identity == UNKNOWN_DOCUMENT:
+            return identity
+        try:
+            self.sources.read_in_transaction(db, identity)
+        except CommandError as error:
+            if error.code != "not_found":
+                raise
+            return UNKNOWN_DOCUMENT
+        return identity
+
+    @staticmethod
+    def read_draft(db, origin, draft_id):
+        if not isinstance(draft_id, str) or not SHA256.fullmatch(draft_id):
             raise CommandError("invalid_report", "需要当前会话缓存的报道稿件")
         row = db.execute("SELECT html FROM library_report_drafts WHERE origin=? AND draft_id=?",
                          (origin, draft_id)).fetchone()
         if row is None or hashlib.sha256(row[0]).hexdigest() != draft_id:
             raise CommandError("report_unavailable", "当前会话缓存的报道稿件不可用")
-        identity = uuid.uuid5(uuid.NAMESPACE_URL, f"horizon:archive-report:{command['operation_id']}:{draft_id}")
-        report_id = "r-" + identity.hex
-        path = self.path(report_id)
-        record = {
+        return row[0]
+
+    def entry(self, report_id, digest, fields, covered, path):
+        return {
             "report_id": report_id, "status": "completed",
-            "title": self._text(command["title"], 500, "标题"),
-            "summary": self._text(command["summary"], 2000, "简介"),
-            "sha256": draft_id, "file_path": str(path), "covered_docs": covered,
+            "title": self._text(fields.get("title"), 500, "标题"),
+            "summary": self._text(fields.get("summary"), 2000, "简介"),
+            "sha256": digest, "file_path": str(path) if path is not None else None,
+            "covered_docs": covered,
         }
+
+    def register(self, db, record, original, *, publish):
+        report_id = record["report_id"]
         if db.execute("SELECT 1 FROM library_archive_reports WHERE report_id=?", (report_id,)).fetchone():
             raise CommandError("immutable_report", "已登记报道不能修改")
         if publish:
-            self.files.publish(path, row[0], draft_id)
+            if original is not None:
+                self.files.publish(self.path(report_id), original, record["sha256"])
             db.execute("INSERT INTO library_archive_reports VALUES (?,?)",
                        (report_id, json.dumps(record, ensure_ascii=False)))
         return record
@@ -105,6 +156,8 @@ class ArchiveReports:
 
     def open(self, report_id):
         report = self.view(report_id)
+        if report["file_path"] is None:
+            return {"report": report, "html": None}
         try:
             html = self.files.read_file(self.path(report_id), report["sha256"]).decode("utf-8")
         except (CommandError, UnicodeError):

@@ -357,10 +357,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   }
   const archiveReport = defineTool({
     name: "archive_report", label: "Newsroom and Archive reports",
-    description: "After all retrieval in this task is finished, author the final Newsroom HTML and cache it with stage. Submit create with JSON fields title, summary, draft_id, and covered_docs containing only the document IDs actually reported on. Wait for Explorer confirmation. List or view registered reports; their originals and entries cannot be edited.",
+    description: "After all retrieval in this task is finished, author the final Newsroom HTML and cache it with stage. Submit create with JSON fields title, summary, draft_id, and covered_docs containing only the document IDs actually reported on. Import uses fields.report containing the original report_id, sha256, title, summary, and ordered covered_docs. An optional draft_id must identify cached HTML with the same hash. Create and import require Explorer confirmation. List or view registered reports; their originals and entries cannot be edited.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("view"),
-        Type.Literal("stage"), Type.Literal("create")]),
+        Type.Literal("stage"), Type.Literal("create"), Type.Literal("import")]),
       reportId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
       html: Type.Optional(Type.String({maxLength: 10 * 1024 * 1024})),

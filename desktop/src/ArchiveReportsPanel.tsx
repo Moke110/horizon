@@ -6,7 +6,7 @@ export type ArchiveReport = {
   title: string;
   summary: string;
   sha256: string;
-  file_path: string;
+  file_path: string | null;
   covered_docs: string[];
   status: 'completed';
 };
@@ -36,8 +36,9 @@ export function ArchiveReportView({entry}: {entry: ArchiveReportOriginal}) {
       <dt>报道 ID</dt><dd>{report.report_id}</dd>
       <dt>状态</dt><dd>已完成</dd>
       <dt>SHA-256</dt><dd>{report.sha256}</dd>
-      <dt>文件地址</dt><dd>{report.file_path}</dd>
-      <dt>被报道文档</dt><dd><ul>{report.covered_docs.map(identity => <li key={identity}>{identity}</li>)}</ul></dd>
+      {report.file_path && <><dt>文件地址</dt><dd>{report.file_path}</dd></>}
+      <dt>被报道文档</dt><dd><ol>{report.covered_docs.map((identity, index) =>
+        <li key={index}>{identity}</li>)}</ol></dd>
     </dl>
     {html === null ? <p role="status">原文不可用</p>
       : <article aria-label="报道原文" className="local-html">{renderLocalHtml(html)}</article>}

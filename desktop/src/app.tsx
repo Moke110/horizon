@@ -44,7 +44,7 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
   },[card.status,card.expires_at]);
   const status=elapsed&&card.status==='pending'?'expired':card.status;
   const labels:Record<string,string>={aliases:'别名',sources:'来源',relations:'关系',
-    validity:'状态',tracked:'追踪中',questionable:'存疑',convergence:'收敛状态',reason:'修改理由',summary:'简介',citation:'学术引用',source_files:'缓存原件',file_id:'缓存原件',document_id:'文档 ID',sha256:'SHA-256',label:'来源说明',covered_docs:'被报道文档',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
+    validity:'状态',tracked:'追踪中',questionable:'存疑',convergence:'收敛状态',reason:'修改理由',summary:'简介',citation:'学术引用',source_files:'缓存原件',file_id:'缓存原件',document_id:'文档 ID',report_id:'报道 ID',sha256:'SHA-256',label:'来源说明',covered_docs:'被报道文档',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
   const fieldText=(field:string,value:unknown)=>{
     if(field==='validity') return value==='questionable'?'存疑':'有效';
     if(field==='tracked') return value?'是':'否';
@@ -68,10 +68,14 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
     {card.cleanup&&<CleanupEntries plan={card.cleanup}/>}
     {card.changes.map(([action,change],index)=>{
       const document=action==='import'&&card.entity==='source' ? change.document as ArchiveSource|undefined : undefined;
+      const report=action==='import'&&card.entity==='report' ? change.report as ArchiveReport|undefined : undefined;
       const fields=document?{document_id:document.source_id,sha256:document.sha256,
-        summary:document.summary,citation:document.citation}:change;
+        summary:document.summary,citation:document.citation}:report?{report_id:report.report_id,
+          sha256:report.sha256,summary:report.summary,covered_docs:report.covered_docs}:change;
+      const actionLabel=action==='import'?(report?'导入报道':'导入离线文档'):
+        ({create:'新增',register:'登记文档',restore:'恢复原文',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action];
       return <div key={index}>
-      <strong>{({create:'新增',register:'登记文档',import:'导入离线文档',restore:'恢复原文',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action]} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
+      <strong>{actionLabel} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
       {card.entity!=='progress'&&previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
       <dl>{Object.entries(fields).filter(([field,value])=>field in labels&&(!document||value!=null)).map(([field,value])=><React.Fragment key={field}>
         <dt>{labels[field]}</dt><dd>{field==='convergence'?convergenceLabel(value as Convergence,card.entity==='question'?'question':'term'):fieldText(field,value)}</dd>
