@@ -32,7 +32,7 @@ def install(control_root, identity, package, digest):
     payloads['.horizon/dist.lock.json'] = json.dumps({
         'schema_version': 1, 'distribution': 'package', 'version': manifest['version'],
         'channel': channel, 'artifact_sha256': digest, 'source_url': '', 'installed_at': installed_at,
-        'requires': manifest['compat'], 'skill_digest': '', 'package_file_count': len(manifest['files']),
+        'requires': manifest['compat'], 'package_file_count': len(manifest['files']),
         'manifest_sha256': manifest_sha}).encode()
     control = Path(control_root).resolve(strict=True)
     cleanup.preview(control, identity)

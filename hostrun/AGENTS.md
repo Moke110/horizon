@@ -14,7 +14,7 @@
 | [base.py](base.py) | Config, Base-client factory and executable resolution for host runs. |
 | [cleanup.py](cleanup.py) | Preparation of isolated test instances; existing installations are never adopted. |
 | [cleanup_cli.py](cleanup_cli.py) | Independent Windows test-instance tool; complete kit acceptance remains pending. |
-| [cli.py](cli.py) | hostrun CLI: the entry points a host agent calls. |
+| [cli.py](cli.py) | Horizon CLI entry points used by the launchers and internal runtime. |
 | [console.py](console.py) | Console shell: the single resident foreground program (ADR 0009 §1/§3). |
 | [console_events.py](console_events.py) | The Console's Feishu event surface (ADR 0009 §1/§4). |
 | [console_gate.py](console_gate.py) | The knowledge-base gate for the daily push (ADR 0009 §6, #87). |

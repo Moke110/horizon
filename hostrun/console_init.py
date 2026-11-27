@@ -61,7 +61,7 @@ first unfinished step and never leaves a half-created facility behind.
 Everything interactive is injectable (``reader``, ``out``, ``isatty``,
 ``pick_folder``, ``write_probe``, ``lark_runner``, ``lark_install``, ``clock``,
 ``sleep``), so the whole flow is offline-testable.  The real Windows folder
-dialog, a real folder outside the DSH workspace, a real device-code login and
+dialog, a real folder outside the source checkout, a real device-code login and
 the real browser authorization stay ``untested`` until recorded live.
 """
 

@@ -1,6 +1,6 @@
 """Installation workspace: code, data root, private uv/Python and the run skill.
 
-The host agent owns installation (ADR 0005).  This module makes the first
+Horizon owns installation.  This module makes the first
 phase checkable instead of conversational:
 
     root/                         installation workspace (host project folder)
@@ -43,7 +43,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from common import ensure_dir, now, read_json, sha256_file, write_json
+from common import ensure_dir, now, read_json, write_json
 from hostrun import dist as dist_mod
 from hostrun.base import HostRunError, resolve_executable, update_config
 
@@ -193,7 +193,7 @@ def save_record(root: str | Path, record: dict) -> Path:
 
 
 def locate(start: str | Path | None = None) -> dict:
-    """Find the nearest workspace record, so a moved skill can still locate code."""
+    """Find the nearest recorded Horizon workspace."""
     current = Path(start or Path.cwd()).expanduser().resolve()
     if current.is_file():
         current = current.parent
@@ -853,161 +853,6 @@ def toolchain(
     return result
 
 
-# ---------------------------------------------------------------------- skill
-POINTER_DISTRIBUTION = "发行来源"
-POINTER_VERSION = "发行版本"
-POINTER_CHANNEL = "发行渠道"
-POINTER_ARTIFACT = "制品摘要"
-POINTER_PACKAGE_SOURCE = "发行包来源"
-POINTER_COMMIT = "源码提交"
-POINTER_DIRTY = "工作区改动"
-POINTER_SOURCE = "源码来源"
-POINTER_SKILL_DIGEST = "技能摘要"
-POINTER_LOCK = "安装锁"
-POINTER_UNRECORDED = "<未记录>"
-_POINTER_KEYS = {
-    POINTER_DISTRIBUTION: "distribution",
-    POINTER_VERSION: "version",
-    POINTER_CHANNEL: "channel",
-    POINTER_ARTIFACT: "artifact_sha256",
-    POINTER_PACKAGE_SOURCE: "source",
-    POINTER_COMMIT: "commit",
-    POINTER_DIRTY: "dirty",
-    POINTER_SOURCE: "source",
-    POINTER_SKILL_DIGEST: "skill_digest",
-    POINTER_LOCK: "lock",
-}
-_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
-
-
-def entry_digest(repo: str | Path) -> str:
-    """SHA-256 of the checkout's ``skills/horizon-run/SKILL.md`` (#97)."""
-    return sha256_file(Path(repo) / SKILL_ENTRY)
-
-
-def _pointer_values(record: dict, lock: dict | None = None) -> dict:
-    """The distribution facts the pointer and its verifier agree on."""
-    lock = lock if isinstance(lock, dict) else {}
-    distribution = str(lock.get("distribution") or "source")
-    repo = Path(record.get("repo") or "")
-    values = {
-        "distribution": distribution,
-        "lock": (
-            str(dist_mod.lock_path(repo))
-            if record.get("repo")
-            else POINTER_UNRECORDED
-        ),
-    }
-    if distribution == "package":
-        values.update(
-            {
-                "version": str(lock.get("version") or POINTER_UNRECORDED),
-                "channel": str(lock.get("channel") or POINTER_UNRECORDED),
-                "artifact_sha256": str(
-                    lock.get("artifact_sha256") or POINTER_UNRECORDED
-                ),
-                "source": str(
-                    lock.get("source_url")
-                    or record.get("repo_url")
-                    or POINTER_UNRECORDED
-                ),
-            }
-        )
-    else:
-        dirty = lock.get("dirty") if lock else record.get("dirty")
-        values.update(
-            {
-                "version": "source",
-                "commit": str(
-                    lock.get("commit") or record.get("commit") or ""
-                )
-                or POINTER_UNRECORDED,
-                "dirty": "有" if dirty else "无",
-                "source": str(
-                    lock.get("source_url")
-                    or record.get("repo_url")
-                    or record.get("origin")
-                    or POINTER_UNRECORDED
-                ),
-            }
-        )
-    return values
-
-
-def _parse_pointer(text: str) -> dict:
-    """Read the pointer's ``- key：value`` bullets, ignoring every other line."""
-    values: dict[str, str] = {}
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip()
-        if not line.startswith("- ") or "：" not in line:
-            continue
-        key, value = line[2:].split("：", 1)
-        field = _POINTER_KEYS.get(key.strip())
-        if field:
-            values[field] = value.strip()
-    return values
-
-
-def _launcher_text(record: dict, lock: dict | None = None, digest: str = "") -> str:
-    values = _pointer_values(record, lock)
-    package = values["distribution"] == "package"
-    wrapper = Path(record["repo"]) / "bin" / "horizon.cmd"
-    lines = [
-        f"- 仓库：{record['repo']}",
-        f"- 运行时区：{record['home']}",
-        f"- 入口点：{wrapper if package else record.get('python') or '<由 install toolchain 记录>'}",
-        f"- 解释器：{record.get('python') or '<内置运行时解释器未记录>'}",
-        f"- 安装记录：{Path(record['root']) / RECORD_REL}",
-        f"- {POINTER_DISTRIBUTION}：{values['distribution']}",
-        f"- {POINTER_VERSION}：{values['version']}",
-    ]
-    if package:
-        lines += [
-            f"- {POINTER_CHANNEL}：{values['channel']}",
-            f"- {POINTER_ARTIFACT}：{values['artifact_sha256']}",
-            f"- {POINTER_PACKAGE_SOURCE}：{values['source']}",
-        ]
-    else:
-        lines += [
-            f"- {POINTER_COMMIT}：{values['commit']}",
-            f"- {POINTER_DIRTY}：{values['dirty']}",
-            f"- {POINTER_SOURCE}：{values['source']}",
-        ]
-    lines += [
-        f"- {POINTER_SKILL_DIGEST}：{digest or POINTER_UNRECORDED}",
-        f"- {POINTER_LOCK}：{values['lock']}",
-    ]
-    bullets = "\n".join(lines)
-    if package:
-        run_step = (
-            f"3. 使用上面记录的入口点 `{wrapper}` 执行 horizon 子命令"
-            f"（例如 `{wrapper} --code \"{record['repo']}\" --archive \"<资料目录>\" "
-            "install verify`）；不要自行拼接 `-m hostrun.cli`。"
-        )
-    else:
-        run_step = "3. 以仓库根为工作目录，用上面记录的解释器执行 `python -m hostrun.cli ...`。"
-    return f"""---
-name: {SKILL_NAME}
-description: "Install, run, pause or recover horizon on this host. Read the repository entry and references before acting."
----
-
-# {SKILL_NAME}
-
-本文件是安装时生成的**入口指针**，不是仓库副本。运行与安装规则以仓库内文件为准。
-
-{bullets}
-
-## 每次唤醒
-
-1. 读取 `{Path(record["repo"]) / SKILL_ENTRY}`。
-2. 读取它引用的 `references/installation.md` 与 `references/workflow.md`。
-{run_step}
-4. 不要根据本文件所在位置推断仓库；路径变化时重新运行 `install skill`。
-
-本文件不含凭据，也不修改环境变量、PATH 或注册表。
-"""
-
-
 def _package_workspace_record(root: str | Path) -> dict:
     """Derive a truthful workspace record from an installed package, or ``{}``.
 
@@ -1019,9 +864,6 @@ def _package_workspace_record(root: str | Path) -> dict:
     real bundled interpreter in ``python`` when the package carries one.  Nothing
     here invents a git commit or a source lock.
 
-    A derived record carries ``derived_from``: ``register_skill`` uses it to
-    refresh the version/commit after an upgrade or rollback without ever
-    overwriting a user/source record.
     """
     root_path = Path(root).expanduser().resolve()
     lock = dist_mod.read_lock(root_path)
@@ -1059,257 +901,18 @@ def _package_workspace_record(root: str | Path) -> dict:
     }
 
 
-def register_skill(
-    root: str | Path,
-    target: str | Path,
-    *,
-    dry_run: bool = False,
-) -> dict:
-    """Write a small launcher skill that points at the real repository.
-
-    The pointer records the installation it points at: a package version and
-    artifact digest, or the source commit and dirty state (#97).  The digest of
-    the checkout's runtime ``SKILL.md`` is written into the pointer and into the
-    install lock, so ``verify_skill`` can prove they still agree.
-    """
-    record = load_record(root)
-    derived = _package_workspace_record(root) if not record or record.get("derived_from") else {}
-    if derived.get("error") == "package_wrapper_missing":
-        return {
-            "ok": False,
-            "status": "blocked",
-            "reason": "package_wrapper_missing",
-            "code": derived["root"],
-            "wrapper": derived["wrapper"],
-            "lock": derived["lock"],
-            "note": (
-                f"发行包安装缺少启动包装器：{derived['wrapper']}；"
-                "请重新执行 install package 修复安装，再注册技能入口"
-            ),
-        }
-    if derived:
-        # Refresh every derived package fact (version/commit/python) after an
-        # upgrade or rollback, but keep the registered skill paths.
-        preserved = {
-            key: record[key]
-            for key in ("skill", "skill_target")
-            if record.get(key)
-        }
-        record = {**derived, **preserved}
-    if not record.get("repo") or not record.get("home"):
-        if record:
-            # A partial workspace record is authoritative evidence that a
-            # source install happened; never paper over it with package fields.
-            raise HostRunError("工作区记录不完整；先运行 install workspace 或修复安装记录")
-        raise HostRunError("先执行 install workspace，工作区尚未记录代码与数据目录")
-    target_dir = Path(target).expanduser().resolve()
-    launcher = target_dir / "SKILL.md"
-    repo = Path(record["repo"])
-    entry = repo / SKILL_ENTRY
-    references = [repo / rel for rel in SKILL_REFERENCES]
-    missing = [str(path) for path in [entry, *references] if not path.is_file()]
-    if missing:
-        return {
-            "ok": False,
-            "status": "blocked",
-            "reason": "repo_missing_skill_files",
-            "missing": missing,
-            "note": "仓库缺少运行技能或参考文件；先更新代码副本",
-        }
-    if target_dir == entry.parent:
-        raise HostRunError("目标目录就是技能源目录；请注册到宿主的技能目录，不要覆盖仓库文件")
-    digest = entry_digest(repo)
-    lock = dist_mod.read_lock(repo)
-    lock_dirty = False
-    if lock is None and not (repo / dist_mod.MANIFEST_FILENAME).exists():
-        # Backfill a source lock for a pre-#97 source installation so the
-        # pointer digest has a lock to live in.  A package tree whose lock went
-        # missing is left alone: recreating it as "source" would be a lie.
-        lock = dist_mod.source_lock(
-            commit=str(record.get("commit") or ""),
-            dirty=bool(record.get("dirty")),
-            source_url=str(record.get("repo_url") or record.get("origin") or ""),
-            skill_digest=digest,
-        )
-        lock_dirty = True
-    elif lock is not None and lock.get("skill_digest") != digest:
-        # Record the pointer's digest before the pointer references it, so a
-        # verified pointer can never get ahead of the lock it claims.
-        lock = {**lock, "skill_digest": digest}
-        lock_dirty = True
-    distribution = str((lock or {}).get("distribution") or "source")
-    lock_file = str(dist_mod.lock_path(repo))
-    if dry_run:
-        return {
-            "ok": True,
-            "dry_run": True,
-            "skill": str(launcher),
-            "target": str(target_dir),
-            "entry": str(entry),
-            "references": [str(path) for path in references],
-            "distribution": distribution,
-            "skill_digest": digest,
-            "lock": lock_file,
-        }
-    if lock_dirty:
-        try:
-            dist_mod.write_lock(repo, lock)
-        except OSError as exc:
-            return {
-                "ok": False,
-                "status": "blocked",
-                "reason": "skill_lock_not_writable",
-                "skill": str(launcher),
-                "target": str(target_dir),
-                "lock": lock_file,
-                "error": f"{type(exc).__name__}: {exc}",
-                "note": f"无法写入安装锁 {lock_file}：{exc}",
-            }
-    try:
-        ensure_dir(target_dir)
-        launcher.write_text(
-            _launcher_text(record, lock, digest), encoding="utf-8"
-        )
-    except OSError as exc:
-        # A host that does not allow writing its skills directory is a missing
-        # capability, not a crash: report it as a blocked step with the exact
-        # path so the install report stays actionable.
-        return {
-            "ok": False,
-            "status": "blocked",
-            "reason": "skill_target_not_writable",
-            "skill": str(launcher),
-            "target": str(target_dir),
-            "error": f"{type(exc).__name__}: {exc}",
-            "note": (
-                f"无法写入宿主技能目录 {target_dir}：{exc}；"
-                "需要宿主允许该路径写入，或把入口指针注册到宿主可写的技能目录"
-            ),
-        }
-    record = {**record, "skill": str(launcher), "skill_target": str(target_dir)}
-    save_record(root, record)
-    return {
-        "ok": True,
-        "skill": str(launcher),
-        "target": str(target_dir),
-        "entry": str(entry),
-        "references": [str(path) for path in references],
-        "registered": True,
-        "distribution": distribution,
-        "skill_digest": digest,
-        "lock": lock_file,
-    }
-
-
-def verify_skill(record: dict) -> dict:
-    """Prove the pointer still names the skill and installation it points at.
-
-    A pre-#97 pointer has none of the new bullets; it is treated as a source
-    installation and stays ``ok`` (``legacy_pointer: True``).  A new pointer
-    must match the checkout's ``SKILL.md`` digest and the install lock's
-    distribution/version or commit; a mismatch is ``blocked`` with specific
-    reasons.  A missing lock only blocks a pointer that claims a package
-    install; source pointers tolerate it.
-    """
-    launcher = Path(record.get("skill") or "")
-    repo = Path(record.get("repo") or "")
-    entry = repo / SKILL_ENTRY
-    references = [repo / rel for rel in SKILL_REFERENCES]
-    problems: list[str] = []
-    text = ""
-    if not launcher.is_file():
-        problems.append(f"缺少入口指针：{launcher}")
-    else:
-        text = launcher.read_text(encoding="utf-8", errors="replace")
-        if record.get("repo") and record["repo"] not in text:
-            problems.append("入口指针未指向记录的仓库")
-    for path in [entry, *references]:
-        if not path.is_file():
-            problems.append(f"缺少参考文件：{path}")
-    digest = sha256_file(entry) if entry.is_file() else ""
-    lock = dist_mod.read_lock(repo) if record.get("repo") else None
-    lock_file = str(dist_mod.lock_path(repo)) if record.get("repo") else ""
-    pointer = _parse_pointer(text) if text else {}
-    base = {
-        "skill": str(launcher),
-        "entry": str(entry),
-        "references": [str(path) for path in references],
-        "problems": problems,
-        "lock": lock_file,
-        "lock_missing": lock is None,
-        "skill_digest": digest,
-    }
-    if not pointer.get("distribution"):
-        # The old pointer format: no distribution/version/digest fields at all.
-        return {
-            **base,
-            "ok": not problems,
-            "status": "ok" if not problems else "blocked",
-            "distribution": "source",
-            "version": "source",
-            "legacy_pointer": True,
-            "reasons": [],
-            "note": "旧入口指针没有版本与摘要字段；按源码安装处理，不阻断安装检查",
-        }
-    reasons: list[str] = []
-    distribution = pointer.get("distribution", "")
-    if distribution not in ("package", "source"):
-        reasons.append("pointer_distribution_invalid")
-    recorded_digest = pointer.get("skill_digest", "")
-    if not _DIGEST_RE.fullmatch(recorded_digest):
-        reasons.append("skill_digest_invalid")
-    elif digest and recorded_digest != digest:
-        reasons.append("skill_digest_mismatch")
-    if lock is None:
-        if distribution == "package":
-            reasons.append("lock_missing")
-    else:
-        lock_distribution = str(lock.get("distribution") or "")
-        if lock_distribution != distribution:
-            reasons.append("lock_distribution_mismatch")
-        elif distribution == "package":
-            if str(lock.get("version") or "") != pointer.get("version"):
-                reasons.append("lock_version_mismatch")
-            if str(lock.get("artifact_sha256") or "") != pointer.get("artifact_sha256"):
-                reasons.append("lock_artifact_mismatch")
-        else:
-            lock_commit = str(lock.get("commit") or "")
-            pointer_commit = pointer.get("commit") or ""
-            if (
-                lock_commit
-                and pointer_commit
-                and pointer_commit != POINTER_UNRECORDED
-                and pointer_commit != lock_commit
-            ):
-                reasons.append("lock_commit_mismatch")
-        lock_digest = str(lock.get("skill_digest") or "")
-        if lock_digest and digest and lock_digest != digest:
-            if "skill_digest_mismatch" not in reasons:
-                reasons.append("skill_digest_mismatch")
-    return {
-        **base,
-        "ok": not problems and not reasons,
-        "status": "ok" if not problems and not reasons else "blocked",
-        "distribution": distribution,
-        "version": pointer.get("version"),
-        "channel": pointer.get("channel"),
-        "commit": pointer.get("commit"),
-        "legacy_pointer": False,
-        "reasons": reasons,
-        "recorded_skill_digest": recorded_digest,
-        "note": (
-            "入口指针与安装锁、技能文件摘要一致"
-            if not problems and not reasons
-            else "入口指针与安装锁或技能文件摘要不一致"
-        ),
-    }
 # --------------------------------------------------------------------- status
 def status(root: str | Path) -> dict:
     """Read-only workspace snapshot for ``install report``."""
     root = Path(root).expanduser().resolve()
     record = load_record(root)
+    if not record or record.get("derived_from"):
+        record = _package_workspace_record(root)
     if not record:
         return {"ok": False, "status": "pending", "note": "工作区尚未安装"}
+    if record.get("error") == "package_wrapper_missing":
+        problem = f"发行包启动包装器不可用：{record['wrapper']}"
+        return {**record, "ok": False, "status": "blocked", "note": problem, "problems": [problem]}
     repo = Path(record.get("repo") or "")
     home = Path(record.get("home") or "")
     lock = dist_mod.read_lock(repo) if repo.is_dir() else None
@@ -1343,12 +946,10 @@ def status(root: str | Path) -> dict:
             problems.append(f"解释器不可用：{python}")
         if not uv.is_file():
             problems.append(f"uv 不可用：{uv}")
-    skill = verify_skill(record)
-    problems.extend(skill["problems"])
     return {
         "ok": not problems,
         "status": "ok" if not problems else "blocked",
-        **record,
+        **{key: value for key, value in record.items() if key not in {"skill", "skill_target", "skill_digest"}},
         "distribution": "package" if package else record.get("distribution", "source"),
         "problems": problems,
     }

@@ -63,7 +63,7 @@ def stage_code_transaction(code, home, *, from_source, sha256, transaction_id=No
     payloads['.horizon/dist.lock.json'] = json.dumps({
         'schema_version': 1, 'distribution': 'package', 'version': manifest['version'],
         'channel': channel, 'artifact_sha256': sha256, 'source_url': '', 'installed_at': now(),
-        'requires': manifest['compat'], 'skill_digest': '', 'package_file_count': len(manifest['files']),
+        'requires': manifest['compat'], 'package_file_count': len(manifest['files']),
         'manifest_sha256': manifest_sha}).encode()
     identity = root.name
     cleanup.preview(control, identity)

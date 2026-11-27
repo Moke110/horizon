@@ -564,7 +564,8 @@ def test_paused_card_callback_does_not_derive_a_run(tmp_path):
 
 
 # --------------------------------------------------------------- CLI surface
-def test_cli_console_control_writes_the_control_file(tmp_path, capsys):
+@pytest.mark.parametrize("by,expected", [([], "horizon-cli"), (["--by", "host-agent"], "host-agent")])
+def test_cli_console_control_writes_the_control_file(tmp_path, capsys, by, expected):
     code = tmp_path / "checkout"
     archive = tmp_path / "papers"
     code.mkdir()
@@ -579,8 +580,7 @@ def test_cli_console_control_writes_the_control_file(tmp_path, capsys):
             "console",
             "control",
             "stop",
-            "--by",
-            "host-agent",
+            *by,
             "--wait",
             "0",
         ]
@@ -592,7 +592,7 @@ def test_cli_console_control_writes_the_control_file(tmp_path, capsys):
     assert payload["action"] == "stop"
     request = read_json(console_service.control_path(code.resolve() / ".horizon"))
     assert request["action"] == "stop"
-    assert request["initiator"] == "host-agent"
+    assert request["initiator"] == expected
 
 
 def test_cli_status_without_a_console_still_answers_from_persisted_state(tmp_path, capsys):

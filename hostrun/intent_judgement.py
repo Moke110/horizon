@@ -24,7 +24,7 @@ never execute.  The click executes through :func:`hostrun.operations.execute`
 with an operation id plus validated parameters — never the raw message.
 
 The Agent runner, card/text senders, clock and executor are injectable, so the
-whole flow is offline-testable.  A real ``dsh`` judgement run and a real Feishu
+whole flow is offline-testable.  A real embedded model judgement run and a real Feishu
 card round-trip stay ``untested`` until recorded on a live host.
 """
 
