@@ -9,7 +9,7 @@ from retriever.registry import configure_source, list_sources, search_source, se
 
 def test_openalex_discovery_exposes_configuration_without_credentials(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENALEX_API_KEY", "secret-test-value")
-    card, = list_sources(tmp_path)
+    card = next(card for card in list_sources(tmp_path) if card["id"] == "openalex")
     assert card["id"] == "openalex"
     assert card["name"] == "OpenAlex"
     assert card["description"]
@@ -36,7 +36,7 @@ def test_openalex_changed_or_removed_key_clears_only_connection(tmp_path, monkey
     set_connection(tmp_path, "openalex", {"results": []})
     assert not list_sources(tmp_path)[0]["enabled"]
     configure_source(tmp_path, "openalex", None)
-    card, = list_sources(tmp_path)
+    card = next(card for card in list_sources(tmp_path) if card["id"] == "openalex")
     assert card["configuration"] == "missing"
     assert card["connection"] == ""
     assert not card["enabled"]

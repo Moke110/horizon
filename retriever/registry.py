@@ -8,7 +8,9 @@ from hostrun.agent_service import CommandError
 from hostrun.embedded_agent import load_source_configuration, save_source_key
 
 SOURCE_DIRECTORY = Path(__file__).parent / "sources"
-REGISTERED_SOURCES = ("openalex",)
+REGISTERED_SOURCES = (
+    "openalex", "arxiv", "europepmc", "crossref", "pubmed", "pmc", "semanticscholar", "serpapi_scholar",
+)
 
 
 def _installed(source):
@@ -78,21 +80,25 @@ def list_sources(home):
 
 
 def configure_source(home, source, key):
-    if _module(source) is None or (
+    module = _module(source)
+    if module is None or not module.KEY_LABEL or (
         key is not None and (not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,1024}", key.strip()))
     ):
         raise CommandError("invalid_source_configuration", "请输入有效的信息源 API Key。")
     key = key.strip() if key is not None else None
+    config_key = getattr(module, "CONFIG_KEY", source)
     with file_lock(Path(home) / "retriever-settings.lock"):
         saved, _ = load_source_configuration(home)
-        if saved.get(source) == key:
+        if saved.get(config_key) == key:
             return
         settings = _settings(home)
-        status = settings.setdefault(source, {})
-        status.pop("connection", None)
-        status["configuration_revision"] = status.get("configuration_revision", 0) + 1
+        for provider in source_ids():
+            if getattr(_module(provider), "CONFIG_KEY", provider) == config_key:
+                status = settings.setdefault(provider, {})
+                status.pop("connection", None)
+                status["configuration_revision"] = status.get("configuration_revision", 0) + 1
         write_json(Path(home) / "retriever-settings.json", settings)
-        save_source_key(home, source, key)
+        save_source_key(home, config_key, key)
 
 
 def configuration_revision(home, source):
