@@ -61,6 +61,11 @@ confirms both actions. Import retains each known document ID even if its file
 is offline, and replaces each missing entry at its original position with
 `d-unknown`. Those positions remain fixed after confirmation.
 
+For `frontier_tracking` progress, `source_ids` can contain both document `d-`
+and report `r-` IDs in reference order. Open evidence through `archive_source`
+or `archive_report`. Progress references point to separately registered
+Archive entries, which remain readable after progress is deleted.
+
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,
 single-flight locking and executor leases. Intent judgement and knowledge reads
