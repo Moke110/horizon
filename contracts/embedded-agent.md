@@ -68,6 +68,11 @@ uses `correction` to record a mistaken assessment. The Explorer confirms
 the decision. Reads include the current `assessment` when present, and the
 registered report and original remain immutable.
 
+For `frontier_tracking` progress, `source_ids` can contain both document `d-`
+and report `r-` IDs in reference order. Open evidence through `archive_source`
+or `archive_report`. Progress references point to separately registered
+Archive entries, which remain readable after progress is deleted.
+
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,
 single-flight locking and executor leases. Intent judgement and knowledge reads

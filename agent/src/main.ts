@@ -387,7 +387,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   });
   const frontierTracking = defineTool({
     name: "frontier_tracking", label: "Library Bulletin Board frontiers",
-    description: "List or view tracked frontiers and list their progress. Create a frontier with JSON fields question only, or include existing scope settings. For progress supply frontierId and fields content and source_ids (a list of Archive source IDs). For update or delete supply expected_version, and progress_id for progress. Changes require Explorer confirmation.",
+    description: "List or view tracked frontiers and list their progress. Create a frontier with JSON fields question only, or include existing scope settings. For progress supply frontierId and fields content and source_ids (an ordered list of existing Archive document d- and report r- IDs). Open documents with archive_source and reports with archive_report. For update or delete supply expected_version, and progress_id for progress. Changes require Explorer confirmation.",
     parameters: Type.Object({
       entity: Type.Union([Type.Literal("frontier"), Type.Literal("progress")]),
       action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("create"),

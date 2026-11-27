@@ -68,7 +68,7 @@ class ArchiveReports:
     def assess(self, db, command, *, publish):
         if set(command) != {"operation_id", "report_id", "decision", "basis", "reason", "evidence"}:
             raise CommandError("invalid_assessment", "重评需要报道 ID、判断、依据类别、理由与证据")
-        report = self.read_entry(db, command["report_id"])
+        report = self.read_in_transaction(db, command["report_id"])
         decision, basis = command["decision"], command["basis"]
         if not ((decision in ("questionable", "invalid") and basis in ASSESSMENT_BASES)
                 or (decision == "completed" and basis == "correction")):
@@ -167,7 +167,7 @@ class ArchiveReports:
                 "SELECT record FROM library_archive_reports ORDER BY rowid DESC")]
 
     @staticmethod
-    def read_entry(db, report_id):
+    def read_in_transaction(db, report_id):
         if not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id):
             raise CommandError("invalid_report", "需要有效的报道 ID")
         row = db.execute("SELECT record FROM library_archive_reports WHERE report_id=?",
@@ -188,7 +188,7 @@ class ArchiveReports:
     def view(self, report_id):
         with self.connect() as db:
             self.initialize(db)
-            return self.project_assessment(db, self.read_entry(db, report_id))
+            return self.project_assessment(db, self.read_in_transaction(db, report_id))
 
     def open(self, report_id):
         report = self.view(report_id)

@@ -2,7 +2,7 @@
 
 from functools import cached_property
 
-from hostrun.archive_reports import ArchiveReports
+from hostrun.archive_reports import ArchiveReports, REPORT_ID
 from hostrun.archive_sources import ArchiveSources
 
 from hostrun import convergence, frontier_progress, hpedia
@@ -113,9 +113,15 @@ class Library:
         self._frontiers.check_write_lock(db, frontier["frontier_id"], now=now)
         return frontier_progress.apply(
             db, action, command, frontier=frontier, now=now,
-            view_source=lambda source_id: self.archive.read_in_transaction(db, source_id),
-            check_lock=lambda source_id: self.archive.check_write_lock(db, source_id),
+            check_reference=lambda identity: self._check_progress_reference(db, identity),
         )
+
+    def _check_progress_reference(self, db, identity):
+        if REPORT_ID.fullmatch(identity):
+            self.reports.read_in_transaction(db, identity)
+        else:
+            self.archive.read_in_transaction(db, identity)
+        self.archive.check_write_lock(db, identity)
 
     def notify_frontier(self, frontier):
         self._frontiers.notify_committed(frontier)

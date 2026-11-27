@@ -198,9 +198,9 @@ const openSearchHistory=(requestId?:string)=>{
   navigate('voyager');
   if(requestId)send({action:'voyager_open',request_id:requestId});
 };
-const renderFrontiers=(matches:React.ComponentProps<typeof FrontierTracking>['matches'],createRequest:number,lookup?:React.ComponentProps<typeof FrontierTracking>['lookup'],boardFrontier?:FrontierSummary)=><FrontierTracking deleted={state.hpedia_deleted} lookup={lookup} boardFrontier={boardFrontier} terms={state.cards||[]} matches={matches} createRequest={createRequest} frontiers={state.frontiers||[]} sources={state.archive_sources||[]} frontier={frontierView}
+const renderFrontiers=(matches:React.ComponentProps<typeof FrontierTracking>['matches'],createRequest:number,lookup?:React.ComponentProps<typeof FrontierTracking>['lookup'],boardFrontier?:FrontierSummary)=><FrontierTracking deleted={state.hpedia_deleted} lookup={lookup} boardFrontier={boardFrontier} terms={state.cards||[]} matches={matches} createRequest={createRequest} frontiers={state.frontiers||[]} sources={state.archive_sources||[]} reports={state.archive_reports||[]} frontier={frontierView}
     viewEvent={frontierViewEvent} error={frontierError} detailHost={detail==='frontier'?detailHost:null}
-    openDetail={()=>{closeDetail();setDetail('frontier');}} send={send} openSource={openArchiveSource}
+    openDetail={()=>{closeDetail();setDetail('frontier');}} send={send} openSource={openArchiveSource} openReport={openArchiveReport}
     onRetrieve={prepareFrontierSearch} openVoyager={openSearchHistory}/>;
 const navigation:[string,React.ReactNode,string][]=[
   ['materials','▱','资料库'],['hpedia',<HpediaIcon/>,'百科'],['bulletin',<span className="bulletin-icon"/>,'白板'],
