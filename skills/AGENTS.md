@@ -1,8 +1,8 @@
-# Host-agent runtime skills
+# Embedded Agent runtime skills
 
 ## Subdirectories
 
-- [horizon-run](horizon-run/AGENTS.md) — Instructions loaded by the Horizon runtime host.
+- [horizon-run](horizon-run/AGENTS.md) — Instructions loaded by Horizon’s embedded Agent.
 
 ## Verification
 

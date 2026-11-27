@@ -20,7 +20,7 @@ Windows 桌面 GUI 从源码工作区构建并通过 `Horizon.cmd` 重启。此�
       "artifact_sha256": "<64 位小写 hex>",
       "artifact_name": "horizon-0.1.0-stable.zip",
       "manifest_sha256": "<64 位小写 hex>",
-      "compat": {"os": "windows", "arch": "x86_64", "dsh": "*", "python": "3.13"},
+      "compat": {"os": "windows", "arch": "x86_64", "python": "3.13"},
       "published_at": "2026-10-31T05:00:00+00:00",
       "release_url": "https://github.com/Moke110/horizon/releases/tag/v0.1.0"
     }
@@ -31,7 +31,8 @@ Windows 桌面 GUI 从源码工作区构建并通过 `Horizon.cmd` 重启。此�
 约束（实现：`hostrun/release.py` 的 `validate_entry`/`validate_index`/`merge_release_index`）：
 
 - `schema_version` 恒为 `1`；`releases` 是数组，空索引为 `{ "schema_version": 1, "releases": [] }`。
-- 条目字段固定且未知字段被拒绝：`version`、`channel`、`artifact_sha256`、`artifact_name`、`manifest_sha256`、`compat{os,arch,dsh,python}`、`published_at`、`release_url`。
+- 条目字段固定且未知字段被拒绝：`version`、`channel`、`artifact_sha256`、`artifact_name`、`manifest_sha256`、`compat{os,arch,python}`、`published_at`、`release_url`。
+- 历史制品的 `compat.dsh` 为可选元数据，读取和更新索引时保留已发布记录。
 - `version` 是去掉 `v` 的 semver；`channel` 必须与版本后缀一致（带后缀必须 `prerelease`）。
 - `artifact_name` 必须等于 `horizon-<version>-<channel>.zip`；两个摘要必须是 64 位小写 hex；`published_at` 必须带时区；`release_url` 必须是 http(s) URL。
 - 同一 `version` 再次发布时**替换**该条记录，不追加重复行；其余条目保留。

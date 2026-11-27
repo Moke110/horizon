@@ -32,7 +32,7 @@
     "compat": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["os", "arch", "dsh", "python"],
+      "required": ["os", "arch", "python"],
       "properties": {
         "os": {
           "type": "string",
@@ -45,7 +45,8 @@
         "dsh": {
           "type": "string",
           "minLength": 1,
-          "description": "Host dsh version range, or '*' when the build does not constrain it."
+          "deprecated": true,
+          "description": "Historical compatibility metadata preserved when reading an older manifest."
         },
         "python": {
           "type": "string",

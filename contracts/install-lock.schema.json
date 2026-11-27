@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "horizon install lock",
-  "description": "The installation's pinned record of how horizon was installed (spec #92, tickets #94 and #97). The file lives at <code>/.horizon/dist.lock.json. Every installation records its distribution, source, install time, requirements and skill pointer digest. A package install additionally records version, channel, artifact digest, package file count and manifest digest. A source install instead records the git commit and dirty state and records no package-only fields, so it never pretends to have a distribution version or artifact. Extra fields are allowed so later tickets can extend the record without rewriting this schema.",
+  "description": "The installation's pinned record of how horizon was installed (spec #92, tickets #94 and #97). The file lives at <code>/.horizon/dist.lock.json. Every installation records its distribution, source, install time and requirements. A package install additionally records version, channel, artifact digest, package file count and manifest digest. A source install instead records the git commit and dirty state and records no package-only fields, so it never pretends to have a distribution version or artifact. Extra fields are allowed so later tickets can extend the record without rewriting this schema.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -9,8 +9,7 @@
     "distribution",
     "source_url",
     "installed_at",
-    "requires",
-    "skill_digest"
+    "requires"
   ],
   "properties": {
     "schema_version": {
@@ -46,7 +45,7 @@
     },
     "requires": {
       "type": "object",
-      "description": "Package installs copy the manifest's compat object here. A source install records an empty object because there is no distribution manifest to require anything of the host.",
+      "description": "Package installs copy the manifest's compatibility metadata. Source installs record an empty object.",
       "additionalProperties": false,
       "properties": {
         "os": {
@@ -59,7 +58,9 @@
         },
         "dsh": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "deprecated": true,
+          "description": "Historical compatibility metadata from an older distribution."
         },
         "python": {
           "type": "string",
@@ -70,7 +71,8 @@
     "skill_digest": {
       "type": "string",
       "pattern": "^(|[0-9a-f]{64})$",
-      "description": "SHA-256 of <code>/skills/horizon-run/SKILL.md that the registered pointer records; empty until install skill writes the pointer (#97)."
+      "deprecated": true,
+      "description": "Historical digest that can appear in an older installation lock."
     },
     "package_file_count": {
       "type": "integer",
@@ -128,7 +130,7 @@
             "pattern": "^[0-9a-f]{64}$"
           },
           "requires": {
-            "required": ["os", "arch", "dsh", "python"]
+            "required": ["os", "arch", "python"]
           }
         }
       }

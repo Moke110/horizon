@@ -42,7 +42,6 @@ The desktop services share a local SQLite database. Agent owns task state, Voyag
 Horizon includes its own Pi-based Agent. You need Windows 10/11 x64, a model API key,
 and a Feishu account authorized to create and use the required app, Base and Drive resources.
 The distribution includes Node.js, Pi, the Feishu CLI and the Python business runtime.
-No separate DSH or Pi installation is needed.
 
 Extract a Horizon distribution into a writable directory and open PowerShell there:
 
@@ -58,8 +57,7 @@ The key is stored locally in `.horizon/agent/model.json`; protect this file. Ins
 and process arguments do not include it.
 
 Configuration, queues and logs live in `.horizon/`. The separate archive contains `originals/`
-and `pushes/`. Interrupted setup resumes. Existing DSH installations must complete the new
-model configuration step. No external host skill registration is required.
+and `pushes/`. Interrupted setup resumes.
 
 Use `install package --from <zip> --digest <digest.json>` for verified package upgrades,
 `install verify` to check files, and `install rollback` to restore a retained version.
