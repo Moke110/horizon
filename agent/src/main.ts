@@ -334,6 +334,9 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   }));
   const searchToolSources = new Map(searchTools.map((tool, index) => [tool.name, sources[index].id]));
   const retrieverToolNames = new Set([...searchToolSources.keys(), selectSources.name]);
+  function removedSourceForTool(toolName: string) {
+    return [...(selectedSources ?? [])].find(id => !sourceNames.has(id) && id + "_search" === toolName);
+  }
   function retrieverResult(reply: { content: { type: string; text?: string }[]; isError?: boolean }):
       { selected?: string[]; error_code?: string; message?: string } | undefined {
     if (reply.isError) return;
@@ -527,7 +530,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
       const data = retrieverResult(message);
       if (Array.isArray(data?.selected)) selectedSources = new Set(data.selected);
     }
-    const source = searchToolSources.get(message.toolName);
+    const source = searchToolSources.get(message.toolName) ?? removedSourceForTool(message.toolName);
     if (source) trackSource(source, message);
   }
   const { session } = await createAgentSession({ cwd: code, agentDir, modelRuntime: models, model,
@@ -571,9 +574,16 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
           const after = recoveredMessages.slice(recoveredMessages.lastIndexOf(lastAssistant) + 1);
           for (const call of calls) {
             if (after.some(message => message.role === "toolResult" && message.toolCallId === call.id)) continue;
-            const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-            if (!tool || !(retrieverToolNames.has(call.name) || ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name))) throw new Error("Unsafe pending tool cannot be recovered");
-            const output = await tool.execute(call.id, call.arguments, undefined);
+            const removed = removedSourceForTool(call.name);
+            let output;
+            if (removed) {
+              output = result(JSON.stringify({source: removed, error_code: "source_removed", message: "检索来源已移除。"}));
+              trackSource(removed, output);
+            } else {
+              const tool = session.agent.state.tools.find(tool => tool.name === call.name);
+              if (!tool || !(retrieverToolNames.has(call.name) || ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name))) throw new Error("Unsafe pending tool cannot be recovered");
+              output = await tool.execute(call.id, call.arguments, undefined);
+            }
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });
           }
         }
@@ -581,10 +591,14 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
         await session.agent.continue();
       }
     } else await session.prompt(values.task);
-    const uncovered = [...(selectedSources ?? [])].filter(source => !sourceAttempts.has(source));
-    if (uncovered.length && !failure && !delegateFailure) {
-      await session.prompt("Horizon Retriever: finish the selected retrieval before replying. Sources still requiring an attempt: " +
-        uncovered.map(id => sourceNames.get(id) ?? id).join(", ") + ". Keep the current task response format.");
+    const unattempted = [...(selectedSources ?? [])].filter(source => !sourceAttempts.has(source));
+    const uncovered = unattempted.filter(source => sourceNames.has(source));
+    const removed = unattempted.filter(source => !sourceNames.has(source));
+    if ((uncovered.length || removed.length) && !failure && !delegateFailure) {
+      const guidance = ["Horizon Retriever: finish the selected retrieval before replying. Keep the current task response format."];
+      if (uncovered.length) guidance.push("Sources still requiring an attempt: " + uncovered.map(id => sourceNames.get(id) ?? id).join(", ") + ".");
+      if (removed.length) guidance.push("Report these selected sources as no longer available: " + removed.join(", ") + ".");
+      await session.prompt(guidance.join(" "));
       const missing = uncovered.filter(source => !sourceAttempts.has(source));
       if (missing.length && !failure) throw new Error("未完成信息源检索：" + missing.map(id => sourceNames.get(id) ?? id).join("、"));
     }
