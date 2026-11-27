@@ -1,9 +1,7 @@
 # Embedded Horizon Agent
 
 Horizon owns the Agent lifecycle. The TypeScript implementation in `agent/`
-embeds the pinned Pi SDK; no DSH executable, external Pi installation or host
-skill registration is required. Existing Python modules retain business rules,
-validation, storage, rendering and PDF extraction.
+embeds the pinned Pi SDK and loads `skills/horizon-run/SKILL.md` from the Horizon code directory. Python modules retain business rules, validation, storage, rendering and PDF extraction.
 
 The console launches the packaged `runtime/node.exe` and `agent/dist/main.js`.
 Source checkouts may resolve Node from PATH. The console passes the runtime
@@ -46,5 +44,4 @@ single-flight locking and executor leases. Intent judgement and knowledge reads
 retain their existing separate concurrency behavior. Pi automatic retries are disabled.
 
 Distribution builds include Pi's production dependencies, Node.js, the Feishu
-CLI binary and the existing Python runtime. Historical package manifests may
-still contain `compat.dsh` for reading old packages; the new console never launches DSH.
+CLI binary, the embedded Agent’s runtime skill and the Python runtime. Older packages may carry historical compatibility metadata. Installation checks apply the OS, architecture and Python requirements.

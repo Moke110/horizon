@@ -1,4 +1,4 @@
-# Instructions loaded by the Horizon runtime host
+# Instructions loaded by Horizon’s embedded Agent
 
 | File | Responsibility |
 |---|---|
@@ -10,4 +10,4 @@
 
 ## Verification
 
-Start with [SKILL.md](SKILL.md) to inspect instructions loaded by the Horizon runtime host.
+Start with [SKILL.md](SKILL.md) to inspect instructions loaded by Horizon’s embedded Agent.

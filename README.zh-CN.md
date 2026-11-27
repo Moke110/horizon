@@ -41,7 +41,7 @@ flowchart LR
 
 Horizon 内置基于 Pi 开发的 Agent。你需要 Windows 10/11 x64、模型 API Key，以及有权限
 配置所需应用、多维表格和云盘资源的飞书账号。发行包包含 Node.js、Pi、飞书 CLI 和 Python
-业务运行时，无需另装 DSH 或 Pi。
+业务运行时。
 
 将 Horizon 发行包解压到可写目录，在该目录打开 PowerShell：
 
@@ -56,7 +56,7 @@ Horizon 内置基于 Pi 开发的 Agent。你需要 Windows 10/11 x64、模型 A
 API Key 保存在本机 `.horizon/agent/model.json`，请保护此文件；安装报告和运行参数不显示密钥。
 
 程序目录中的 `.horizon/` 保存配置、队列和日志；独立资料目录只存放 `originals/` 与
-`pushes/`。初始化中断后会续接。已有 DSH 安装需重新完成模型配置步骤，无需注册外部宿主技能。
+`pushes/`。初始化中断后会续接。
 
 升级经过校验的发行包可用 `install package --from <zip> --digest <digest.json>`；
 `install verify` 校验安装文件，`install rollback` 恢复保留的上一版本。

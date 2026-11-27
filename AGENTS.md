@@ -7,7 +7,7 @@ This file contains development-agent working instructions only. Keep product pos
 - **Planning:** Use the Matt Pocock workflow: `wayfinder` to map uncertain work, `grill-with-docs` to resolve decisions and record domain docs, `to-spec` to publish the agreed spec, then `to-tickets` to publish approved vertical slices and native blocking links. The skill is named `to-tickets` (plural).
 - **Implementation:** Execute the approved GitHub spec and tickets. Read the issue body, comments and blockers before starting; work only on unblocked tickets, and follow the skill's testing, review and commit requirements. Record results and remaining blockers in GitHub; close a ticket only when its acceptance criteria are met. Offline tests do not replace required live acceptance.
 - **Handoff:** Planning ends with linked GitHub issues and clear acceptance criteria/dependencies. Implementation starts when the user requests it; a planning request alone does not authorize implementation. Return changes to scope or unresolved product decisions to the planner rather than silently changing the spec.
-- **WorkBuddy:** no longer used to develop this repository. Keep project-specific WorkBuddy configuration and memory out of the workspace. This development-role change does not remove WorkBuddy as a horizon runtime host or waive its product acceptance requirements.
+- **Runtime:** Horizon runs its embedded Pi Agent. Keep developer-agent configuration and memory outside the repository.
 
 ## Human acceptance
 
@@ -46,7 +46,7 @@ Single-context layout (`GLOSSARY.md` + `docs/adr/` at the repo root). See `docs/
 
 ### Runtime and user documentation
 
-`README.md` (English, primary) and `README.zh-CN.md` (Simplified Chinese) are the user-facing installation and usage guides; keep the two copies in step with each other, and keep development/acceptance status out of both — that belongs in `docs/acceptance/` and GitHub Issues. The product's host agent loads `skills/horizon-run/SKILL.md`; its installation and workflow references are runtime instructions, not development skills. Module contracts live in `contracts/`. Keep root documentation limited to `AGENTS.md`, `GLOSSARY.md`, `README.md` and `README.zh-CN.md`, with `LICENSE` retained at the root.
+`README.md` (English, primary) and `README.zh-CN.md` (Simplified Chinese) are the user-facing installation and usage guides; keep the two copies in step with each other, and keep development/acceptance status out of both — that belongs in `docs/acceptance/` and GitHub Issues. Horizon’s embedded Agent loads `skills/horizon-run/SKILL.md`; its installation and workflow references are runtime instructions, not development skills. Module contracts live in `contracts/`. Keep root documentation limited to `AGENTS.md`, `GLOSSARY.md`, `README.md` and `README.zh-CN.md`, with `LICENSE` retained at the root.
 
 Keep `docs/adr/` for Matt-maintained decisions, `docs/agents/` for Matt skill configuration, and `docs/acceptance/README.md` for concise evidence and outstanding acceptance gaps. Put schemas/state machines in `contracts/`, sample/generated documentation beside its fixtures, and historical process logs in Git history rather than duplicate local trackers or reports.
 
@@ -60,7 +60,7 @@ Create linked Git worktrees under the primary checkout's `tmp/worktrees/<name>/`
 
 ### Skill pack
 
-Read the relevant `SKILL.md` before applying a skill. Shared Matt Pocock skills are installed under `~/.agents/skills/<name>/`; source metadata lives in `~/.agents/.skill-lock.json`. Use the supported skill-loading mechanism against this shared source, without relying on WorkBuddy junctions. If a required skill is unavailable, report the missing integration rather than inventing its behavior.
+Read the relevant `SKILL.md` before applying a skill. Shared Matt Pocock skills are installed under `~/.agents/skills/<name>/`; source metadata lives in `~/.agents/.skill-lock.json`. Use the supported skill-loading mechanism against this shared source. If a required skill is unavailable, report the missing integration rather than inventing its behavior.
 
 The planning/implementation skills above are user-invoked workflows. Follow each skill's approval gates and delegated skills (including testing and code review); do not automatically start implementation merely because its skill is installed.
 
@@ -106,7 +106,7 @@ Desktop process changes must follow [desktop process ownership](contracts/deskto
 - [releases](releases/AGENTS.md) — Distribution channel index.
 - [retriever](retriever/AGENTS.md) — Discovery adapters and retrieval CLI.
 - [scripts](scripts/AGENTS.md) — Developer builds, compatibility probes and release tooling.
-- [skills](skills/AGENTS.md) — Host-agent runtime skills.
+- [skills](skills/AGENTS.md) — Embedded Agent runtime skills.
 - [tests](tests/AGENTS.md) — Behavioral, compatibility and integration checks.
 - [trigger](trigger/AGENTS.md) — Keyword matching and trigger evaluation.
 - [writer](writer/AGENTS.md) — Research writing, evidence review and rendering.
