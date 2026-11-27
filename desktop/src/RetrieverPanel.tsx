@@ -1,4 +1,4 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {TextInput} from './gui/elements/FormElements';
 
 type Source = {
@@ -15,11 +15,20 @@ export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
   const [sources,setSources]=useState<Source[]>([]);
   const [error,setError]=useState('');
   const [testing,setTesting]=useState<string|null>(null);
+  const panel=useRef<HTMLElement>(null);
+  const scrollToTop=useRef(false);
+  useLayoutEffect(()=>{
+    if(scrollToTop.current){
+      panel.current?.closest('main')?.scrollTo({top:0,behavior:'instant'});
+      scrollToTop.current=false;
+    }
+  },[sources]);
   useEffect(()=>{
     const unsubscribe=window.horizon.subscribe(event=>{
       if(event.kind==='retriever_sources'){
-        setSources(event.data);
-        setTesting(null);
+        scrollToTop.current ||= event.data.added.length > 0;
+        setSources(event.data.cards);
+        if(event.data.completed_probe)setTesting(null);
         setError('');
       }
       if(event.kind==='retriever_error'){
@@ -30,8 +39,12 @@ export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
     send({action:'retriever_sources'});
     return unsubscribe;
   },[send]);
-  return <section aria-label="检索器">
+  return <section ref={panel} aria-label="检索器" aria-busy={!!testing}>
     <h2>检索器</h2>
+    <button type="button" disabled={!!testing} onClick={()=>{
+      setTesting('all');
+      send({action:'retriever_refresh'});
+    }}>{testing==='all'?'正在刷新和测试…':'刷新并测试连接'}</button>
     {error&&<p role="alert">{error}</p>}
     {sources.map(source=><article key={source.id} className="card">
       <h3>{source.name}</h3>

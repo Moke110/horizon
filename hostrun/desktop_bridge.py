@@ -1063,25 +1063,34 @@ def _serve(resolved, executable, managed):
                             subscription_busy.add(identity)
                             threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
                             state()
-                    elif action in ('retriever_sources', 'retriever_configure', 'retriever_toggle', 'retriever_test'):
-                        from retriever.connection import test_connection
-                        from retriever.registry import configure_source, list_sources, toggle_source
+                    elif action in ('retriever_sources', 'retriever_configure', 'retriever_toggle',
+                                    'retriever_test', 'retriever_refresh'):
+                        from retriever.connection import refresh_sources, test_connection
+                        from retriever.registry import configure_source, discover_sources, list_sources, toggle_source
                         source = cmd.get('source')
+                        added = []
                         try:
-                            if action == 'retriever_configure':
+                            if action == 'retriever_sources':
+                                _, added = discover_sources(service.home)
+                            elif action == 'retriever_configure':
                                 configure_source(service.home, source, cmd.get('key'))
                             elif action == 'retriever_toggle':
                                 toggle_source(service.home, source, cmd.get('enabled'))
-                            elif action == 'retriever_test':
-                                def probe(source_id=source):
+                            elif action in ('retriever_test', 'retriever_refresh'):
+                                def probe(probe_action=action, source_id=source):
                                     try:
-                                        test_connection(service.home, source_id)
-                                        emit('retriever_sources', list_sources(service.home))
+                                        if probe_action == 'retriever_refresh':
+                                            cards, discovered = refresh_sources(service.home)
+                                        else:
+                                            test_connection(service.home, source_id)
+                                            cards, discovered = list_sources(service.home), []
+                                        emit('retriever_sources', {'cards': cards, 'added': discovered,
+                                                                   'completed_probe': True})
                                     except Exception:
-                                        emit('retriever_error', '无法测试此信息源，请重试。')
+                                        emit('retriever_error', '无法测试信息源，请重试。')
                                 threading.Thread(target=probe, daemon=True).start()
                                 continue
-                            emit('retriever_sources', list_sources(service.home))
+                            emit('retriever_sources', {'cards': list_sources(service.home), 'added': added})
                         except CommandError as exc:
                             emit('retriever_error', str(exc))
                         except Exception:
