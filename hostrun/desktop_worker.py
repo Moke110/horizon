@@ -20,6 +20,9 @@ class DesktopWorker:
         from hostrun.knowledge_cards import KnowledgeCardService
         from hostrun.librarian import Librarian
         token = self.service_token
+        if event.get("type") == "retriever_search_request":
+            from retriever.registry import search_source
+            return search_source(self.home, event.get("source"), event.get("query"))
         librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
         operation = event.get("action")
         if event.get("type") == "source_request":
@@ -190,7 +193,7 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request'):
+                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request', 'retriever_search_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)
