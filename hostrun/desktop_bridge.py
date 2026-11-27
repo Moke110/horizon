@@ -1065,7 +1065,7 @@ def _serve(resolved, executable, managed):
                             state()
                     elif action in ('retriever_sources', 'retriever_configure', 'retriever_toggle', 'retriever_test'):
                         from retriever.connection import test_connection
-                        from retriever.registry import configure_source, list_sources, set_connection, toggle_source
+                        from retriever.registry import configure_source, list_sources, toggle_source
                         source = cmd.get('source')
                         try:
                             if action == 'retriever_configure':
@@ -1075,9 +1075,7 @@ def _serve(resolved, executable, managed):
                             elif action == 'retriever_test':
                                 def probe(source_id=source):
                                     try:
-                                        result = test_connection(service.home, source_id)
-                                        if result.get('error_code') != 'unknown_source':
-                                            set_connection(service.home, source_id, result)
+                                        test_connection(service.home, source_id)
                                         emit('retriever_sources', list_sources(service.home))
                                     except Exception:
                                         emit('retriever_error', '无法测试此信息源，请重试。')

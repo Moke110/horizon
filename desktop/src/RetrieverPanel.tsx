@@ -47,6 +47,8 @@ export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
       }}>
         <label>{source.key_label}<TextInput name="key" required type="password" autoComplete="off" disabled={!!testing}/></label>
         <button disabled={!!testing}>保存配置</button>
+        {source.configuration==='saved'&&<button type="button" disabled={!!testing}
+          onClick={()=>send({action:'retriever_configure',source:source.id,key:null})}>移除本机密钥</button>}
       </form>
       <label><input type="checkbox" checked={source.enabled} disabled={!!testing}
         onChange={event=>send({action:'retriever_toggle',source:source.id,enabled:event.target.checked})}/>启用</label>

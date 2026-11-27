@@ -5,7 +5,7 @@ from pathlib import Path
 
 from common import file_lock, read_json, write_json
 from hostrun.agent_service import CommandError
-from hostrun.embedded_agent import save_source_key
+from hostrun.embedded_agent import load_source_configuration, save_source_key
 
 SOURCE_DIRECTORY = Path(__file__).parent / "sources"
 REGISTERED_SOURCES = ("openalex",)
@@ -41,15 +41,34 @@ def list_sources(home):
 
 
 def configure_source(home, source, key):
-    if _module(source) is None or not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,1024}", key.strip()):
+    if _module(source) is None or (
+        key is not None and (not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,1024}", key.strip()))
+    ):
         raise CommandError("invalid_source_configuration", "请输入有效的信息源 API Key。")
-    save_source_key(home, source, key.strip())
+    key = key.strip() if key is not None else None
+    with file_lock(Path(home) / "retriever-settings.lock"):
+        saved, _ = load_source_configuration(home)
+        if saved.get(source) == key:
+            return
+        settings = _settings(home)
+        status = settings.setdefault(source, {})
+        status.pop("connection", None)
+        status["configuration_revision"] = status.get("configuration_revision", 0) + 1
+        write_json(Path(home) / "retriever-settings.json", settings)
+        save_source_key(home, source, key)
 
 
-def set_connection(home, source, result):
+def configuration_revision(home, source):
+    with file_lock(Path(home) / "retriever-settings.lock"):
+        return _settings(home).get(source, {}).get("configuration_revision", 0)
+
+
+def set_connection(home, source, result, *, expected_revision=None):
     with file_lock(Path(home) / "retriever-settings.lock"):
         settings = _settings(home)
         status = settings.setdefault(source, {})
+        if expected_revision is not None and status.get("configuration_revision", 0) != expected_revision:
+            return
         if not result.get("error_code") and not status.get("connected_once"):
             status["connected_once"] = True
             status["enabled"] = True
