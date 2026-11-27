@@ -22,7 +22,7 @@ def list_for_frontier(db, frontier_id):
     return [json.loads(row[0]) for row in rows]
 
 
-def apply(db, action, command, *, frontier, view_source, check_lock, now=None):
+def apply(db, action, command, *, frontier, check_reference, now=None):
     allowed = {"schema_version", "operation_id", "frontier_id"}
     if action == "create":
         allowed.add("test_data")
@@ -67,11 +67,10 @@ def apply(db, action, command, *, frontier, view_source, check_lock, now=None):
         if not isinstance(source_ids, list) or len(source_ids) > 32 or any(
             not isinstance(source_id, str) or not source_id for source_id in source_ids
         ):
-            raise CommandError("invalid_command", "进展最多可关联 32 个资料库来源")
+            raise CommandError("invalid_command", "进展最多可关联 32 个资料库条目")
         source_ids = list(dict.fromkeys(source_ids))
         for source_id in source_ids:
-            view_source(source_id)
-            check_lock(source_id)
+            check_reference(source_id, source_id in progress.get("source_ids", []))
         progress.update(content=content.strip(), source_ids=source_ids)
     progress.update(version=progress["version"] + 1, updated_at=int(now))
     db.execute("""INSERT INTO frontier_progress VALUES(?,?,?)

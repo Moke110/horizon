@@ -485,7 +485,7 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
         def poll(self):
             return 0
 
-    children = iter([Process(False), Process(True), Process(True), Process(True)])
+    children = iter([Process(False), Process(True)])
     monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: next(children))
     request = {"role": "editor", "input": material["material_id"]}
     assert app.delegate({**request, "requestId": "unread"})["status"] == "failed"
@@ -498,20 +498,16 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     assert ReportService(tmp_path, token=token).citation(report_id, task["task_id"], 0, 0, token=token)["segment"] == body
     reports = ReportService(tmp_path, token=token)
     base = {"report_id": report_id, "base_version": 1, "question": "Count the observations."}
-    inherited = app.delegate({**request, "requestId": "inherit", "input": json.dumps(base)})
-    assert inherited["status"] == "succeeded"
-    assert reports.get(report_id, app.task_id, token=token, version=2)["context_versions"]["preferences"][0]["value"] == "detailed"
-    global_request = {**base, "base_version": 2, "frontier_id": None}
-    global_rewrite = app.delegate({**request, "requestId": "global", "input": json.dumps(global_request)})
-    assert global_rewrite["status"] == "succeeded"
-    latest = reports.get(report_id, app.task_id, token=token, version=3)["context_versions"]
-    assert latest["preferences"][0]["value"] == "concise"
-    assert latest["preferences"][0]["scope"] == "global"
-    assert "writing_frontier_id" not in latest
+    with pytest.raises(ValueError, match="Invalid Editor input"):
+        app.delegate({**request, "requestId": "rewrite", "input": json.dumps(base)})
+    latest = reports.get(report_id, app.task_id, token=token)
+    assert latest["version"] == 1
+    assert latest["context_versions"]["preferences"][0]["value"] == "detailed"
     assert reports.get(report_id, app.task_id, token=token, version=1)["context_versions"]["writing_frontier_id"] == frontier_id
 
 
-def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypatch):
+def test_old_late_fulltext_turn_resumes_through_newsroom_instead_of_editor(tmp_path, monkeypatch):
+    import json
     from hostrun import desktop_worker as module
     from hostrun.agent_service import AgentService
 
@@ -525,17 +521,32 @@ def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypat
     app.turn = {**turn, 'late_editor_input': 'captured-material-id'}
     app.input_version = turn['input_version']
     app.version_provider = lambda: {}
-    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *args, **kwargs: pytest.fail('Started a parent model'))
-    calls = []
-    def delegate(event):
-        calls.append(event)
-        return {'status': 'succeeded', 'result': '{"report_id":"report","version":2}'}
-    monkeypatch.setattr(app, 'delegate', delegate)
+    def agent_argv(home, prompt, **kwargs):
+        return ["node", prompt]
+
+    class Process:
+        stdin = io.StringIO()
+        stdout = io.StringIO(json.dumps({"type": "final", "text": "Awaiting Explorer review"}) + "\n")
+        stderr = io.StringIO()
+
+        def wait(self):
+            return 0
+
+    prompts = []
+
+    def launch(argv, **kwargs):
+        prompts.append(argv[1])
+        return Process()
+
+    monkeypatch.setattr(module.embedded_agent, 'argv', agent_argv)
+    monkeypatch.setattr(module.subprocess, 'Popen', launch)
+    monkeypatch.setattr(app, 'delegate', lambda event: pytest.fail('Delegated to legacy Editor'))
     app.run_agent(turn['text'], turn['session_id'])
-    assert calls == [{'requestId':'late-fulltext-editor','role':'editor','input':'captured-material-id'}]
+    prompt, = prompts
+    assert all(word in prompt for word in ("Newsroom", "late_fulltext", "archive_report", "captured-material-id"))
     committed, = app.service.list_turns(app.task_id, token='s')
     assert committed['status'] == 'completed'
-    assert committed['result'] == '{"report_id":"report","version":2}'
+    assert committed['result'] == 'Awaiting Explorer review'
 
 def test_desktop_turn_exposes_retriever_catalog_without_configuration(tmp_path, monkeypatch):
     import json

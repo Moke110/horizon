@@ -25,6 +25,8 @@ class DesktopWorker:
             return search_source(self.home, event.get("source"), event.get("query"))
         librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
         operation = event.get("action")
+        if event.get("type") == "report_request":
+            return self._report_request(librarian, operation, event, token=token)
         if event.get("type") == "source_request":
             return self._source_request(librarian, operation, event, token=token)
         if event.get("type") == "tracking_request":
@@ -65,6 +67,27 @@ class DesktopWorker:
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
+    def _report_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        origin = "agent:" + self.task_id
+        if operation == "list":
+            return librarian.list_reports(token=token)
+        if operation == "view":
+            return librarian.view_report(event.get("reportId"), token=token)
+        if operation == "stage":
+            return librarian.stage_report(event.get("html"), token=token, origin=origin)
+        fields = event.get("fields")
+        request_id = event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_report", "需要有效的报道请求")
+        command = {**fields, "operation_id": request_id}
+        if operation == "assess":
+            command["report_id"] = event.get("reportId")
+        card = librarian.request_report(operation, command, token=token, origin=origin)
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
     def _source_request(self, librarian, operation, event, *, token):
         from hostrun.agent_service import CommandError
 
@@ -75,6 +98,8 @@ class DesktopWorker:
             return librarian.view_source(source_id, token=token)
         if operation == "open":
             package = librarian.open_source(source_id, token=token, task_id=self.task_id)
+            if "document" in package:
+                return package
             if "source_url" in package:
                 return package
             text = package["original_text"]
@@ -82,13 +107,39 @@ class DesktopWorker:
                     "original_text": text[:16000], "original_text_truncated": len(text) > 16000,
                     "pdf": bool(package.get("pdf"))}
         fields = event.get("fields")
+        if operation == "cache" and isinstance(fields, dict) and set(fields) == {"url"}:
+            return librarian.download_source(fields["url"], token=token)
+        if operation == "late_fulltext":
+            from hostrun.voyager_late_fulltext import bound_material_id
+            from hostrun.voyager_materials import MaterialsService
+
+            material_id = bound_material_id(getattr(self, "turn", None))
+            if not material_id:
+                raise CommandError("invalid_document", "本轮没有绑定的补交全文")
+            if not isinstance(fields, dict) or set(fields) - {"offset"}:
+                raise CommandError("invalid_document", "需要有效的全文阅读位置")
+            offset = fields.get("offset", 0)
+            materials = MaterialsService(self.home, token=token)
+            package = materials.get_package(material_id, token=token, task_id=self.task_id)
+            body = package["original_text"]
+            if (package.get("archived") or package.get("academic", {}).get("status") != "available"
+                    or type(offset) is not int or not 0 <= offset < len(body)):
+                raise CommandError("invalid_document", "全文原件或阅读位置不可用")
+            page = body[offset:offset + 16000]
+            next_offset = offset + len(page)
+            cached = librarian.cache_source(materials.pdf_original(material_id, token=token), "application/pdf",
+                                            token=token) if offset == 0 else {}
+            return {**cached, "title": package["title"], "original_text": page,
+                    "next_offset": next_offset if next_offset < len(body) else None}
         request_id = event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
-        command = {**self._development_fields(event, operation, fields), "operation_id": request_id}
+        development_action = "create" if operation == "import" else operation
+        command = {**self._development_fields(event, development_action, fields), "operation_id": request_id}
         if source_id:
             command["source_id"] = source_id
-        card = librarian.request_source(operation, command, token=token, origin="agent:" + self.task_id)
+        action = "register" if operation == "create" else operation
+        card = librarian.request_source(action, command, token=token, origin="agent:" + self.task_id)
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
@@ -162,15 +213,9 @@ class DesktopWorker:
         committed = False
         try:
             if turn and turn.get('late_editor_input'):
-                self._attempt(turn)
-                outcome = self.delegate({'requestId': 'late-fulltext-editor', 'role': 'editor',
-                                         'input': turn['late_editor_input']})
-                if outcome['status'] == 'succeeded' and not self.cancelled.is_set():
-                    self._commit_result(turn, outcome['result'])
-                    committed = True
-                else:
-                    failure = outcome.get('failure')
-                return
+                from hostrun.voyager_late_fulltext import bound_material_id, newsroom_prompt
+
+                task = newsroom_prompt(bound_material_id(turn))
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
             turn = getattr(self, 'turn', None)
             if turn:
@@ -199,7 +244,7 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request', 'retriever_search_request'):
+                if event.get('type') in ('term_request', 'source_request', 'report_request', 'tracking_request', 'question_request', 'test_cleanup_request', 'retriever_search_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)
@@ -317,7 +362,6 @@ class DesktopWorker:
             synthesis = synthesis_input(material_id)
             if synthesis and {'report_id', 'base_version'} & synthesis.keys():
                 raise ValueError('Invalid initial synthesis')
-            rewrite = None
             writing = synthesis or {}
             if synthesis is None and isinstance(material_id, str) and material_id.lstrip().startswith('{'):
                 command = json.loads(material_id)
@@ -327,30 +371,7 @@ class DesktopWorker:
                     material_id = command['material_id']
                     writing = command
                 else:
-                    rewrite = command
-            if rewrite is not None:
-                if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
-                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id', 'once', 'frontier_id'}
-                        or not isinstance(rewrite['report_id'], str)
-                        or ('material_id' in rewrite and not isinstance(rewrite['material_id'], str))
-                        or not isinstance(rewrite['question'], str)
-                        or not 1 <= len(rewrite['question'].strip()) <= 2000
-                        or type(rewrite['base_version']) is not int):
-                    raise ValueError('Invalid Editor follow-up')
-                previous = reports.get(rewrite['report_id'], self.task_id,
-                                       version=rewrite['base_version'], token=self.service_token)
-                material_id = rewrite.get('material_id', previous['source']['material_id'])
-                writing = {'frontier_id': previous['context_versions'].get('writing_frontier_id'), **rewrite}
-                if 'sources' in previous:
-                    if 'material_id' in rewrite:
-                        raise ValueError('A synthesis follow-up cannot replace its source selection')
-                    synthesis = {
-                        **previous.get('synthesis_options', {}),
-                        'material_ids': previous['selected_material_ids'],
-                        'question': previous['title'],
-                        'report_id': rewrite['report_id'],
-                        'base_version': rewrite['base_version'],
-                    }
+                    raise ValueError('Invalid Editor input')
             selected = synthesis['material_ids'] if synthesis else material_id
             saved_report = reports.get_by_operation(operation, self.task_id, selected, token=self.service_token)
             if saved_report is None and synthesis:
@@ -376,13 +397,6 @@ class DesktopWorker:
                                          token=self.service_token).view_frontier(frontier_id, token=self.service_token)
                     editor_context['frontier'] = {key: frontier[key] for key in ('frontier_id', 'version', 'question')}
                     versions['knowledge'].append({'kind': 'frontier', 'id': frontier_id, 'version': frontier['version']})
-            if editor_context is not None and rewrite:
-                editor_context['follow_up'] = {
-                    'question': rewrite['question'],
-                    'previous_claims': [
-                        {'kind': claim['kind'], 'text': claim['text'][:240]} for claim in previous['claims'][:8]
-                    ],
-                }
         child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
@@ -461,9 +475,7 @@ class DesktopWorker:
                         report = reports.save(operation, self.task_id, evidence, versions,
                                               reviewed['claims'], token=self.service_token,
                                               keeper_proposals=reviewed.get('keeper_proposals'),
-                                              task_version=self.input_version,
-                                              report_id=rewrite['report_id'] if rewrite else None,
-                                              base_version=rewrite['base_version'] if rewrite else None)
+                                              task_version=self.input_version)
                         receipt = {'report_id': report['report_id'], 'version': report['version']}
                     output = json.dumps(receipt, ensure_ascii=False)
             status = 'succeeded'

@@ -8,7 +8,9 @@
 | [agent_run.py](agent_run.py) | Run the bundled Horizon Pi agent with bounded execution, events and leases. |
 | [agent_scheduling.py](agent_scheduling.py) | Public persistent schedule commands: explicit development scopes only. |
 | [agent_service.py](agent_service.py) | Agent-owned persistent commands and queries for authenticated desktop clients. |
-| [archive_sources.py](archive_sources.py) | Library source records and references to the existing material store. |
+| [archive_documents.py](archive_documents.py) | Cache selected original files and publish and verify registered Archive documents. |
+| [archive_reports.py](archive_reports.py) | Cache Newsroom drafts and register immutable reports and their HTML originals. |
+| [archive_sources.py](archive_sources.py) | Library source records and references to Archive documents or existing material records. |
 | [archive_index.py](archive_index.py) | The archive index: a code-directory ledger of the material files. |
 | [audit.py](audit.py) | Existing-data audit: compare the cloud libraries with the migration baseline. |
 | [base.py](base.py) | Config, Base-client factory and executable resolution for host runs. |

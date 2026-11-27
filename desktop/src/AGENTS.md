@@ -2,7 +2,8 @@
 
 | File | Responsibility |
 |---|---|
-| [ArchiveSourcesPanel.tsx](ArchiveSourcesPanel.tsx) | Browses original sources and submits source edits for Librarian confirmation. |
+| [ArchiveReportsPanel.tsx](ArchiveReportsPanel.tsx) | Lists registered reports and opens their archived HTML. |
+| [ArchiveSourcesPanel.tsx](ArchiveSourcesPanel.tsx) | Opens Archive document originals and submits document registrations for Librarian confirmation. |
 | [app.tsx](app.tsx) | Routes the renderer between task, Voyager, knowledge and material workspaces. |
 | [DeliveryPanel.tsx](DeliveryPanel.tsx) | Shows delivery attempts and guides recovery when the outcome is unknown. |
 | [EditorFeedbackPreview.tsx](EditorFeedbackPreview.tsx) | Report feedback shown with its original task, version and paragraph at the owning workflow. |

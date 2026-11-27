@@ -218,6 +218,8 @@ class ReportService:
               synthesis=False, gaps=None, reposts=None, selected_material_ids=None,
               report_id=None, base_version=None, synthesis_options=None, keeper_proposals=None, task_version=None):
         self._authorize(token)
+        if report_id is not None or base_version is not None:
+            raise CommandError("immutable_report", "请另起任务在资料库发布更正报道")
         if not isinstance(claims, list) or not 1 <= len(claims) <= 40:
             raise CommandError("invalid_report", "报道需要至少一条有效判断")
         if synthesis:
@@ -230,10 +232,6 @@ class ReportService:
         if synthesis_options:
             request.append(synthesis_options)
         sources = {item["material_id"]: item for item in evidence}
-        if report_id is not None:
-            if type(base_version) is not int or base_version < 1:
-                raise CommandError("invalid_version", "报道版本无效")
-            request.extend([report_id, base_version])
         if keeper_proposals:
             request.extend([keeper_proposals, task_version])
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
@@ -255,24 +253,7 @@ class ReportService:
                     raise CommandError("version_conflict", "资料或摘要授权已更新，请重新生成报道")
 
             version = 1
-            if report_id is None:
-                report_id = str(uuid.uuid4())
-            else:
-                original = self._version(db, report_id, task_id, None)
-                if original["version"] != base_version:
-                    raise CommandError("version_conflict", "报道已有新版本，请重新读取")
-                if synthesis:
-                    if ("sources" not in original or original["title"] != title
-                            or original["selected_material_ids"] != (selected_material_ids or list(sources))):
-                        raise CommandError("invalid_source", "综合改写必须保留原问题和所选资料")
-                elif "sources" in original:
-                    raise CommandError("invalid_source", "综合改写必须使用原综合资料")
-                elif original["source"]["material_id"] != evidence[0]["material_id"]:
-                    replacement = self.materials.get_package(evidence[0]["material_id"], task_id=task_id, token=token)
-                    if (original["source"]["snapshot"] is not None
-                            or (replacement.get("academic") or {}).get("supplemented_from") != original["source"]["material_id"]):
-                        raise CommandError("invalid_source", "改写必须使用原报道的资料或同一条目的补充全文")
-                version = base_version + 1
+            report_id = str(uuid.uuid4())
             budget = SYNTHESIS_SOURCE_BUDGET // len(evidence) if synthesis else 42_000
             projections = {mid: build_editor_context(item, [], budget=budget)["source"]
                            for mid, item in sources.items()}
@@ -297,12 +278,8 @@ class ReportService:
                                             synthesis=synthesis, reposts=reposts, known=context_versions.get('knowledge', []))
                                 for claim in claims]
             encoded = json.dumps(result, ensure_ascii=False)
-            if version == 1:
-                db.execute("INSERT INTO editor_reports VALUES(?,?,?,?,?)",
-                           (report_id, operation_id, task_id, digest, encoded))
-            else:
-                db.execute("INSERT INTO editor_report_versions VALUES(?,?,?,?,?,?)",
-                           (report_id, version, operation_id, task_id, digest, encoded))
+            db.execute("INSERT INTO editor_reports VALUES(?,?,?,?,?)",
+                       (report_id, operation_id, task_id, digest, encoded))
             enqueue_editor_request(db, result, task_version, keeper_proposals)
             return result
 
@@ -420,21 +397,6 @@ class ReportService:
     @classmethod
     def read_version_in_transaction(cls, db, report_id, task_id, version):
         return cls._version(db, report_id, task_id, version)
-
-    def late_fulltext_input(self, db, task_id, material_id, supplemented_from, *, token):
-        """Resolve the latest summary report in the plan's original task."""
-        self._authorize(token)
-        summary_reports = db.execute(
-            "SELECT report_id FROM editor_reports WHERE task_id=? "
-            "AND json_extract(result, '$.source.material_id')=? ORDER BY rowid DESC",
-            (task_id, supplemented_from))
-        for (identity,) in summary_reports:
-            report = self._version(db, identity, task_id, None)
-            if report["source"]["snapshot"] is None:
-                return json.dumps({"report_id": identity, "base_version": report["version"],
-                                   "material_id": material_id, "question": "全文现已就绪，请用全文证据核对并改写已有摘要报道。"},
-                                  ensure_ascii=False)
-        return material_id
 
     def _open_abstract(self, report, citation, *, token):
         owner = f"report:{report['report_id']}:{report['version']}:{citation['content_hash']}"

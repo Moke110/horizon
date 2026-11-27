@@ -5,6 +5,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from hostrun.agent_service import CommandError
+from hostrun.archive_documents import ArchiveDocuments, DOCUMENT_ID
 from hostrun.library_tags import new_test_tags
 
 _FIELDS = {"title", "label", "url", "material_id"}
@@ -14,6 +15,7 @@ class ArchiveSources:
     def __init__(self, connect, materials):
         self._connect = connect
         self._materials = materials
+        self.documents = ArchiveDocuments(materials.home, connect)
 
     @staticmethod
     def _initialized(db):
@@ -54,6 +56,15 @@ class ArchiveSources:
 
     def _original(self, source_id, *, token, task_id, include_pdf):
         reference = self.view(source_id)
+        if DOCUMENT_ID.fullmatch(source_id):
+            original = None
+            if reference["file_path"] is not None:
+                try:
+                    original = self.documents.read(reference)
+                except CommandError as error:
+                    if include_pdf or error.code != "source_unavailable":
+                        raise
+            return {"document": reference, "available": original is not None}, original if include_pdf else None
         material_id = reference["material_id"]
         if material_id:
             try:
@@ -74,6 +85,10 @@ class ArchiveSources:
 
     def pdf(self, source_id, *, token):
         reference = self.view(source_id)
+        if DOCUMENT_ID.fullmatch(source_id):
+            if reference["media_type"] != "application/pdf":
+                raise CommandError("invalid_document", "源文档不是 PDF")
+            return self.documents.read(reference)
         return self._materials.pdf_original(reference["material_id"], token=token)
 
     @staticmethod
@@ -94,7 +109,33 @@ class ArchiveSources:
             ON CONFLICT(source_id) DO UPDATE SET record=excluded.record""",
                    (record["source_id"], json.dumps(record, ensure_ascii=False)))
 
-    def apply(self, db, action, command):
+    def apply(self, db, action, command, *, publish=False):
+        if action == "register":
+            record = self.documents.prepare(db, command, publish=publish)
+            db.execute("INSERT INTO library_archive_sources VALUES(?,?)",
+                       (record["source_id"], json.dumps(record, ensure_ascii=False)))
+            return record
+        if action == "import":
+            record = self.documents.prepare_import(command)
+            identity = record["source_id"]
+            self.check_write_lock(db, identity)
+            if db.execute("SELECT 1 FROM library_archive_sources WHERE source_id=?", (identity,)).fetchone():
+                raise CommandError("document_conflict", "该文档 ID 已登记")
+            self._save(db, record)
+            return record
+        if action == "restore":
+            identity = command.get("source_id")
+            if not isinstance(identity, str) or not DOCUMENT_ID.fullmatch(identity):
+                raise CommandError("invalid_document", "恢复原文需要文档 ID")
+            record = self.read_in_transaction(db, identity)
+            self.check_write_lock(db, identity)
+            expected = command.get("expected_version")
+            if type(expected) is not int or expected != record["version"]:
+                raise CommandError("version_conflict", "文档条目已变更")
+            restored = self.documents.restore(db, command, record, publish=publish)
+            if restored != record:
+                self._save(db, restored)
+            return restored
         allowed = {"operation_id", "schema_version"}
         if action == "create":
             allowed.add("test_data")
@@ -112,6 +153,10 @@ class ArchiveSources:
             record = {"source_id": str(uuid.uuid4()), "version": 0, "status": "active", **new_test_tags(command)}
         else:
             record = self.read_in_transaction(db, command.get("source_id"))
+            if action == "update" and (DOCUMENT_ID.fullmatch(record["source_id"]) or any(
+                field in command and command[field] != record.get(field) for field in ("material_id", "url")
+            )):
+                raise CommandError("immutable_document", "已登记的文档不能更换原文")
             self.check_write_lock(db, record["source_id"])
             expected = command.get("expected_version")
             if type(expected) is not int or record["version"] != expected:

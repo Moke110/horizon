@@ -243,8 +243,8 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   };
   if (historyInput) ensureInputReader();
 
-  const delegate = defineTool({ name: "delegate", label: "Delegate task", description: "Run an independent Voyager, Editor, or restricted development session. For editor pass a selected material UUID or forward the user-selected synthesis or follow-up JSON unchanged; the child reads the saved snapshot and saves an evidence-linked report. For role voyager pass only the existing explicit retrieval UUID from the current task as input. It reads saved retrieval evidence without making source requests. Development roles accept bounded text. Never pass credentials or the entire conversation.",
-    parameters: Type.Object({ role: Type.Union([Type.Literal("voyager"), Type.Literal("editor"), Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
+  const delegate = defineTool({ name: "delegate", label: "Delegate task", description: "Run an independent Voyager or restricted development session. For role voyager pass only the existing explicit retrieval UUID from the current task as input. It reads saved retrieval evidence without making source requests. Development roles accept bounded text. Never pass credentials or the entire conversation.",
+    parameters: Type.Object({ role: Type.Union([Type.Literal("voyager"), Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
     execute: async (_id, p, signal) => {
       if (!values["session-id"]) throw new Error("Delegation requires a persistent parent session");
       ensureInputReader();
@@ -355,12 +355,28 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     if (!data.error_code) sourceAttempts.set(source, "");
     else if (sourceAttempts.get(source) !== "") sourceAttempts.set(source, data.message || data.error_code);
   }
+  const archiveReport = defineTool({
+    name: "archive_report", label: "Newsroom and Archive reports",
+    description: "After all retrieval in this task is finished, author the final Newsroom HTML and cache it with stage. Submit create with JSON fields title, summary, draft_id, and covered_docs containing only the document IDs actually reported on. To correct a report, start a separate task and use replace with the same fields plus replaces_report_id. The previous report remains readable until the new report is confirmed and published. Import uses fields.report containing the original report_id, sha256, title, summary, and ordered covered_docs. An optional draft_id must identify cached HTML with the same hash. Assess takes reportId and fields decision, basis, reason and concrete evidence. Use questionable when the impact still needs verification, invalid when the main reading is confirmed unreliable, with basis methodology, integrity or interpretation. Use completed with basis correction to restore after a mistaken assessment. A conflicting opinion alone is insufficient. Create, replace, import and assess require Explorer confirmation. List or view registered reports; their originals and entries cannot be edited.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("view"),
+        Type.Literal("stage"), Type.Literal("create"), Type.Literal("import"), Type.Literal("assess"), Type.Literal("replace")]),
+      reportId: Type.Optional(Type.String()),
+      fields: Type.Optional(Type.String({maxLength: 24000})),
+      html: Type.Optional(Type.String({maxLength: 10 * 1024 * 1024})),
+    }),
+    execute: (callId, p, signal) => requestLibrary(callId, {
+      type: "report_request", action: p.action, reportId: p.reportId, html: p.html,
+      fields: p.fields ? JSON.parse(p.fields) : {},
+    }, signal),
+  });
   const archiveSource = defineTool({
     name: "archive_source", label: "Library archive source",
-    description: "List, view or open original source records through the Librarian. Create, update and delete require Explorer confirmation. Use JSON fields title, label, and at least one existing material_id or HTTP(S) url when creating. For update and delete provide sourceId and expected_version in fields; update may include changed source fields.",
+    description: "List, view or open Archive documents through the Librarian. Cache downloads one original PDF, image or HTML from a public HTTPS URL (JSON fields: url). On a scheduled follow-up, late_fulltext reads the bound PDF text and caches the original on the first page. Supply fields.offset from next_offset for subsequent pages. Inspect the evidence before requesting registration. Create requires title, summary, source_files containing exactly one cached file_id, and optional citation. Import takes fields.document containing an existing source_id, sha256, title, summary, and optional citation and media_type; no file is needed. Restore takes sourceId plus expected_version and a cached file_id whose SHA-256 must match. Create, import, restore, legacy metadata updates and deletions require Explorer confirmation.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("open"),
-        Type.Literal("create"), Type.Literal("update"), Type.Literal("delete")]),
+        Type.Literal("cache"), Type.Literal("late_fulltext"), Type.Literal("create"), Type.Literal("import"), Type.Literal("restore"),
+        Type.Literal("update"), Type.Literal("delete")]),
       sourceId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
       testData: Type.Optional(Type.Boolean({description:"True for development test records being created."})),
@@ -371,7 +387,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   });
   const frontierTracking = defineTool({
     name: "frontier_tracking", label: "Library Bulletin Board frontiers",
-    description: "List or view tracked frontiers and list their progress. Create a frontier with JSON fields question only, or include existing scope settings. For progress supply frontierId and fields content and source_ids (a list of Archive source IDs). For update or delete supply expected_version, and progress_id for progress. Changes require Explorer confirmation.",
+    description: "List or view tracked frontiers and list their progress. Create a frontier with JSON fields question only, or include existing scope settings. For progress supply frontierId and fields content and source_ids (an ordered list of existing Archive document d- and report r- IDs). Open documents with archive_source and reports with archive_report. For update or delete supply expected_version, and progress_id for progress. Changes require Explorer confirmation.",
     parameters: Type.Object({
       entity: Type.Union([Type.Literal("frontier"), Type.Literal("progress")]),
       action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("create"),
@@ -426,10 +442,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   } else if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
   else {
     tools.push(delegate);
-    if (values["turn-id"]) tools.push(...searchTools, ...(sourceCatalog === undefined ? [] : [selectSources]), dictionary, archiveSource, frontierTracking, hpediaQuestion, libraryTestCleanup);
+    if (values["turn-id"]) tools.push(...searchTools, ...(sourceCatalog === undefined ? [] : [selectSources]), dictionary, archiveSource, archiveReport, frontierTracking, hpediaQuestion, libraryTestCleanup);
   }
   const allowedTools = keeper ? tools.filter(t => t.name === "keeper_context") : editor ? tools.filter(t => t.name === "editor_context") : voyager ? tools.filter(t => t.name === "voyager_context") :
-    values["turn-id"] && !childRole ? tools.filter(t => (retrieverToolNames.has(t.name) || ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name))) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+    values["turn-id"] && !childRole ? tools.filter(t => (retrieverToolNames.has(t.name) || ["read_file", "delegate", "dictionary", "archive_source", "archive_report", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name))) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -581,7 +597,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
               trackSource(removed, output);
             } else {
               const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-              if (!tool || !(retrieverToolNames.has(call.name) || ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name))) throw new Error("Unsafe pending tool cannot be recovered");
+              if (!tool || !(retrieverToolNames.has(call.name) || ["read_file", "delegate", "dictionary", "archive_source", "archive_report", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name))) throw new Error("Unsafe pending tool cannot be recovered");
               output = await tool.execute(call.id, call.arguments, undefined);
             }
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });

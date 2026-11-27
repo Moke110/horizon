@@ -24,18 +24,15 @@ flowchart LR
     UI[Desktop interface] --> Bridge[Authenticated local bridge]
     Bridge --> Agent[Agent · tasks and scheduling]
     Bridge --> Voyager[Voyager · retrieval and materials]
-    Bridge --> KB[Knowledge Base · Frontiers, Cards and Themes]
-    Bridge --> Editor[Editor · reports and writing preferences]
+    Bridge --> Librarian[Librarian · Library access and confirmation]
+    Librarian --> Hpedia[Hpedia · Terms, Questions and Frontiers]
+    Librarian --> Archive[Archive · source documents and reports]
     Agent -->|dispatches work| Voyager
-    Agent -->|dispatches work| Editor
-    Voyager -->|reads scope| KB
-    Editor -->|reads material snapshots| Voyager
-    Editor -->|reads knowledge context| KB
-    Editor -->|submits evidence-linked proposals| Keeper[Keeper · proposal review]
-    Keeper -->|applies explorer-approved changes| KB
+    Agent -->|writes after retrieval| Newsroom[Newsroom · HTML reports]
+    Newsroom -->|requests registration| Librarian
 ```
 
-The desktop services share a local SQLite database. Agent owns task state, Voyager owns retrieval plans and source snapshots, Editor owns reports, and the Knowledge Base owns knowledge records. The diagram shows the main workflows across those boundaries. Search and report generation can run before the Explorer accepts any proposed Knowledge Base changes.
+The desktop services share a local SQLite database. Voyager retains retrieval plans and snapshots. Within the Library, Hpedia owns knowledge entries and Archive independently keeps original source files and completed reports. The Librarian confirms Library writes.
 
 ## Installation
 
@@ -185,15 +182,11 @@ On first launch, the bundled Electron runtime is copied to `%LOCALAPPDATA%/Horiz
 
 Open Automatic tasks to create, edit, pause or resume a plan. Supply an explicit task scope and interval; these development scopes are separate from Knowledge Base Frontiers. The default execution limits are two main tasks and four child agents, adjustable in the same panel. Work from one plan runs serially, and paused work blocks that plan until continued or abandoned. Missed triggers merge into one run; declared execution coverage is retained across restarts. It is not proof of source retrieval. Missing or invalid coverage declarations hold the run for review; abandon that run to pause the plan without advancing its covered range.
 
-In a conversation, expand **Editor 报道**, select an existing material, choose **准备生成报道**, then send the prepared request. Open the saved report and select a citation to read its pinned passage. Full-text reports require a readable snapshot. With explicit authorization for that conversation, Editor can use a source abstract and mark the coverage limit.
+Ask the Agent in a conversation to research and write a report. Confirm the selected originals through the Librarian. After retrieval finishes, Newsroom drafts the HTML and requests publication with the document IDs the report actually covers. Confirm publication in the originating conversation. Open published reports from **资料库 → 报道** to read the original HTML, covered documents and current assessment. Late full text supplied to a scheduled task follows the same confirmation flow.
 
-In **Editor 报道 → 综合多份资料**, enter a question and choose two to four materials. The saved synthesis identifies each cited source and marks evidence gaps, disagreement and confirmed background. Use **展开已知背景** to request the supporting background. Editor reports when it found no new information and does not save a new report in that case.
+To correct an Archive report, open its detail and start a separate task. Confirm the new report before the old original is retired. The replacement has its own ID and names the old report. Earlier references to the retired ID show **报道已删除**. A credibility reassessment records its evidence and reason separately from the report content.
 
-Open a specific version to rate it and optionally add a reason or select a paragraph. You can edit or withdraw the rating. Prepare a follow-up or correction from the report reader and send it from the original conversation. Editor checks the source and saves a new version. Earlier versions remain readable, and sending the rewrite is a separate action.
-
-Under **Editor 报道**, use **本次写作样式** for a one-report choice or **写作偏好** to save and manage a style for all reports or a Frontier. The precedence is this report, Frontier, global, then default. Adoption of a feedback suggestion requires choosing its scope. Saved reports show the versions of the styles they used.
-
-Editor may create an evidence-linked proposal for Keeper to review. Open **知识库 → 待确认** to review the exact report version, sources and proposed changes. Approve, reject or request adjustment there. A revised proposal requires a new confirmation. If the model or desktop interrupts a review, use **Keeper 待重试审核** in the Knowledge Workbench to retry it. Approved knowledge can appear as confirmed background in later reports.
+Saved Editor reports remain under **历史报道** in their original conversation, with their pinned citations and feedback. Existing Keeper proposals remain reviewable in the Knowledge Workbench.
 
 The Trace tab is currently empty. A completed response or rewrite does not authorize sending. When a delivery channel is configured, explicitly prepare and send a completed result. Uncertain delivery requires a lookup first; sending again requires acknowledging the risk of duplicate delivery. An unconfigured channel shows its status and does not send.
 

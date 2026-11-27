@@ -5,6 +5,23 @@ import uuid
 from hostrun.agent_service import CommandError
 
 
+def newsroom_prompt(material_id):
+    return (f"已取得计划检索中的补交全文 {material_id}。使用 archive_source 的 late_fulltext 动作"
+            "读取绑定的全文并缓存原始 PDF。若决定收录，使用返回的 file_id 请求登记，"
+            "等探索者确认并取得 d- ID 后再让 Newsroom 撰写。完成全部资料阅读后，使用 "
+            "archive_report 缓存 HTML 并请求登记，仅将实际报道对象列为 covered_docs。"
+            "待探索者确认后报道才入库。保持原计划覆盖范围和投递记录。")
+
+
+def bound_material_id(turn):
+    if not turn:
+        return None
+    if material_id := turn.get('late_fulltext_material_id'):
+        return material_id
+    legacy = turn.get('late_editor_input')
+    return json.loads(legacy)['material_id'] if legacy and legacy.startswith('{') else legacy
+
+
 def initialize(db):
     db.execute('''CREATE TABLE IF NOT EXISTS voyager_late_fulltext (
         operation_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, task_id TEXT NOT NULL,
@@ -38,14 +55,12 @@ def claim(service, materials, *, token, occupied):
     """Bind free per-plan slots to turns, retaining paused or unresolved work."""
     service._authorize(token)
     from hostrun.agent_scheduling import get_limits
-    from hostrun.editor_reports import ReportService
 
     limit = get_limits(service, token=token)['main']
     with service._connect() as db:
         initialize(db)
         if not db.execute("SELECT 1 FROM voyager_late_fulltext WHERE state IN ('queued','claimed') LIMIT 1").fetchone():
             return []
-    reports = ReportService(materials.home, token=token)
     with service._connect() as db:
         db.execute('BEGIN IMMEDIATE')
         regular = {pid: json.loads(encoded) for pid, encoded in db.execute('SELECT schedule_id,result FROM agent_schedules')}
@@ -95,13 +110,9 @@ def claim(service, materials, *, token, occupied):
             if not original_text.strip():
                 db.execute("UPDATE voyager_late_fulltext SET state='cancelled' WHERE operation_id=?", (operation,))
                 continue
-            editor_input = reports.late_fulltext_input(
-                db, task_id, material_id, material['academic'].get('supplemented_from'), token=token)
-            text = (f"处理迟到全文资料 {material_id}（原检索 {request_id}）。调用 delegate 工具，"
-                    f"将下列 input 原样交给 editor 子会话生成并保存报道。不得重跑检索、"
-                    f"更改覆盖区间或自动投递报道。\ninput: {editor_input}")
-            turn = service._begin_turn(db, {'task_id':task_id, 'expected_version':task['version'], 'text':text}, operation)
-            turn['late_editor_input'] = editor_input
+            turn = service._begin_turn(db, {'task_id':task_id, 'expected_version':task['version'],
+                                          'text':newsroom_prompt(material_id)}, operation)
+            turn['late_fulltext_material_id'] = material_id
             service._persist_turn(db, turn, operation, json.dumps({'late_fulltext':material_id}), action='begin')
             db.execute("UPDATE voyager_late_fulltext SET state='claimed' WHERE operation_id=?", (operation,))
             reserved.add(schedule_id)

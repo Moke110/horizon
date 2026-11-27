@@ -19,6 +19,7 @@ class Librarian:
             self.library.initialize_questions(db)
             hpedia_migration.migrate(db)
             hpedia_identity.migrate_deleted(db)
+            self.library.reports.recover_publications(db)
 
     def deleted_entries(self, *, token):
         self.library.authorize(token)
@@ -105,11 +106,48 @@ class Librarian:
         self.library.authorize(token)
         return self.library.archive.pdf(source_id, token=token)
 
+    def cache_source(self, original, media_type, *, token):
+        self.library.authorize(token)
+        return self.library.archive.documents.cache_original(original, media_type)
+
+    def download_source(self, url, *, token):
+        self.library.authorize(token)
+        if not isinstance(url, str):
+            raise CommandError("invalid_document", "需要公开的源文档链接")
+        return self.library.archive.documents.download(url)
+
     def request_source(self, action, command, *, token, origin):
-        if action not in ("create", "update", "delete") or not isinstance(command, dict):
+        if action not in ("create", "register", "import", "restore", "update", "delete") or not isinstance(command, dict):
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
         return self.request_batch(command.get("operation_id"), [(action, command)],
                                   token=token, origin=origin, entity="source")
+
+    def stage_report(self, html, *, token, origin):
+        self.library.authorize(token)
+        if not isinstance(origin, str) or not origin.startswith("agent:") or not origin[6:].strip():
+            raise CommandError("invalid_report", "报道稿件需要当前 Agent 会话")
+        return self.library.reports.stage(html, origin)
+
+    def request_report(self, action, command, *, token, origin):
+        self.library.authorize(token)
+        if action not in ("create", "import", "assess", "replace"):
+            raise CommandError("immutable_report", "已登记报道不能修改")
+        if not isinstance(command, dict):
+            raise CommandError("invalid_report", "需要有效的报道登记请求")
+        return self.request_batch(command.get("operation_id"), [(action, command)],
+                                  token=token, origin=origin, entity="report")
+
+    def list_reports(self, *, token):
+        self.library.authorize(token)
+        return self.library.reports.list()
+
+    def view_report(self, report_id, *, token):
+        self.library.authorize(token)
+        return self.library.reports.view(report_id)
+
+    def open_report(self, report_id, *, token):
+        self.library.authorize(token)
+        return self.library.reports.open(report_id)
 
     @property
     def HISTORY(self):
@@ -323,7 +361,8 @@ class Librarian:
             raise CommandError("invalid_command", "确认请求需要来源、标识和 1 至 100 项变更")
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
-                   "source": ("create", "update", "delete"),
+                   "source": ("create", "register", "import", "restore", "update", "delete"),
+                   "report": ("create", "import", "assess", "replace"),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
@@ -333,7 +372,7 @@ class Librarian:
                 raise CommandError("invalid_command", "无效的术语变更")
         for action, command in changes:
             if "test_data" in command and (
-                type(command["test_data"]) is not bool or action != "create" or not origin.startswith("agent:")
+                type(command["test_data"]) is not bool or action not in ("create", "register", "import") or not origin.startswith("agent:")
             ):
                 raise CommandError("invalid_command", "只有 Agent 新建的测试条目可以标记为测试")
         normalized = [list(change) for change in changes]
@@ -349,12 +388,15 @@ class Librarian:
                 if row[:2] != (origin, encoded):
                     raise CommandError("operation_conflict", "确认请求标识已使用")
                 return json.loads(row[2])
-            if entity in ("source", "progress"):
+            if entity in ("source", "progress", "report"):
                 self.library.archive.initialize(db)
+            if entity in ("progress", "report"):
+                self.library.reports.initialize(db)
             if entity == "progress":
                 frontier_progress.initialize(db)
             term_ids = set()
             summaries = []
+            report_publications = []
             db.execute("SAVEPOINT librarian_review")
             try:
                 for action, command in changes:
@@ -368,8 +410,19 @@ class Librarian:
                                 term_ids.add(term_id)
                     elif entity == "source":
                         proposed = self.library.archive.apply(db, action, command)
-                        if action != "create":
+                        if action in ("register", "import", "restore"):
+                            summaries.append(proposed["title"])
+                        if action not in ("register", "create"):
                             term_ids.add("archive:" + proposed["source_id"])
+                    elif entity == "report":
+                        proposed = self.library.reports.apply(db, action, command, origin=origin, publish=False)
+                        summaries.append(proposed["title"])
+                        if action != "assess" and proposed["file_path"] is not None:
+                            report_publications.append((proposed["report_id"], proposed["sha256"]))
+                        if action == "assess":
+                            lock = "archive:" + proposed["report_id"]
+                            self.library.check_write_lock(db, lock, now=now)
+                            term_ids.add(lock)
                     elif entity == "frontier":
                         proposed, _ = self.library.apply_frontier(db, action, command, token=token, now=now)
                         summaries.append(proposed["question"])
@@ -398,6 +451,8 @@ class Librarian:
                 card["summaries"] = summaries
             db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
                        (request_id, origin, encoded, card["expires_at"], json.dumps(card)))
+            if report_publications:
+                self.library.reports.track_publications(db, request_id, report_publications)
             db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
                            [(term_id, request_id) for term_id in term_ids])
         return card
@@ -421,6 +476,17 @@ class Librarian:
                 raise CommandError("not_found", "本会话没有该类型的确认请求")
             if card["status"] != "pending":
                 return card
+            if choice == "confirm" and card.get("entity") == "report" and db.execute(
+                    "SELECT 1 FROM library_report_publications WHERE request_id=?", (request_id,)).fetchone():
+                self.library.reports.begin_publications(db, request_id)
+                db.commit()
+                db.execute("BEGIN IMMEDIATE")
+                now = self.clock()
+                self._expire(db, now)
+                card = json.loads(db.execute("SELECT result FROM librarian_term_requests WHERE id=? AND origin=?",
+                                             (request_id, origin)).fetchone()[0])
+                if card["status"] != "pending":
+                    return card
             db.execute("DELETE FROM librarian_term_locks WHERE request_id=?", (request_id,))
             results = []
             status = "rejected"
@@ -435,7 +501,9 @@ class Librarian:
                         if card.get("entity") == "question":
                             results.append(self.library.apply_question(db, action, command, now=now))
                         elif card.get("entity") == "source":
-                            results.append(self.library.archive.apply(db, action, command))
+                            results.append(self.library.archive.apply(db, action, command, publish=True))
+                        elif card.get("entity") == "report":
+                            results.append(self.library.reports.apply(db, action, command, origin=origin, publish=True))
                         elif card.get("entity") == "frontier":
                             frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
                             results.append(frontier)
@@ -464,8 +532,13 @@ class Librarian:
             card.update(status=status, results=results)
             db.execute("UPDATE librarian_term_requests SET result=? WHERE id=?",
                        (json.dumps(card), request_id))
+            if card.get("entity") == "report":
+                self.library.reports.recover_publications(db)
         for term in notifications:
             self.library.notify_committed(term)
         for frontier in frontier_notifications:
             self.library.notify_frontier(frontier)
+        if status == "confirmed" and card.get("entity") == "report":
+            if any(action == "replace" for action, _ in card["changes"]):
+                self.library.reports.purge_retired_originals()
         return card

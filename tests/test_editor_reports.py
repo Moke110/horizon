@@ -125,7 +125,7 @@ def test_report_feedback_is_revisioned_withdrawn_and_scoped_to_version(tmp_path)
                                   reason="需要解释", claim_index=0, token=token) == first
     assert restarted.get(identity, "task", token=token, version=1)["feedback"] == withdrawn
 
-def test_rewrite_reuses_report_identity_and_preserves_old_version_and_feedback(tmp_path):
+def test_legacy_report_refuses_revision_and_preserves_original_and_feedback(tmp_path):
     import pytest
     from hostrun.agent_service import CommandError
     from hostrun.editor_reports import ReportService
@@ -142,16 +142,12 @@ def test_rewrite_reuses_report_identity_and_preserves_old_version_and_feedback(t
     identity = v1["report_id"]
     service.set_feedback(identity, "task", 1, "rating", 0, score=4, token=token)
     changed = {**source, "text": "来源描述了十二条观察。"}
-    v2 = service.save("rewrite", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token)
-    assert (v2["report_id"], v2["version"]) == (identity, 2)
-    assert service.get_by_operation("rewrite", "task", material["material_id"], token=token) == v2
-    assert service.get(identity, "task", version=2, token=token) == v2
+    with pytest.raises(CommandError, match="另起任务"):
+        service.save("rewrite", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token)
+    assert service.get_by_operation("rewrite", "task", material["material_id"], token=token) is None
     assert service.get(identity, "task", version=1, token=token)["feedback"]["score"] == 4
     assert service.get(identity, "task", version=1, token=token)["claims"] == v1["claims"]
-    assert service.citation(identity, "task", 0, 0, version=2, token=token)["segment"] == "Twelve observations."
-    assert service.save("rewrite", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token) == v2
-    with pytest.raises(CommandError, match="已有新版本"):
-        service.save("old", "task", evidence, {}, [changed], report_id=identity, base_version=1, token=token)
+    assert service.citation(identity, "task", 0, 0, version=1, token=token)["segment"] == "Twelve observations."
 
 
 def test_synthesis_resolves_each_citation_to_its_own_source(tmp_path):
@@ -270,7 +266,9 @@ def test_synthesis_excludes_unsourced_and_questionable_background_and_records_pa
     assert report["claims"][0]["knowledge"]["version"] == 1
     assert reports.get_by_operation("expand", "task", command["material_ids"], token=token) == report
 
-def test_synthesis_rewrite_keeps_question_selection_and_prior_citation(tmp_path):
+def test_legacy_synthesis_refuses_revision_and_retains_prior_citation(tmp_path):
+    import pytest
+    from hostrun.agent_service import CommandError
     from hostrun.editor_reports import ReportService
     from hostrun.editor_synthesis import commit_synthesis, prepare_synthesis
 
@@ -290,13 +288,12 @@ def test_synthesis_rewrite_keeps_question_selection_and_prior_citation(tmp_path)
                              {"claims":claims}, token=token)
     rewrite = {**command, "report_id":first["report_id"], "base_version":1}
     claims[0]["text"] = "计数分别是十二和二十。"
-    second = commit_synthesis(reports, "rewrite", "task", rewrite, context, evidence, versions, reposts,
-                              {"claims":claims}, token=token)
-    assert second == {"report_id":first["report_id"],"version":2}
-    for version in (1, 2):
-        value = reports.get(first["report_id"], "task", version=version, token=token)
-        assert value["title"] == command["question"]
-        assert value["selected_material_ids"] == ids
-        assert value["claims"][0]["independent_source_count"] == 2
-        assert "Second note" in reports.citation(first["report_id"], "task", 0, 1, version=version, token=token)["segment"]
-    assert reports.get_by_operation("rewrite", "task", ids, token=token)["version"] == 2
+    with pytest.raises(CommandError, match="另起任务"):
+        commit_synthesis(reports, "rewrite", "task", rewrite, context, evidence, versions, reposts,
+                         {"claims":claims}, token=token)
+    value = reports.get(first["report_id"], "task", version=1, token=token)
+    assert value["title"] == command["question"]
+    assert value["selected_material_ids"] == ids
+    assert value["claims"][0]["independent_source_count"] == 2
+    assert "Second note" in reports.citation(first["report_id"], "task", 0, 1, version=1, token=token)["segment"]
+    assert reports.get_by_operation("rewrite", "task", ids, token=token) is None

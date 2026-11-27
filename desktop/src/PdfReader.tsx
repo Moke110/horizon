@@ -3,8 +3,9 @@ import React,{useEffect,useRef,useState} from 'react';
 import type {PDFDocumentLoadingTask, RenderTask, PDFWorker} from 'pdfjs-dist';
 export type PdfInfo={status:string;reason:string;anchors:{page:number;start:number;end:number}[]};
 const reasons:Record<string,string>={encrypted:'文件已加密',page_limit:'超过页数限制',scan_or_empty_page:'含扫描页或空白页',text_limit:'提取文本超过限制',damaged_or_unsupported:'文件损坏或格式不支持',extraction_quality_unverified:'请对照原页核实分栏顺序、公式和表格'};
-export function PdfReader({id,info,text,version,send}:{id:string;info:PdfInfo;text:string;version:number;send:(v:unknown)=>void}){
+export function PdfReader({id,info,text='',version,send}:{id:string;info?:PdfInfo;text?:string;version?:number;send:(v:unknown)=>void}){
  const [page,setPage]=useState(1),[error,setError]=useState(''),[supplement,setSupplement]=useState('');
+ const [pageCount,setPageCount]=useState(0);
  const canvas=useRef<HTMLCanvasElement>(null);
  useEffect(()=>{
   let disposed=false,task:PDFDocumentLoadingTask|undefined,render:RenderTask|undefined,port:Worker|undefined,worker:PDFWorker|undefined;
@@ -21,6 +22,8 @@ export function PdfReader({id,info,text,version,send}:{id:string;info:PdfInfo;te
    worker=lib.PDFWorker.create({port});
    task=lib.getDocument({data,worker,useWorkerFetch:true,cMapUrl:new URL('cmaps/',document.baseURI).href,cMapPacked:true,standardFontDataUrl:new URL('standard_fonts/',document.baseURI).href,useWasm:false});
    const doc=await task.promise;
+   if(disposed)return;
+   setPageCount(doc.numPages);
    const pdfPage=await doc.getPage(page);
    if(disposed||!canvas.current)return;
    const base=pdfPage.getViewport({scale:1});
@@ -31,7 +34,13 @@ export function PdfReader({id,info,text,version,send}:{id:string;info:PdfInfo;te
   return ()=>{disposed=true;render?.cancel();void Promise.resolve(task?.destroy()).finally(()=>{worker?.destroy();port?.terminate();});};
  },[id,page]);
  const resolve=(decision:string)=>send({action:'materials_pdf_resolve',decision,material_id:id,expected_version:version,schema_version:1,operation_id:crypto.randomUUID(),...(decision==='supplement'?{text:supplement}:{})});
- const anchor=info.anchors.find(a=>a.page===page);
+ const anchor=info?.anchors.find(a=>a.page===page);
+ if(!info)return <section><h4>PDF 原页</h4>
+  <button type="button" disabled={page<=1} onClick={()=>setPage(page-1)}>上一页</button>
+  <span>第 {page} 页</span>
+  <button type="button" disabled={page>=pageCount} onClick={()=>setPage(page+1)}>下一页</button>
+  {error?<p role="alert">{error}</p>:<canvas aria-label={'PDF 第 '+page+' 页'} ref={canvas} style={{maxWidth:'100%',height:'auto'}}/>}
+ </section>;
  return <section><h4>PDF 原页</h4><p>{reasons[info.reason]||info.reason}</p>
  {info.anchors.map(a=><button key={a.page} aria-pressed={a.page===page} onClick={()=>setPage(a.page)}>第 {a.page} 页</button>)}
  {error?<p role="alert">{error}</p>:<canvas aria-label={'PDF 第 '+page+' 页'} ref={canvas} style={{maxWidth:'100%',height:'auto'}}/>}
