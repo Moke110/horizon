@@ -97,7 +97,8 @@ def test_registered_report_rejects_in_place_changes(tmp_path):
 
 
 
-def test_correcting_report_publishes_new_identity_and_retires_old_original(tmp_path, monkeypatch):
+@pytest.mark.parametrize("substituted", [False, True])
+def test_correcting_report_publishes_new_identity_and_retires_old_original(tmp_path, monkeypatch, substituted):
     service = librarian(tmp_path)
     covered = document(service)
     draft = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
@@ -139,11 +140,17 @@ def test_correcting_report_publishes_new_identity_and_retires_old_original(tmp_p
     correction["operation_id"] = "correction"
     service.request_report("replace", correction, token=TOKEN, origin=origin)
     assert service.open_report(old_id, token=TOKEN)["html"] == HTML
+    old_path = Path(old["file_path"])
+    if substituted:
+        old_path.write_text("Unrelated file", encoding="utf-8")
     decision = service.decide("correction", "confirm", token=TOKEN, origin=origin)
     assert decision["status"] == "confirmed"
     new, = decision["results"]
     assert new["report_id"] != old_id and new["replaces_report_id"] == old_id
-    assert not Path(old["file_path"]).exists()
+    if substituted:
+        assert old_path.read_text(encoding="utf-8") == "Unrelated file"
+    else:
+        assert not old_path.exists()
     reopened = librarian(tmp_path)
     assert reopened.open_report(new["report_id"], token=TOKEN) == {"report": new, "html": corrected_html}
     assert reopened.list_reports(token=TOKEN) == [new]
@@ -153,6 +160,40 @@ def test_correcting_report_publishes_new_identity_and_retires_old_original(tmp_p
     with pytest.raises(CommandError, match="报道已删除"):
         reopened.request_report("import", {"operation_id": "import-old", "report": old}, token=TOKEN, origin=origin)
     assert reopened.decide("correction", "confirm", token=TOKEN, origin=origin) == decision
+
+
+def test_interrupted_file_publication_is_recovered_before_retrying_a_correction(tmp_path, monkeypatch):
+    service = librarian(tmp_path)
+    covered = document(service)
+    draft = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
+    request = {"operation_id": "original", "draft_id": draft["draft_id"], "title": "Finding",
+               "summary": "Evidence", "covered_docs": [covered]}
+    service.request_report("create", request, token=TOKEN, origin=ORIGIN)
+    old, = service.decide("original", "confirm", token=TOKEN, origin=ORIGIN)["results"]
+    correction_origin = "agent:separate-correction"
+    corrected_html = "<h1>Corrected original</h1>"
+    draft = service.stage_report(corrected_html, token=TOKEN, origin=correction_origin)
+    service.request_report("replace", {**request, "operation_id": "correction", "draft_id": draft["draft_id"],
+        "replaces_report_id": old["report_id"]}, token=TOKEN, origin=correction_origin)
+
+    link = os.link
+
+    def interrupted_after_write(*args, **kwargs):
+        link(*args, **kwargs)
+        raise RuntimeError("Stopped before registration committed")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(os, "link", interrupted_after_write)
+        with pytest.raises(RuntimeError, match="Stopped before registration committed"):
+            service.decide("correction", "confirm", token=TOKEN, origin=correction_origin)
+
+    reopened = librarian(tmp_path)
+    assert reopened.list_reports(token=TOKEN) == [old]
+    old_path = Path(old["file_path"])
+    assert list(old_path.parent.glob("*.html")) == [old_path]
+    assert reopened.open_report(old["report_id"], token=TOKEN)["html"] == HTML
+    corrected, = reopened.decide("correction", "confirm", token=TOKEN, origin=correction_origin)["results"]
+    assert reopened.open_report(corrected["report_id"], token=TOKEN)["html"] == corrected_html
 
 
 def test_import_report_without_html_preserves_id_hash_and_coverage_positions(tmp_path):
@@ -209,6 +250,45 @@ def test_import_report_attaches_only_matching_cached_html(tmp_path):
     with pytest.raises(CommandError) as error:
         service.request_report("import", {**request, "operation_id": "unrelated-import"}, token=TOKEN, origin=ORIGIN)
     assert error.value.code == "immutable_report"
+
+
+def test_unconfirmed_import_does_not_claim_a_file_at_its_future_path(tmp_path):
+    service = librarian(tmp_path)
+    draft = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
+    identity = "r-" + "b" * 32
+    service.request_report("import", {"operation_id": "import", "draft_id": draft["draft_id"], "report": {
+        "report_id": identity, "sha256": draft["sha256"], "title": "Imported report", "summary": "Evidence",
+        "covered_docs": ["d-unknown"],
+    }}, token=TOKEN, origin=ORIGIN)
+    path = tmp_path / "archive" / "originals" / "reports" / f"{identity}.html"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(HTML, encoding="utf-8")
+
+    reopened = librarian(tmp_path)
+    assert reopened.list_reports(token=TOKEN) == []
+    assert reopened.decide("import", "reject", token=TOKEN, origin=ORIGIN)["status"] == "rejected"
+    assert path.read_text(encoding="utf-8") == HTML
+
+
+def test_import_retains_correction_provenance_and_requires_a_new_task_to_correct(tmp_path):
+    service = librarian(tmp_path)
+    covered = document(service)
+    previous = "r-" + "1" * 32
+    successor = "r-" + "2" * 32
+    original = {"sha256": "a" * 64, "title": "Original", "summary": "Evidence", "covered_docs": [covered]}
+    for identity, extra in ((previous, {}), (successor, {"replaces_report_id": previous})):
+        service.request_report("import", {"operation_id": identity, "report": {
+            **original, "report_id": identity, **extra,
+        }}, token=TOKEN, origin=ORIGIN)
+        service.decide(identity, "confirm", token=TOKEN, origin=ORIGIN)
+    assert service.open_report(successor, token=TOKEN)["report"]["replaces_report_id"] == previous
+    assert service.open_report(previous, token=TOKEN)["report"]["report_id"] == previous
+    staged = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
+    with pytest.raises(CommandError, match="另起任务"):
+        service.request_report("replace", {
+            "operation_id": "same-import-task", "title": "Correction", "summary": "Evidence",
+            "draft_id": staged["draft_id"], "covered_docs": [covered], "replaces_report_id": successor,
+        }, token=TOKEN, origin=ORIGIN)
 
 
 def test_confirmed_reassessment_changes_the_projection_without_rewriting_the_report(tmp_path):

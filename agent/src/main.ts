@@ -372,10 +372,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   });
   const archiveSource = defineTool({
     name: "archive_source", label: "Library archive source",
-    description: "List, view or open Archive documents through the Librarian. Cache downloads one original PDF, image or HTML from a public HTTPS URL (JSON fields: url); inspect the search evidence before requesting registration. Create requires title, summary, source_files containing exactly one cached file_id, and optional citation. Import takes fields.document containing an existing source_id, sha256, title, summary, and optional citation and media_type; no file is needed. Restore takes sourceId plus expected_version and a cached file_id whose SHA-256 must match. Create, import, restore, legacy metadata updates and deletions require Explorer confirmation.",
+    description: "List, view or open Archive documents through the Librarian. Cache downloads one original PDF, image or HTML from a public HTTPS URL (JSON fields: url). On a scheduled follow-up, late_fulltext reads the bound PDF text and caches the original on the first page. Supply fields.offset from next_offset for subsequent pages. Inspect the evidence before requesting registration. Create requires title, summary, source_files containing exactly one cached file_id, and optional citation. Import takes fields.document containing an existing source_id, sha256, title, summary, and optional citation and media_type; no file is needed. Restore takes sourceId plus expected_version and a cached file_id whose SHA-256 must match. Create, import, restore, legacy metadata updates and deletions require Explorer confirmation.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("open"),
-        Type.Literal("cache"), Type.Literal("create"), Type.Literal("import"), Type.Literal("restore"),
+        Type.Literal("cache"), Type.Literal("late_fulltext"), Type.Literal("create"), Type.Literal("import"), Type.Literal("restore"),
         Type.Literal("update"), Type.Literal("delete")]),
       sourceId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),

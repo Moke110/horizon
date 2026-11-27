@@ -76,6 +76,26 @@ def test_cleanup_reports_references_from_real_content_and_leaves_that_test_sourc
     assert librarian.view_source(source["source_id"], token=TOKEN) == source
 
 
+def test_cleanup_revalidates_new_archive_report_coverage(tmp_path):
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=TOKEN), token=TOKEN)
+    original = librarian.cache_source(b"<p>Evidence</p>", "text/html", token=TOKEN)
+    librarian.request_source("register", {"operation_id": "doc", "title": "Test source",
+        "summary": "Evidence", "source_files": [original["file_id"]], "test_data": True},
+        token=TOKEN, origin=AGENT)
+    source, = librarian.decide("doc", "confirm", token=TOKEN, origin=AGENT)["results"]
+    assert librarian.request_test_cleanup("clean", token=TOKEN, origin=GUI)["status"] == "pending"
+    draft = librarian.stage_report("<p>Genuine report</p>", token=TOKEN, origin=AGENT)
+    librarian.request_report("create", {"operation_id": "report", "title": "Genuine report",
+        "summary": "Evidence", "draft_id": draft["draft_id"], "covered_docs": [source["source_id"]]},
+        token=TOKEN, origin=AGENT)
+    report, = librarian.decide("report", "confirm", token=TOKEN, origin=AGENT)["results"]
+    assert librarian.decide("clean", "confirm", token=TOKEN, origin=GUI)["error"]["code"] == "test_cleanup_changed"
+    entry, = librarian.preview_test_cleanup(token=TOKEN)["entries"]
+    assert entry["blocked"]
+    assert {"kind": "report", "id": report["report_id"], "title": "Genuine report", "effect": "blocked"} in entry["references"]
+    assert librarian.open_source(source["source_id"], token=TOKEN)["document"]["source_id"] == source["source_id"]
+
+
 def test_test_selection_never_accepts_an_untagged_record_or_tags_an_existing_record(tmp_path):
     librarian = Librarian(KnowledgeCardService(tmp_path, token=TOKEN), token=TOKEN)
     real = create(librarian, "frontier", "real", question="真实前沿")

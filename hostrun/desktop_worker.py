@@ -109,6 +109,28 @@ class DesktopWorker:
         fields = event.get("fields")
         if operation == "cache" and isinstance(fields, dict) and set(fields) == {"url"}:
             return librarian.download_source(fields["url"], token=token)
+        if operation == "late_fulltext":
+            from hostrun.voyager_late_fulltext import bound_material_id
+            from hostrun.voyager_materials import MaterialsService
+
+            material_id = bound_material_id(getattr(self, "turn", None))
+            if not material_id:
+                raise CommandError("invalid_document", "本轮没有绑定的补交全文")
+            if not isinstance(fields, dict) or set(fields) - {"offset"}:
+                raise CommandError("invalid_document", "需要有效的全文阅读位置")
+            offset = fields.get("offset", 0)
+            materials = MaterialsService(self.home, token=token)
+            package = materials.get_package(material_id, token=token, task_id=self.task_id)
+            body = package["original_text"]
+            if (package.get("archived") or package.get("academic", {}).get("status") != "available"
+                    or type(offset) is not int or not 0 <= offset < len(body)):
+                raise CommandError("invalid_document", "全文原件或阅读位置不可用")
+            page = body[offset:offset + 16000]
+            next_offset = offset + len(page)
+            cached = librarian.cache_source(materials.pdf_original(material_id, token=token), "application/pdf",
+                                            token=token) if offset == 0 else {}
+            return {**cached, "title": package["title"], "original_text": page,
+                    "next_offset": next_offset if next_offset < len(body) else None}
         request_id = event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
@@ -191,18 +213,9 @@ class DesktopWorker:
         committed = False
         try:
             if turn and turn.get('late_editor_input'):
-                self._attempt(turn)
-                material_id = turn['late_editor_input']
-                if material_id.startswith('{'):
-                    material_id = json.loads(material_id)['material_id']
-                outcome = self.delegate({'requestId': 'late-fulltext-editor', 'role': 'editor',
-                                         'input': material_id})
-                if outcome['status'] == 'succeeded' and not self.cancelled.is_set():
-                    self._commit_result(turn, outcome['result'])
-                    committed = True
-                else:
-                    failure = outcome.get('failure')
-                return
+                from hostrun.voyager_late_fulltext import bound_material_id, newsroom_prompt
+
+                task = newsroom_prompt(bound_material_id(turn))
             argv = embedded_agent.argv(self.home, task, kind='agent', code=Path(self.resolved['code']), session_id=session_id)
             turn = getattr(self, 'turn', None)
             if turn:
