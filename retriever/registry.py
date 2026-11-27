@@ -9,8 +9,8 @@ from hostrun.embedded_agent import load_source_configuration, save_source_key
 
 SOURCE_DIRECTORY = Path(__file__).parent / "sources"
 REGISTERED_SOURCES = (
-    "openalex", "tavily", "brave", "exa", "serpapi_google", "serpapi_duckduckgo",
-    "serpapi_bing", "searxng",
+    "openalex", "arxiv", "europepmc", "crossref", "pubmed", "pmc", "semanticscholar", "serpapi_scholar",
+    "tavily", "brave", "exa", "serpapi_google", "serpapi_duckduckgo", "serpapi_bing", "searxng",
 )
 
 
