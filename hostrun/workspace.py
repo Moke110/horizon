@@ -193,7 +193,7 @@ def save_record(root: str | Path, record: dict) -> Path:
 
 
 def locate(start: str | Path | None = None) -> dict:
-    """Find the nearest workspace record, so a moved skill can still locate code."""
+    """Find the nearest recorded Horizon workspace."""
     current = Path(start or Path.cwd()).expanduser().resolve()
     if current.is_file():
         current = current.parent
@@ -905,9 +905,14 @@ def _package_workspace_record(root: str | Path) -> dict:
 def status(root: str | Path) -> dict:
     """Read-only workspace snapshot for ``install report``."""
     root = Path(root).expanduser().resolve()
-    record = load_record(root) or _package_workspace_record(root)
-    if not record or record.get("error"):
+    record = load_record(root)
+    if not record or record.get("derived_from"):
+        record = _package_workspace_record(root)
+    if not record:
         return {"ok": False, "status": "pending", "note": "工作区尚未安装"}
+    if record.get("error") == "package_wrapper_missing":
+        problem = f"发行包启动包装器不可用：{record['wrapper']}"
+        return {**record, "ok": False, "status": "blocked", "note": problem, "problems": [problem]}
     repo = Path(record.get("repo") or "")
     home = Path(record.get("home") or "")
     lock = dist_mod.read_lock(repo) if repo.is_dir() else None

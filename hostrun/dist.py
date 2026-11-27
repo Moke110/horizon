@@ -634,6 +634,8 @@ def _validate_manifest(manifest: object) -> list[str]:
         for key in ("os", "arch", "python"):
             if not isinstance(compat.get(key), str) or not compat[key].strip():
                 errors.append(f"缺少 compat.{key}")
+        if "dsh" in compat and (not isinstance(compat["dsh"], str) or not compat["dsh"].strip()):
+            errors.append("compat.dsh 必须是非空字符串")
     files = manifest.get("files")
     if not isinstance(files, list):
         errors.append("files 必须是数组")

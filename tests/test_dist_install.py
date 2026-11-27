@@ -165,7 +165,6 @@ def test_install_lock_schema_declares_the_same_contract():
         "source_url",
         "installed_at",
         "requires",
-        "skill_digest",
     }
     assert schema["properties"]["distribution"]["enum"] == ["package", "source"]
     assert schema["properties"]["channel"]["enum"] == ["stable", "prerelease"]
