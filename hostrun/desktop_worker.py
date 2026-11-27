@@ -89,7 +89,8 @@ class DesktopWorker:
         request_id = event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
-        command = {**self._development_fields(event, operation, fields), "operation_id": request_id}
+        development_action = "create" if operation == "import" else operation
+        command = {**self._development_fields(event, development_action, fields), "operation_id": request_id}
         if source_id:
             command["source_id"] = source_id
         action = "register" if operation == "create" else operation

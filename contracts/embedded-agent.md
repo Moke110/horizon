@@ -45,6 +45,12 @@ Confirmation publishes the verified original and its document entry. Use the
 entry's permanent `d-` ID to view or open it. Register a separate entry to
 retain a different original.
 
+`import` takes an existing entry in `document` with its `source_id`, `sha256`,
+`title`, and `summary`, plus optional `citation` and `media_type`. Its file is
+unavailable after import. `restore` takes the same `sourceId` and fields
+`expected_version` and `file_id`. The cached file's hash must equal the entry's
+SHA-256. Both actions require Explorer confirmation.
+
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,
 single-flight locking and executor leases. Intent judgement and knowledge reads
