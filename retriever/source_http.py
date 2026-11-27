@@ -95,7 +95,7 @@ def redact(rows, key):
     return rows
 
 
-def web_results(source, entries, *, snippet_field=None, engine_field=None, secret=None):
+def web_results(source, entries, *, snippet_field=None, secret=None):
     if not isinstance(entries, list):
         raise SearchFailure("provider_failed")
     results = []
@@ -107,10 +107,8 @@ def web_results(source, entries, *, snippet_field=None, engine_field=None, secre
         if not url or len(url) > 2048 or not isinstance(title, str) or not title.strip() or (secret and secret in url):
             continue
         snippet = item.get(snippet_field) if snippet_field else None
-        engine = item.get(engine_field) if engine_field else None
         results.append(row(hashlib.sha256(url.encode()).hexdigest(), title.strip(), url,
-                           snippet=snippet.strip()[:750] if isinstance(snippet, str) else None,
-                           engine=engine.strip()[:100] if isinstance(engine, str) else None))
+                           snippet=snippet.strip()[:750] if isinstance(snippet, str) else None))
     if entries and not results:
         raise SearchFailure("provider_failed")
     return {"source": source, "results": redact(results, secret)}

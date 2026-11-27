@@ -10,7 +10,7 @@ from hostrun.embedded_agent import load_source_configuration, save_source_key
 SOURCE_DIRECTORY = Path(__file__).parent / "sources"
 REGISTERED_SOURCES = (
     "openalex", "arxiv", "europepmc", "crossref", "pubmed", "pmc", "semanticscholar", "serpapi_scholar",
-    "tavily", "brave", "exa", "serpapi_google", "serpapi_duckduckgo", "serpapi_bing", "searxng",
+    "tavily", "brave", "exa", "serpapi_google", "serpapi_duckduckgo", "serpapi_bing",
 )
 
 
@@ -74,7 +74,6 @@ def list_sources(home):
         cards.append({
             "id": source, "name": module.NAME, "configuration": configuration,
             "key_label": module.KEY_LABEL,
-            "config_input_type": getattr(module, "CONFIG_INPUT_TYPE", "password"),
             "enabled": status.get("enabled", False),
             "connection": status.get("connection", ""),
             "description": (SOURCE_DIRECTORY / source / "README.md").read_text(encoding="utf-8").strip(),
@@ -92,9 +91,6 @@ def configure_source(home, source, key):
     ):
         raise CommandError("invalid_source_configuration", "请输入有效的信息源 API Key。")
     key = key.strip() if key is not None else None
-    validate = getattr(module, "valid_configuration", None)
-    if key is not None and validate is not None and not validate(key):
-        raise CommandError("invalid_source_configuration", f"请输入有效的 {module.KEY_LABEL}。")
     config_key = getattr(module, "CONFIG_KEY", source)
     with file_lock(Path(home) / "retriever-settings.lock"):
         saved, _ = load_source_configuration(home)

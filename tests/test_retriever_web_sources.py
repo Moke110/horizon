@@ -6,7 +6,6 @@ from urllib.request import OpenerDirector
 
 import pytest
 
-from hostrun.agent_service import CommandError
 from retriever.registry import configure_source, list_sources, search_source, set_connection
 
 
@@ -18,8 +17,6 @@ TITLE = "Write-Ahead Logging"
 @pytest.mark.parametrize("source,configuration,path,shape", [
     ("brave", "fixture-key", "/res/v1/web/search", {"web": {"results": [{"url": URL, "title": TITLE}]}}),
     ("exa", "fixture-key", "/search", {"results": [{"url": URL, "title": TITLE}]}),
-    ("searxng", "http://127.0.0.1:8123/prefix", "/prefix/search",
-     {"results": [{"url": URL, "title": TITLE, "engine": "bing"}]}),
 ])
 def test_registered_web_sources_produce_traceable_results(tmp_path, monkeypatch, source, configuration, path, shape):
     configure_source(tmp_path, source, configuration)
@@ -33,11 +30,9 @@ def test_registered_web_sources_produce_traceable_results(tmp_path, monkeypatch,
         if source == "brave":
             assert req.get_header("X-subscription-token") == configuration
             assert parse_qs(target.query)["q"] == [QUERY]
-        elif source == "exa":
+        else:
             assert req.get_header("X-api-key") == configuration
             assert json.loads(req.data)["query"] == QUERY
-        else:
-            assert parse_qs(target.query) == {"q": [QUERY], "format": ["json"]}
         return BytesIO(json.dumps(shape).encode())
 
     monkeypatch.setattr(OpenerDirector, "open", request)
@@ -46,8 +41,6 @@ def test_registered_web_sources_produce_traceable_results(tmp_path, monkeypatch,
     row, = result["results"]
     assert row["title"] == TITLE and row["url"] == URL and row["source_id"]
     assert configuration not in str(result)
-    if source == "searxng":
-        assert row["engine"] == "bing"
 
 
 def test_web_sources_report_missing_key_or_exhausted_quota(tmp_path, monkeypatch):
@@ -63,12 +56,6 @@ def test_web_sources_report_missing_key_or_exhausted_quota(tmp_path, monkeypatch
     assert failure["error_code"] == "rate_limited"
     assert "额度" in failure["message"]
     assert "private-key" not in str(failure)
-
-
-def test_searxng_card_rejects_non_http_and_embedded_credentials(tmp_path):
-    for invalid in ("file:///tmp/x", "http://user:password@localhost", "https://localhost?q=preloaded"):
-        with pytest.raises(CommandError):
-            configure_source(tmp_path, "searxng", invalid)
 
 
 def test_serpapi_credentials_and_stale_status_are_shared_by_engine(tmp_path):
@@ -125,3 +112,21 @@ def test_serpapi_reports_actual_provider_and_engine_results(tmp_path, monkeypatc
     assert result["source"] == source
     assert result["results"][0]["url"] == URL
     assert "private-serpapi-key" not in str(result)
+
+
+def test_retired_searxng_is_hidden_without_deleting_historical_configuration(tmp_path):
+    from common import read_json, write_json
+    from hostrun.embedded_agent import load_source_configuration, save_source_key
+    from retriever.registry import discover_sources
+
+    previous_url = "http://127.0.0.1:8123"
+    save_source_key(tmp_path, "searxng", previous_url)
+    settings = tmp_path / "retriever-settings.json"
+    write_json(settings, {"searxng": {"added_order": 1, "enabled": True, "connected_once": True}})
+
+    installed, _ = discover_sources(tmp_path)
+    assert "searxng" not in installed
+    assert "searxng" not in {card["id"] for card in list_sources(tmp_path)}
+    assert search_source(tmp_path, "searxng", QUERY)["error_code"] == "unknown_source"
+    assert load_source_configuration(tmp_path)[0]["searxng"] == previous_url
+    assert read_json(settings)["searxng"]["connected_once"]
