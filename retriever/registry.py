@@ -10,6 +10,7 @@ from hostrun.embedded_agent import load_source_configuration, save_source_key
 SOURCE_DIRECTORY = Path(__file__).parent / "sources"
 REGISTERED_SOURCES = (
     "openalex", "arxiv", "europepmc", "crossref", "pubmed", "pmc", "semanticscholar", "serpapi_scholar",
+    "tavily", "brave", "exa", "serpapi_google", "serpapi_duckduckgo", "serpapi_bing", "searxng",
 )
 
 
@@ -72,10 +73,15 @@ def list_sources(home):
         status = settings.get(source, {})
         cards.append({
             "id": source, "name": module.NAME, "configuration": configuration,
-            "key_label": module.KEY_LABEL, "enabled": status.get("enabled", False),
+            "key_label": module.KEY_LABEL,
+            "config_input_type": getattr(module, "CONFIG_INPUT_TYPE", "password"),
+            "enabled": status.get("enabled", False),
             "connection": status.get("connection", ""),
             "description": (SOURCE_DIRECTORY / source / "README.md").read_text(encoding="utf-8").strip(),
         })
+        if source == "tavily":
+            _, monthly_limit = load_source_configuration(home)
+            cards[-1]["monthly_limit"] = monthly_limit
     return cards
 
 
@@ -86,6 +92,9 @@ def configure_source(home, source, key):
     ):
         raise CommandError("invalid_source_configuration", "请输入有效的信息源 API Key。")
     key = key.strip() if key is not None else None
+    validate = getattr(module, "valid_configuration", None)
+    if key is not None and validate is not None and not validate(key):
+        raise CommandError("invalid_source_configuration", f"请输入有效的 {module.KEY_LABEL}。")
     config_key = getattr(module, "CONFIG_KEY", source)
     with file_lock(Path(home) / "retriever-settings.lock"):
         saved, _ = load_source_configuration(home)
@@ -94,11 +103,21 @@ def configure_source(home, source, key):
         settings = _settings(home)
         for provider in source_ids():
             if getattr(_module(provider), "CONFIG_KEY", provider) == config_key:
-                status = settings.setdefault(provider, {})
-                status.pop("connection", None)
-                status["configuration_revision"] = status.get("configuration_revision", 0) + 1
+                _invalidate_connection(settings.setdefault(provider, {}))
         write_json(Path(home) / "retriever-settings.json", settings)
         save_source_key(home, config_key, key)
+
+
+def _invalidate_connection(status):
+    status.pop("connection", None)
+    status["configuration_revision"] = status.get("configuration_revision", 0) + 1
+
+
+def invalidate_connection(home, source):
+    with file_lock(Path(home) / "retriever-settings.lock"):
+        settings = _settings(home)
+        _invalidate_connection(settings.setdefault(source, {}))
+        write_json(Path(home) / "retriever-settings.json", settings)
 
 
 def configuration_revision(home, source):
