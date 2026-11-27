@@ -19,6 +19,7 @@ class Librarian:
             self.library.initialize_questions(db)
             hpedia_migration.migrate(db)
             hpedia_identity.migrate_deleted(db)
+            self.library.reports.recover_publications(db)
 
     def deleted_entries(self, *, token):
         self.library.authorize(token)
@@ -395,6 +396,7 @@ class Librarian:
                 frontier_progress.initialize(db)
             term_ids = set()
             summaries = []
+            report_publications = []
             db.execute("SAVEPOINT librarian_review")
             try:
                 for action, command in changes:
@@ -415,6 +417,8 @@ class Librarian:
                     elif entity == "report":
                         proposed = self.library.reports.apply(db, action, command, origin=origin, publish=False)
                         summaries.append(proposed["title"])
+                        if action != "assess" and proposed["file_path"] is not None:
+                            report_publications.append((proposed["report_id"], proposed["sha256"]))
                         if action == "assess":
                             lock = "archive:" + proposed["report_id"]
                             self.library.check_write_lock(db, lock, now=now)
@@ -447,6 +451,8 @@ class Librarian:
                 card["summaries"] = summaries
             db.execute("INSERT INTO librarian_term_requests VALUES(?,?,?,?,?)",
                        (request_id, origin, encoded, card["expires_at"], json.dumps(card)))
+            if report_publications:
+                self.library.reports.track_publications(db, request_id, report_publications)
             db.executemany("INSERT INTO librarian_term_locks VALUES(?,?)",
                            [(term_id, request_id) for term_id in term_ids])
         return card
@@ -470,6 +476,17 @@ class Librarian:
                 raise CommandError("not_found", "本会话没有该类型的确认请求")
             if card["status"] != "pending":
                 return card
+            if choice == "confirm" and card.get("entity") == "report" and db.execute(
+                    "SELECT 1 FROM library_report_publications WHERE request_id=?", (request_id,)).fetchone():
+                self.library.reports.begin_publications(db, request_id)
+                db.commit()
+                db.execute("BEGIN IMMEDIATE")
+                now = self.clock()
+                self._expire(db, now)
+                card = json.loads(db.execute("SELECT result FROM librarian_term_requests WHERE id=? AND origin=?",
+                                             (request_id, origin)).fetchone()[0])
+                if card["status"] != "pending":
+                    return card
             db.execute("DELETE FROM librarian_term_locks WHERE request_id=?", (request_id,))
             results = []
             status = "rejected"
@@ -515,6 +532,8 @@ class Librarian:
             card.update(status=status, results=results)
             db.execute("UPDATE librarian_term_requests SET result=? WHERE id=?",
                        (json.dumps(card), request_id))
+            if card.get("entity") == "report":
+                self.library.reports.recover_publications(db)
         for term in notifications:
             self.library.notify_committed(term)
         for frontier in frontier_notifications:

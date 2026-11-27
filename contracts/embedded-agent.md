@@ -45,6 +45,12 @@ Confirmation publishes the verified original and its document entry. Use the
 entry's permanent `d-` ID to view or open it. Register a separate entry to
 retain a different original.
 
+For a scheduled follow-up whose turn has a bound supplemental PDF,
+`late_fulltext` returns its first text page and cached original `file_id`.
+Read subsequent pages using the returned `next_offset`. The tool takes the
+source from the current turn and accepts no external material ID. Registration
+and report publication keep their existing Explorer confirmations.
+
 `import` takes an existing entry in `document` with its `source_id`, `sha256`,
 `title`, and `summary`, plus optional `citation` and `media_type`. Its file is
 unavailable after import. `restore` takes the same `sourceId` and fields
@@ -55,7 +61,8 @@ For `archive_report`, `stage` caches the HTML in the current task and returns
 its `draft_id`. `create` takes `draft_id`, `title`, `summary`, and nonempty
 `covered_docs` containing the documents actually discussed in the report.
 `import` takes a `report` entry with the original `report_id`, `sha256`,
-`title`, `summary`, and ordered `covered_docs`. If its HTML is available,
+`title`, `summary`, and ordered `covered_docs`. Retain an existing
+`replaces_report_id` as provenance. If its HTML is available,
 also provide a `draft_id` from `stage` with the same SHA-256. The Explorer
 confirms both actions. Import retains each known document ID even if its file
 is offline, and replaces each missing entry at its original position with

@@ -506,7 +506,8 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     assert reports.get(report_id, app.task_id, token=token, version=1)["context_versions"]["writing_frontier_id"] == frontier_id
 
 
-def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypatch):
+def test_old_late_fulltext_turn_resumes_through_newsroom_instead_of_editor(tmp_path, monkeypatch):
+    import json
     from hostrun import desktop_worker as module
     from hostrun.agent_service import AgentService
 
@@ -520,17 +521,32 @@ def test_late_fulltext_turn_reaches_editor_before_completion(tmp_path, monkeypat
     app.turn = {**turn, 'late_editor_input': 'captured-material-id'}
     app.input_version = turn['input_version']
     app.version_provider = lambda: {}
-    monkeypatch.setattr(module.embedded_agent, 'argv', lambda *args, **kwargs: pytest.fail('Started a parent model'))
-    calls = []
-    def delegate(event):
-        calls.append(event)
-        return {'status': 'succeeded', 'result': '{"report_id":"report","version":2}'}
-    monkeypatch.setattr(app, 'delegate', delegate)
+    def agent_argv(home, prompt, **kwargs):
+        return ["node", prompt]
+
+    class Process:
+        stdin = io.StringIO()
+        stdout = io.StringIO(json.dumps({"type": "final", "text": "Awaiting Explorer review"}) + "\n")
+        stderr = io.StringIO()
+
+        def wait(self):
+            return 0
+
+    prompts = []
+
+    def launch(argv, **kwargs):
+        prompts.append(argv[1])
+        return Process()
+
+    monkeypatch.setattr(module.embedded_agent, 'argv', agent_argv)
+    monkeypatch.setattr(module.subprocess, 'Popen', launch)
+    monkeypatch.setattr(app, 'delegate', lambda event: pytest.fail('Delegated to legacy Editor'))
     app.run_agent(turn['text'], turn['session_id'])
-    assert calls == [{'requestId':'late-fulltext-editor','role':'editor','input':'captured-material-id'}]
+    prompt, = prompts
+    assert all(word in prompt for word in ("Newsroom", "late_fulltext", "archive_report", "captured-material-id"))
     committed, = app.service.list_turns(app.task_id, token='s')
     assert committed['status'] == 'completed'
-    assert committed['result'] == '{"report_id":"report","version":2}'
+    assert committed['result'] == 'Awaiting Explorer review'
 
 def test_desktop_turn_exposes_retriever_catalog_without_configuration(tmp_path, monkeypatch):
     import json

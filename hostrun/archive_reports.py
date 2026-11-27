@@ -31,6 +31,9 @@ class ArchiveReports:
             PRIMARY KEY (origin, draft_id))""")
         db.execute("""CREATE TABLE IF NOT EXISTS library_report_origins (
             report_id TEXT PRIMARY KEY, origin TEXT NOT NULL)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS library_report_publications (
+            request_id TEXT NOT NULL, report_id TEXT NOT NULL, sha256 TEXT NOT NULL, started INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (request_id, report_id))""")
         db.execute("""CREATE TABLE IF NOT EXISTS library_retired_reports (
             report_id TEXT PRIMARY KEY, pending_original TEXT)""")
         db.execute("""CREATE TABLE IF NOT EXISTS library_report_assessments (
@@ -112,9 +115,8 @@ class ArchiveReports:
                           (old_id, origin)).fetchone():
                 raise CommandError("correction_requires_new_task", "请另起任务更正报道")
             record["replaces_report_id"] = old_id
-        self.register(db, record, original, publish=publish)
+        self.register(db, record, original, origin=origin, publish=publish)
         if publish:
-            db.execute("INSERT INTO library_report_origins VALUES (?,?)", (report_id, origin))
             if old is not None:
                 db.execute("INSERT INTO library_retired_reports VALUES (?,?)",
                            (old_id, old["sha256"] if old["file_path"] else None))
@@ -141,7 +143,13 @@ class ArchiveReports:
             raise CommandError("hash_mismatch", "导入的 HTML 与原报道 SHA-256 不一致")
         original = self.read_draft(db, origin, draft_id) if draft_id is not None else None
         record = self.entry(report_id, digest, fields, covered, self.path(report_id) if original is not None else None)
-        return self.register(db, record, original, publish=publish)
+        predecessor = fields.get("replaces_report_id")
+        if predecessor is not None:
+            if (not isinstance(predecessor, str) or not REPORT_ID.fullmatch(predecessor)
+                    or predecessor == report_id):
+                raise CommandError("invalid_report", "需要有效的被取代报道 ID")
+            record["replaces_report_id"] = predecessor
+        return self.register(db, record, original, origin=origin, publish=publish)
 
     def imported_document_id(self, db, identity):
         if identity == UNKNOWN_DOCUMENT:
@@ -173,7 +181,7 @@ class ArchiveReports:
             "covered_docs": covered,
         }
 
-    def register(self, db, record, original, *, publish):
+    def register(self, db, record, original, *, origin, publish):
         report_id = record["report_id"]
         self._check_retired(db, report_id)
         if db.execute("SELECT 1 FROM library_archive_reports WHERE report_id=?", (report_id,)).fetchone():
@@ -183,7 +191,40 @@ class ArchiveReports:
                 self.files.publish(self.path(report_id), original, record["sha256"])
             db.execute("INSERT INTO library_archive_reports VALUES (?,?)",
                        (report_id, json.dumps(record, ensure_ascii=False)))
+            db.execute("INSERT INTO library_report_origins VALUES (?,?)", (report_id, origin))
+            db.execute("DELETE FROM library_report_publications WHERE report_id=?", (report_id,))
         return record
+
+    def track_publications(self, db, request_id, publications):
+        db.executemany("INSERT OR IGNORE INTO library_report_publications (request_id, report_id, sha256) VALUES (?,?,?)",
+                       [(request_id, identity, digest) for identity, digest in publications])
+
+    def begin_publications(self, db, request_id):
+        # Once confirmed, journal potential outputs before the write transaction
+        # can touch the filesystem. Existing files do not belong to this attempt.
+        for report_id, in db.execute(
+                "SELECT report_id FROM library_report_publications WHERE request_id=? AND started=0", (request_id,)):
+            path = self.path(report_id)
+            if not path.exists() and not path.is_symlink():
+                db.execute("UPDATE library_report_publications SET started=1 WHERE request_id=? AND report_id=?",
+                           (request_id, report_id))
+
+    def recover_publications(self, db):
+        self.initialize(db)
+        for request_id, report_id, digest, started, status in db.execute("""
+            SELECT publication.request_id, publication.report_id, publication.sha256,
+                   publication.started, json_extract(review.result, '$.status')
+            FROM library_report_publications AS publication
+            LEFT JOIN librarian_term_requests AS review ON review.id=publication.request_id
+        """).fetchall():
+            if started:
+                try:
+                    self._remove_verified_original(report_id, digest)
+                except (CommandError, InstanceBusy, InstanceInvalid, OSError):
+                    continue
+            if status != "pending":
+                db.execute("DELETE FROM library_report_publications WHERE request_id=? AND report_id=?",
+                           (request_id, report_id))
 
     def purge_retired_originals(self):
         # The retirement commits with the replacement. A crash or a busy file leaves
@@ -194,12 +235,12 @@ class ArchiveReports:
                 "SELECT report_id, pending_original FROM library_retired_reports WHERE pending_original IS NOT NULL"
             ).fetchall():
                 try:
-                    self._remove_retired_original(report_id, digest)
+                    self._remove_verified_original(report_id, digest)
                 except (CommandError, InstanceBusy, InstanceInvalid, OSError):
                     continue
                 db.execute("UPDATE library_retired_reports SET pending_original=NULL WHERE report_id=?", (report_id,))
 
-    def _remove_retired_original(self, report_id, digest):
+    def _remove_verified_original(self, report_id, digest):
         path = self.path(report_id)
         if managed_paths(self.files.home) is not None:
             with store(self.files.home) as material:
@@ -214,6 +255,14 @@ class ArchiveReports:
             return
         if path.parent.resolve() != path.parent.absolute():
             raise OSError("Linked report directory")
+        try:
+            before = path.lstat()
+        except FileNotFoundError:
+            return
+        self.files.read_file(path, digest)
+        after = path.lstat()
+        if before != after or before.st_mtime_ns != after.st_mtime_ns:
+            raise OSError("Report original changed before removal")
         path.unlink(missing_ok=True)
 
     @staticmethod
@@ -224,7 +273,8 @@ class ArchiveReports:
     def list(self):
         self.purge_retired_originals()
         with self.connect() as db:
-            self.initialize(db)
+            db.execute("BEGIN IMMEDIATE")
+            self.recover_publications(db)
             return [self.project_assessment(db, json.loads(record)) for (record,) in db.execute(
                 "SELECT record FROM library_archive_reports ORDER BY rowid DESC")]
 

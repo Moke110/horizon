@@ -5,6 +5,7 @@ import json
 
 from hostrun import convergence
 from hostrun.agent_service import CommandError
+from hostrun.archive_reports import ArchiveReports, REPORT_ID
 from hostrun.library_tags import TEST_TAG
 
 
@@ -14,18 +15,20 @@ _RECORDS = {
     "source": ("library_archive_sources", "record", "source_id", "title"),
     "term": ("knowledge_cards", "result", "card_id", "title"),
     "frontier": ("frontiers", "result", "frontier_id", "question"),
+    "report": ("library_archive_reports", "record", "report_id", "title"),
 }
 _LOCK_PREFIX = {"term": "", "question": "question:", "source": "archive:", "frontier": "frontier:"}
 
 
 def plan(db, selection=None):
+    ArchiveReports.initialize(db)
     records = {}
     for kind, (table, payload, id_field, _) in _RECORDS.items():
         for (raw,) in db.execute(f"SELECT {payload} FROM {table}"):
             item = json.loads(raw)
             if item.get("status") not in ("archived", "deleted"):
                 records[kind, item[id_field]] = item
-    marked = {key for key, item in records.items() if TEST_TAG in item.get("tags", [])}
+    marked = {key for key, item in records.items() if key[0] != "report" and TEST_TAG in item.get("tags", [])}
     if selection is not None:
         if (not isinstance(selection, list) or any(
             not isinstance(row, (list, tuple)) or len(row) != 2
@@ -70,6 +73,9 @@ def plan(db, selection=None):
         elif kind == "progress":
             relate(key, ("frontier", item["frontier_id"]))
             for target in item["source_ids"]:
+                relate(key, ("report" if REPORT_ID.fullmatch(target) else "source", target))
+        elif kind == "report":
+            for target in item["covered_docs"]:
                 relate(key, ("source", target))
         elif kind == "source" and key in marked and item.get("material_id"):
             references[key].append({"kind": "original", "id": item["material_id"],
