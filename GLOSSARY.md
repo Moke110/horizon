@@ -18,7 +18,13 @@
 | Bulletin Board | 白板 | Links to all followed Hpedia entries |
 | Frontier | 前沿 | An open-ended research question with zero or more Updates, a tracking choice and a record of resolution when solved |
 | Update | 进展 | A distinct development under a Frontier |
-| Archive | 资料库 | The collection of original source records and their references to source documents |
+| Archive | 资料库 | The Library collection of source documents, Horizon reports and their entries, independent of Hpedia. |
+| source-doc | 源文档 | One original file supplied by the Explorer or collected by an Agent, such as a paper PDF, image or HTML snapshot. |
+| doc-entry | 文档 | The Archive record identifying exactly one source file. Its permanent d- ID never switches to another file. |
+| horizon-report | 报道原文 | The HTML report produced by Horizon Newsroom. Once completed, its text is final; a correction is a separate report. |
+| report-entry | 报道 | The immutable Archive record for one Horizon report, with its own permanent `r-` ID and covered documents. |
+| Report reliability | 报道可信度 | The current assessment associated with a report: 已完成, 存疑 or 失效. It is separate from the report entry. |
+| covered-docs | 被报道文档 | The nonempty list of documents a report actually covers, not all inputs or background citations. Each missing document has its own `d-unknown` placeholder on import. The list is fixed at registration. |
 | Retriever | 检索器 | The configurable collection of information sources available for Agent retrieval tasks. Formerly called Voyager. |
 | Information source | 信息源 | An independently configurable member of the Retriever that accepts a search expression and returns results. Its enabled state determines its inclusion in manual and automatic retrieval when the Explorer has not specified sources in the conversation. |
 | Explorer | 探索者 | A person using Horizon |
