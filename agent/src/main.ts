@@ -334,9 +334,21 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   }));
   const searchToolSources = new Map(searchTools.map((tool, index) => [tool.name, sources[index].id]));
   const retrieverToolNames = new Set([...searchToolSources.keys(), selectSources.name]);
-  function trackSource(source: string, reply: { content: { type: string; text?: string }[] }) {
-    const data = JSON.parse(reply.content.find(part => part.type === "text")?.text || "{}");
-    if (data.error_code === "source_not_selected") return;
+  function retrieverResult(reply: { content: { type: string; text?: string }[]; isError?: boolean }):
+      { selected?: string[]; error_code?: string; message?: string } | undefined {
+    if (reply.isError) return;
+    const text = reply.content.find(part => part.type === "text")?.text;
+    if (!text) return;
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Pi can persist non-JSON error text for a rejected tool call.
+      return;
+    }
+  }
+  function trackSource(source: string, reply: Parameters<typeof retrieverResult>[0]) {
+    const data = retrieverResult(reply);
+    if (!data || data.error_code === "source_not_selected") return;
     if (!data.error_code) sourceAttempts.set(source, "");
     else if (sourceAttempts.get(source) !== "") sourceAttempts.set(source, data.message || data.error_code);
   }
@@ -512,8 +524,8 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   for (const message of recoveredMessages) {
     if (message.role !== "toolResult") continue;
     if (message.toolName === selectSources.name) {
-      const data = JSON.parse(message.content.find((part: any) => part.type === "text")?.text || "{}");
-      if (data.selected) selectedSources = new Set(data.selected);
+      const data = retrieverResult(message);
+      if (Array.isArray(data?.selected)) selectedSources = new Set(data.selected);
     }
     const source = searchToolSources.get(message.toolName);
     if (source) trackSource(source, message);

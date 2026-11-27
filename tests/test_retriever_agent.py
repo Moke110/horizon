@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("entry,choice", [
     ("manual", "default"), ("schedule", "default"),
     ("manual", "explicit"), ("schedule", "explicit"), ("manual", "empty"),
+    ("manual", "recover"),
 ])
 def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_local(tmp_path, monkeypatch, entry, choice):
     from retriever import registry
@@ -60,6 +61,15 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
         ]
         expected = [("gamma", "graphs"), ("gamma", "graph spectra")]
         report = "Gamma 返回 graph spectra。"
+    elif choice == "recover":
+        steps = [
+            ("retriever_select_sources", {"sources": ["beta"]}),
+            ("beta_search", {"query": []}),
+            None,
+            ("beta_search", {"query": "graph spectra"}),
+        ]
+        expected = [("beta", "graph spectra")]
+        report = "Recovered retrieval."
     else:
         steps = [("retriever_select_sources", {"sources": []})]
         expected = []
@@ -74,6 +84,12 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
             step = len(exchanges)
             exchanges.append(request)
             if step < len(steps):
+                if steps[step] is None:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error":{"message":"invalid key","type":"authentication"}}')
+                    return
                 name, arguments = steps[step]
                 delta = {"role": "assistant", "tool_calls": [{
                     "index": 0, "id": f"call-{step}", "type": "function",
@@ -134,6 +150,15 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
             worker.task_id, worker.input_version = task["task_id"], turn["input_version"]
             worker.turn, worker.version_provider = turn, lambda: {}
             worker.run_agent(scope, turn["session_id"])
+            if choice == "recover":
+                failed, = service.list_turns(token="s")
+                assert failed["status"] == "recovery_required"
+                assert failed["failure"]["category"] == "authentication"
+                worker.turn = service.transition_turn({
+                    "schema_version": 1, "operation_id": "resume", "turn_id": failed["turn_id"],
+                    "expected_version": failed["version"], "action": "resume",
+                }, token="s")
+                worker.run_agent(scope, turn["session_id"])
         assert source_calls == expected
         assert len(exchanges) == len(steps) + 1
         assert {tool["function"]["name"] for tool in exchanges[0]["tools"]} >= {
@@ -145,6 +170,9 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
             assert "graph spectra" in last_tool_results[-1]
         elif choice == "explicit":
             assert any("source_not_selected" in data for data in last_tool_results)
+        elif choice == "recover":
+            assert "graph spectra" in last_tool_results[-1]
+            assert any("Validation failed" in data for data in last_tool_results)
         else:
             assert "no_enabled_sources" in last_tool_results[-1]
         turn, = service.list_turns(token="s")
