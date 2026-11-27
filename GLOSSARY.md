@@ -19,6 +19,8 @@
 | Frontier | 前沿 | An open-ended research question with zero or more Updates, a tracking choice and a record of resolution when solved |
 | Update | 进展 | A distinct development under a Frontier |
 | Archive | 资料库 | The collection of original source records and their references to source documents |
+| Retriever | 检索器 | The configurable collection of information sources available for Agent retrieval tasks. Formerly called Voyager. |
+| Information source | 信息源 | An independently configurable member of the Retriever that accepts a search expression and returns results. Its enabled state determines its inclusion in manual and automatic retrieval when the Explorer has not specified sources in the conversation. |
 | Explorer | 探索者 | A person using Horizon |
 | Librarian | 图书管理员 | The module that mediates Library access, reviews proposed changes and applies changes the Explorer confirms |
 | Confirmation card | 确认卡 | A related group of proposed knowledge changes that the Explorer reviews together |
