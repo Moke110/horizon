@@ -9,6 +9,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {KnowledgePanel,type Frontier,type FrontierCommandError,type FrontierSummary,type FrontierViewEvent} from './KnowledgePanel';
 import type {ArchiveSource} from './ArchiveSourcesPanel';
+import type {ArchiveReport} from './ArchiveReportsPanel';
 import type {VoyagerSummary} from './VoyagerPanel';
 
 type Progress={tags?:string[];progress_id:string;frontier_id:string;version:number;content:string;source_ids:string[]};
@@ -17,8 +18,8 @@ type Tracking={frontier_id:string;progress:Progress[];history:VoyagerSummary[]};
 
 const statusText:Record<string,string>={following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 
-export function FrontierTracking({frontiers,terms,deleted={},matches,createRequest,sources,frontier,viewEvent,error,detailHost,openDetail,
-  send,openSource,openVoyager,onRetrieve,lookup,boardFrontier}:{
+export function FrontierTracking({frontiers,terms,deleted={},matches,createRequest,sources,reports,frontier,viewEvent,error,detailHost,openDetail,
+  send,openSource,openReport,openVoyager,onRetrieve,lookup,boardFrontier}:{
   lookup?:{id:string;version:number;nonce:string};
   boardFrontier?:FrontierSummary;
   frontiers:FrontierSummary[];
@@ -27,6 +28,7 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
   matches:(text:string,status:string,ids:string[],tracked:boolean)=>boolean;
   createRequest:number;
   sources:ArchiveSource[];
+  reports:ArchiveReport[];
   frontier:Frontier|null;
   viewEvent:FrontierViewEvent|null;
   error:FrontierCommandError|null;
@@ -34,6 +36,7 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
   openDetail:()=>void;
   send:(command:Record<string,unknown>)=>void;
   openSource:(source:ArchiveSource)=>void;
+  openReport:(reportId:string)=>void;
   openVoyager:(requestId:string)=>void;
   onRetrieve:(frontier:Frontier)=>void;
 }){
@@ -94,16 +97,23 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
         {draft&&<form key={draft==='new'?'new':draft.progress_id} onSubmit={event=>{
           event.preventDefault();
           const fields=new FormData(event.currentTarget);
+          const checked=fields.getAll('source_ids').map(String);
+          const previous=draft==='new'?[]:draft.source_ids;
+          const sourceIds=[...new Set([...previous,...checked])].filter(id=>checked.includes(id));
           send({action:draft==='new'?'progress_create':'progress_update',schema_version:1,
             operation_id:crypto.randomUUID(),frontier_id:selectedId,
             ...(draft==='new'?{}:{progress_id:draft.progress_id,expected_version:draft.version}),
-            content:fields.get('content'),source_ids:fields.getAll('source_ids')});
+            content:fields.get('content'),source_ids:sourceIds});
           setDraft(null);
         }}>
           <label>进展内容<MultilineInput name="content" required maxLength={12000} defaultValue={draft==='new'?'':draft.content}/></label>
-          <fieldset><legend>资料库来源</legend>{sources.map(source=><Checkbox key={source.source_id} name="source_ids" value={source.source_id}
+          <fieldset><legend>文档和来源</legend>{sources.map(source=><Checkbox key={source.source_id} name="source_ids" value={source.source_id}
               defaultChecked={draft!=='new'&&draft.source_ids.includes(source.source_id)}>
             {source.title}
+          </Checkbox>)}</fieldset>
+          <fieldset><legend>报道</legend>{reports.map(report=><Checkbox key={report.report_id} name="source_ids" value={report.report_id}
+              defaultChecked={draft!=='new'&&draft.source_ids.includes(report.report_id)}>
+            {report.title}
           </Checkbox>)}</fieldset>
           <button type="submit">提交进展审核</button>
           <button type="button" onClick={()=>setDraft(null)}>取消</button>
@@ -111,8 +121,13 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
         {progress.length===0?<p>尚无进展。</p>:progress.map(item=><article key={item.progress_id}>
           <p>{item.content} <TestTag tags={item.tags}/></p>
           {item.source_ids.length>0&&<ul aria-label="进展来源">{item.source_ids.map(id=>{
+            if(id.startsWith('r-')){
+              const report=reports.find(row=>row.report_id===id);
+              return <li key={id}>{report?<button type="button" onClick={()=>openReport(id)}>报道 · {report.title}</button>:'报道已删除'}</li>;
+            }
             const source=sources.find(row=>row.source_id===id);
-            return <li key={id}>{source?<button type="button" onClick={()=>openSource(source)}>{source.title}</button>:'来源已移除'}</li>;
+            return <li key={id}>{source?<button type="button" onClick={()=>openSource(source)}>
+              {id.startsWith('d-')?'文档 · ':''}{source.title}</button>:'来源已移除'}</li>;
           })}</ul>}
           {selected?.status!=='deleted'&&<>
             <button type="button" onClick={()=>setDraft(item)}>编辑进展</button>

@@ -389,7 +389,7 @@ class Librarian:
                 return json.loads(row[2])
             if entity in ("source", "progress", "report"):
                 self.library.archive.initialize(db)
-            if entity == "report":
+            if entity in ("progress", "report"):
                 self.library.reports.initialize(db)
             if entity == "progress":
                 frontier_progress.initialize(db)

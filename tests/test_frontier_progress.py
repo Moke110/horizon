@@ -111,3 +111,44 @@ def test_legacy_frontier_progress_and_board_follow_same_identity(tmp_path):
             expected_version=migrated["version"],question="Current title")
     link, = librarian.bulletin_links(token="s")
     assert (link["id"],link["title"]) == (identity,"Current title")
+
+
+
+def test_frontier_progress_references_archive_documents_and_reports_without_owning_them(tmp_path):
+    librarian = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    origin = "agent:research"
+    source = b"<!doctype html><p>Source evidence.</p>"
+    cached = librarian.cache_source(source, "text/html", token="s")
+    librarian.request_source("register", {"operation_id": "finding-source", "title": "Source evidence",
+        "summary": "The original", "source_files": [cached["file_id"]]}, token="s", origin=origin)
+    document, = librarian.decide("finding-source", "confirm", token="s", origin=origin)["results"]
+    document_id = document["source_id"]
+    html = "<!doctype html><p>Report interpretation.</p>"
+    draft = librarian.stage_report(html, token="s", origin=origin)
+    librarian.request_report("create", {"operation_id": "finding-report", "title": "Report interpretation",
+        "summary": "The finding", "draft_id": draft["draft_id"], "covered_docs": [document_id]},
+        token="s", origin=origin)
+    report, = librarian.decide("finding-report", "confirm", token="s", origin=origin)["results"]
+    report_id = report["report_id"]
+    assert librarian.list_frontiers(token="s") == []
+    assert librarian.source_original(document_id, token="s")[1] == source
+    assert librarian.open_report(report_id, token="s")["html"] == html
+
+    frontier_id = confirm(librarian, "frontier", "create", "create-frontier", question="Does the finding hold?")["frontier_id"]
+    request = {"frontier_id": frontier_id, "content": "Original evidence and its interpretation."}
+    with pytest.raises(CommandError, match="未找到报道"):
+        librarian.request_progress("create", {**request, "operation_id": "missing-report",
+            "source_ids": ["r-" + "0" * 32]}, token="s", origin="gui")
+    progress = confirm(librarian, "progress", "create", "record-progress",
+                       **request, source_ids=[report_id, document_id])
+    saved, = librarian.list_progress(frontier_id, token="s")
+    assert saved["source_ids"] == [report_id, document_id]
+    assert librarian.open_report(saved["source_ids"][0], token="s")["html"] == html
+    assert librarian.source_original(saved["source_ids"][1], token="s")[1] == source
+
+    confirm(librarian, "progress", "delete", "delete-progress", frontier_id=frontier_id,
+            progress_id=progress["progress_id"], expected_version=progress["version"])
+    reopened = Librarian(KnowledgeCardService(tmp_path, token="s"), token="s")
+    assert reopened.list_progress(frontier_id, token="s") == []
+    assert reopened.source_original(document_id, token="s")[1] == source
+    assert reopened.open_report(report_id, token="s")["html"] == html

@@ -92,16 +92,20 @@ class ArchiveReports:
             return [json.loads(record) for (record,) in db.execute(
                 "SELECT record FROM library_archive_reports ORDER BY rowid DESC")]
 
-    def view(self, report_id):
+    @staticmethod
+    def read_in_transaction(db, report_id):
         if not isinstance(report_id, str) or not REPORT_ID.fullmatch(report_id):
             raise CommandError("invalid_report", "需要有效的报道 ID")
-        with self.connect() as db:
-            self.initialize(db)
-            row = db.execute("SELECT record FROM library_archive_reports WHERE report_id=?",
-                             (report_id,)).fetchone()
+        row = db.execute("SELECT record FROM library_archive_reports WHERE report_id=?",
+                         (report_id,)).fetchone()
         if not row:
             raise CommandError("not_found", "未找到报道")
         return json.loads(row[0])
+
+    def view(self, report_id):
+        with self.connect() as db:
+            self.initialize(db)
+            return self.read_in_transaction(db, report_id)
 
     def open(self, report_id):
         report = self.view(report_id)
