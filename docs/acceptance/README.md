@@ -732,3 +732,32 @@ In an isolated Windows Electron session, the desktop deleted a term, question an
 The full Windows Python suite at `9123b86` passed 1,774 tests, skipped 15 and reported two dependency warnings. Desktop type checking and the renderer build passed.
 
 In the Windows Electron desktop, opening a deleted term from a question showed its original ID and deletion notice. Export identified a question with an unresolved legacy reference and listed its ID among the exclusions in the saved JSON. Import identified an unavailable material citation, and confirming the batch added only the independent entry to SQLite. The probe supplied the file input and save destination.
+
+## Spec 12 Retriever — 2026-11-27
+
+The active catalog contains 14 source cards and per-source Agent tools. The approved scope excludes SearXNG. Existing local configuration and historical Voyager records remain readable. [Provider inventory](https://github.com/Moke110/horizon/issues/281#issuecomment-7213957833) · [Final web-source scope](https://github.com/Moke110/horizon/issues/285)
+
+| Source | Live retrieval evidence |
+| --- | --- |
+| OpenAlex | Five results from an embedded Agent search for spectral graph theory, including work W1578099820. [Evidence](https://github.com/Moke110/horizon/issues/280#issuecomment-7214433595) |
+| arXiv | Five from the official API through the worker, including 2611.34929v1. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7214848819) |
+| Crossref | Five, including DOI 10.36227/techrxiv.174889082.28798268/v2. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7214848819) |
+| Europe PMC | Five, including MED:43008770. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7214848819) |
+| PubMed | Five citation records, including PMID 43098893. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7214848819) |
+| PubMed Central | Five full-text archive records, including PMC13811541. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7214848819) |
+| Semantic Scholar | Five works from both the card test and embedded Agent after a rate-limited first attempt. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7216327057) |
+| SerpApi Google Scholar | Five traceable results through the embedded Agent with the shared key. [Evidence](https://github.com/Moke110/horizon/issues/284#issuecomment-7216128792) |
+| Tavily | Five from the card test and five traceable links for SQLite write ahead logging through the embedded Agent after the free budget was confirmed. [Evidence](https://github.com/Moke110/horizon/issues/285#issuecomment-7216304681) |
+| Brave Search | Five traceable web results. [Evidence](https://github.com/Moke110/horizon/issues/285#issuecomment-7216129629) |
+| Exa | Five traceable web results. [Evidence](https://github.com/Moke110/horizon/issues/285#issuecomment-7216129629) |
+| SerpApi Google | Five traceable web results. [Evidence](https://github.com/Moke110/horizon/issues/285#issuecomment-7216129629) |
+| SerpApi DuckDuckGo | Five traceable web results. [Evidence](https://github.com/Moke110/horizon/issues/285#issuecomment-7216129629) |
+| SerpApi Bing | Five on an isolated retry. The other sources completed during the earlier mixed run in which Bing timed out. [Evidence](https://github.com/Moke110/horizon/issues/285#issuecomment-7216129629) |
+
+The live embedded model used OpenAlex through both manual and scheduled entry points and revised its query after each first result set. Controlled providers exercised selection defaults, explicit disabled-source selection, sources without credentials, and continuation after partial failure through those same entry points. A persistent test workspace exercised the production desktop Frontier launch and showed five live arXiv results without creating a plan. The desktop opened a prior persisted plan and displayed its Frontier association, saved scope and source reference. [Manual and scheduled searches](https://github.com/Moke110/horizon/issues/283#issuecomment-7214685500) · [Frontier and history checks](https://github.com/Moke110/horizon/issues/286#issuecomment-7216153339)
+
+Automated checks covered all-source refresh including disabled sources, first successful enablement, persistence of manual choices after refresh and restart, removal from the catalog, and single-source failure. A controlled renderer check confirmed scroll retention on a regular refresh and a return to the top when a source was added. The integrated suite recorded 1,801 passes and 15 skips at `545cd1c`, followed by 130 focused passes at `75e8d57` and 34 focused passes on the SearXNG removal branch. [Refresh evidence](https://github.com/Moke110/horizon/issues/282#issuecomment-7214644135)
+
+WorkBuddy acceptance remains pending. WorkBuddy 5.8.3.0 and its renderer and daemon processes launched, but no controllable WorkBuddy window was available. Its standalone launcher could not resolve the packaged runtime, and the native profile checks found no installed Horizon host skill. No WorkBuddy-originated manual search or automatic task was observed. The embedded desktop results above cover Pi.
+
+At `745498f`, the desktop type check and build passed. An isolated run through the checkout’s `Horizon.cmd` started the Python desktop owner and an Electron main window. The test used a temporary data home and left the live profile and source switches untouched.
