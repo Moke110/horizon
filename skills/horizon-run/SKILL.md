@@ -24,6 +24,12 @@ description: "Horizon built-in Pi agent workflow for bounded source retrieval, p
   根据标题、内容与学术引用自行判断是否重复、选择要保存的原件。文件哈希用来校验原件，
   不作为去重门槛。用 `create` 提交标题、简介、恰好一个缓存 `file_id` 和可选学术引用，
   等待探索者通过 Librarian 确认后再引用返回的 `d-` 文档 ID。收录其他原件须另建文档。
+- 撰写报道：同一任务先完成全部检索与材料选择，再以 Newsroom 撰写完整 HTML。未完成的
+  草稿只留在缓存中，以 `archive_report` 的 `stage` 保存定稿 HTML 到当前会话缓存。
+  用 `create` 提交标题、简介、缓存 `draft_id` 和非空 `covered_docs`。只列报道正文实际
+  讨论的文档 ID，背景脚注与未采用材料不列入。同一文档可被多篇报道覆盖。Librarian
+  确认后，Archive 才登记原文与条目并显示「已完成」，返回永久的 `r-` 报道 ID。
+  已登记 HTML、条目和覆盖列表均不可原地修改。中断或未确认的任务不会留下已发布报道。
 - 检索推送：先用 `hostrun.cli run --intent daily` 检查闸门与续接状态。
   获准写作后读取 `skills/horizon-run/references/workflow.md`，完成检索、排序、写作、
   校验和交付，一次仅推送一篇。尊重未答问题、待复核标记和已发送状态。

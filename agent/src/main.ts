@@ -355,6 +355,21 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     if (!data.error_code) sourceAttempts.set(source, "");
     else if (sourceAttempts.get(source) !== "") sourceAttempts.set(source, data.message || data.error_code);
   }
+  const archiveReport = defineTool({
+    name: "archive_report", label: "Newsroom and Archive reports",
+    description: "After all retrieval in this task is finished, author the final Newsroom HTML and cache it with stage. Submit create with JSON fields title, summary, draft_id, and covered_docs containing only the document IDs actually reported on. Wait for Explorer confirmation. List or view registered reports; their originals and entries cannot be edited.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("view"),
+        Type.Literal("stage"), Type.Literal("create")]),
+      reportId: Type.Optional(Type.String()),
+      fields: Type.Optional(Type.String({maxLength: 24000})),
+      html: Type.Optional(Type.String({maxLength: 10 * 1024 * 1024})),
+    }),
+    execute: (callId, p, signal) => requestLibrary(callId, {
+      type: "report_request", action: p.action, reportId: p.reportId, html: p.html,
+      fields: p.fields ? JSON.parse(p.fields) : {},
+    }, signal),
+  });
   const archiveSource = defineTool({
     name: "archive_source", label: "Library archive source",
     description: "List, view or open Archive documents through the Librarian. Cache downloads one original PDF, image or HTML from a public HTTPS URL (JSON fields: url); inspect the search evidence and select the best original before requesting registration. Create requires title, summary, source_files containing exactly one cached file_id, and optional citation. Wait for Explorer confirmation before treating it as registered. Existing document originals cannot be replaced. Updates to legacy source metadata and deletions require sourceId, expected_version and Explorer confirmation.",
@@ -426,10 +441,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   } else if (childRole) tools.push(defineTool({ name: "developer_context", label: "Development task context", description: "Read the bounded input and role assigned to this development test session. This is read-only and does not access business storage.", parameters: Type.Object({}), execute: async () => result(JSON.stringify({ role: childRole, input: values.task, schema_version: 1 })) }));
   else {
     tools.push(delegate);
-    if (values["turn-id"]) tools.push(...searchTools, ...(sourceCatalog === undefined ? [] : [selectSources]), dictionary, archiveSource, frontierTracking, hpediaQuestion, libraryTestCleanup);
+    if (values["turn-id"]) tools.push(...searchTools, ...(sourceCatalog === undefined ? [] : [selectSources]), dictionary, archiveSource, archiveReport, frontierTracking, hpediaQuestion, libraryTestCleanup);
   }
   const allowedTools = keeper ? tools.filter(t => t.name === "keeper_context") : editor ? tools.filter(t => t.name === "editor_context") : voyager ? tools.filter(t => t.name === "voyager_context") :
-    values["turn-id"] && !childRole ? tools.filter(t => (retrieverToolNames.has(t.name) || ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name))) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
+    values["turn-id"] && !childRole ? tools.filter(t => (retrieverToolNames.has(t.name) || ["read_file", "delegate", "dictionary", "archive_source", "archive_report", "frontier_tracking", "hpedia_question", "library_test_cleanup"].includes(t.name))) : childRole ? tools.filter(t => ["read_file", "developer_context"].includes(t.name)) : tools;
   let sessionManager = SessionManager.inMemory();
   const sessionId = values["session-id"];
   if (sessionId) {
@@ -581,7 +596,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
               trackSource(removed, output);
             } else {
               const tool = session.agent.state.tools.find(tool => tool.name === call.name);
-              if (!tool || !(retrieverToolNames.has(call.name) || ["read_file", "delegate", "dictionary", "archive_source", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name))) throw new Error("Unsafe pending tool cannot be recovered");
+              if (!tool || !(retrieverToolNames.has(call.name) || ["read_file", "delegate", "dictionary", "archive_source", "archive_report", "frontier_tracking", "hpedia_question", "library_test_cleanup", "developer_context", "voyager_context", "editor_context"].includes(call.name))) throw new Error("Unsafe pending tool cannot be recovered");
               output = await tool.execute(call.id, call.arguments, undefined);
             }
             sessionManager.appendMessage({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: output.content, details: JSON.parse(JSON.stringify(output.details ?? {})), isError: false, timestamp: Date.now() });

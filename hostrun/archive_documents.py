@@ -74,10 +74,10 @@ class ArchiveDocuments:
             raise CommandError("invalid_document", "需要有效的文档标题、简介或学术引用")
         return value.strip()
 
-    def _originals(self):
+    def original_directory(self, kind):
         managed = managed_paths(self.home)
         archive = managed[1] if managed else archive_for_runtime(self.home)
-        return (archive or self.home / "archive") / "originals" / "documents"
+        return (archive or self.home / "archive") / "originals" / kind
 
     def prepare(self, db, command, *, publish):
         if set(command) - {"operation_id", "title", "summary", "source_files", "citation", "test_data"}:
@@ -92,7 +92,7 @@ class ArchiveDocuments:
         digest, extension = match.groups()
         identity = f"horizon:archive-document:{digest}:{command['operation_id']}"
         source_id = "d-" + uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
-        path = self._originals() / f"{source_id}.{extension}"
+        path = self.original_directory("documents") / f"{source_id}.{extension}"
         summary = self._text(command, "summary", 2000)
         record = {
             "source_id": source_id, "version": 1, "status": "active", "title": self._text(command, "title", 500),
@@ -125,13 +125,16 @@ class ArchiveDocuments:
 
     def read(self, record):
         extension = EXTENSIONS[record["media_type"]]
-        path = self._originals() / f"{record['source_id']}.{extension}"
+        path = self.original_directory("documents") / f"{record['source_id']}.{extension}"
+        return self.read_file(path, record["sha256"])
+
+    def read_file(self, path, digest):
         if managed_paths(self.home) is None:
-            return self._read(path, record["sha256"])
+            return self._read(path, digest)
         try:
             with store(self.home) as material:
                 pin = material.existing(path.relative_to(material.root).as_posix())
-                return self._read_managed(pin, record["sha256"])
+                return self._read_managed(pin, digest)
         except (InstanceInvalid, InstanceBusy, OSError) as error:
             raise CommandError("source_unavailable", "原文不可用或已更改") from error
 

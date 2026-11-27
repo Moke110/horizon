@@ -2,6 +2,7 @@
 
 from functools import cached_property
 
+from hostrun.archive_reports import ArchiveReports
 from hostrun.archive_sources import ArchiveSources
 
 from hostrun import convergence, frontier_progress, hpedia
@@ -19,6 +20,10 @@ class Library:
     @cached_property
     def archive(self):
         return ArchiveSources(self.connect, self._cards.materials)
+
+    @cached_property
+    def reports(self):
+        return ArchiveReports(self.connect, self.archive)
 
     def authorize(self, token):
         self._cards._authorize(token)
