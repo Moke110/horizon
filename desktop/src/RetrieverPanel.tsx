@@ -5,8 +5,8 @@ type Source = {
   id:string;
   name:string;
   description:string;
-  configuration:'saved'|'environment'|'missing';
-  key_label:string;
+  configuration:'saved'|'environment'|'missing'|'public'|'optional';
+  key_label:string|null;
   enabled:boolean;
   connection:string;
 };
@@ -50,8 +50,11 @@ export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
       <h3>{source.name}</h3>
       <p>{source.description}</p>
       <p role="status">{source.connection||'尚未测试连接'}</p>
-      <p>{source.configuration==='missing'?'尚未配置 API Key':source.configuration==='saved'?'使用本机保存的 API Key':'使用环境变量中的 API Key'}</p>
-      <form onSubmit={event=>{
+      <p>{{
+        missing:'尚未配置 API Key', saved:'使用本机保存的 API Key', environment:'使用环境变量中的 API Key',
+        public:'无需 API Key', optional:'可选 API Key，当前使用公开额度',
+      }[source.configuration]}</p>
+      {source.key_label&&<form onSubmit={event=>{
         event.preventDefault();
         const form=event.currentTarget;
         const key=new FormData(form).get('key');
@@ -62,7 +65,7 @@ export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
         <button disabled={!!testing}>保存配置</button>
         {source.configuration==='saved'&&<button type="button" disabled={!!testing}
           onClick={()=>send({action:'retriever_configure',source:source.id,key:null})}>移除本机密钥</button>}
-      </form>
+      </form>}
       <label><input type="checkbox" checked={source.enabled} disabled={!!testing}
         onChange={event=>send({action:'retriever_toggle',source:source.id,enabled:event.target.checked})}/>启用</label>
       <button type="button" disabled={!!testing} onClick={()=>{
