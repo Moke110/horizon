@@ -1,5 +1,4 @@
 import {TextInput, MultilineInput} from './gui/elements/FormElements';
-import {Collapsible} from './gui/elements/Collapsible';
 import {FixedSelect} from './gui/elements/ChoiceElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useEffect,useRef,useState} from 'react';
@@ -11,21 +10,17 @@ export type FrontierCommandError={operation_id?:string;code?:string;message?:str
 type OpenRequest={kind:'create';nonce:string}|{kind:'open';nonce:string;id:string;version:number};
 type LifecycleTarget={frontier_id:string;version:number};
 
-const localInput=(d:Date)=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
 const statusLabel:Record<string,string>={following:'关注中',paused:'已暂停',resolved:'已解决',deleted:'已删除'};
 const statusOptions:[string,string][]=[['following','关注中'],['paused','已暂停'],['resolved','已解决']];
 const lines=(s:string)=>s.split('\n').map(v=>v.trim()).filter(Boolean);
 const isFullView=(value:Frontier|null|undefined):value is Frontier=>!!value&&typeof value.operation_id==='string'&&typeof value.frontier_id==='string'&&typeof value.version==='number'&&typeof value.question==='string'&&!!value.scope&&typeof value.scope.text==='string'&&Array.isArray(value.scope.alternatives)&&Array.isArray(value.scope.sources)&&!!value.hard_constraints&&Array.isArray(value.hard_constraints.must_include)&&Array.isArray(value.hard_constraints.exclude)&&Array.isArray(value.relations);
 
-export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted,titleOnly=false}:{frontiers:FrontierSummary[];selected:Frontier|null;viewEvent:FrontierViewEvent|null;commandError:FrontierCommandError|null;onCommand:(c:any)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;titleOnly?:boolean;onCommitted?:(frontier_id:string,version:number)=>void}){
+export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onCommand,embedded=false,showList=true,openRequest=null,onCommitted,onRetrieve,titleOnly=false}:{frontiers:FrontierSummary[];selected:Frontier|null;viewEvent:FrontierViewEvent|null;commandError:FrontierCommandError|null;onCommand:(c:any)=>void;embedded?:boolean;showList?:boolean;openRequest?:OpenRequest|null;titleOnly?:boolean;onRetrieve?:(frontier:Frontier)=>void;onCommitted?:(frontier_id:string,version:number)=>void}){
   const [question,setQuestion]=useState(''),[scope,setScope]=useState(''),[alternatives,setAlternatives]=useState(''),[must,setMust]=useState(''),[exclude,setExclude]=useState(''),[sources,setSources]=useState('arxiv'),[status,setStatus]=useState('following');
   const [editing,setEditing]=useState<{frontier_id:string;version:number;status:string}|null>(null);
-  const [mode,setMode]=useState('initial'),[basis,setBasis]=useState('published');
-  const [from,setFrom]=useState(localInput(new Date(new Date().getFullYear(),0,1))),[until,setUntil]=useState(localInput(new Date())),[overlap,setOverlap]=useState(86400);
-  const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[creating,setCreating]=useState(''),[acting,setActing]=useState(''),[message,setMessage]=useState('');
+  const [loading,setLoading]=useState(false),[saving,setSaving]=useState(false),[acting,setActing]=useState(''),[message,setMessage]=useState('');
   const [reason,setReason]=useState('');
   const pending=useRef<{kind:'load';frontier_id:string;operation_id:string}|{kind:'save';operation_id:string;frontier_id?:string}|null>(null);
-  const createPending=useRef<{operation_id:string;frontier_id:string}|null>(null);
   const actionPending=useRef<{operation_id:string;frontier_id:string;kind:'status'|'delete'}|null>(null);
   const committed=useRef(onCommitted);
   committed.current=onCommitted;
@@ -101,11 +96,6 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
       pending.current=null;setLoading(false);setSaving(false);
       setMessage(`${work.kind==='load'?'读取':'保存'}未完成：${commandError.message||commandError.code||'请检查后重试'}${work.kind==='save'?'；草稿已保留。':'。'}`);
     }
-    const creation=createPending.current;
-    if(creation&&commandError.operation_id===creation.operation_id){
-      createPending.current=null;setCreating('');
-      setMessage(`创建检索计划未完成：${commandError.message||commandError.code||'请检查后重试'}；可重试。`);
-    }
     const action=actionPending.current;
     if(action&&commandError.operation_id===action.operation_id){
       actionPending.current=null;setActing('');
@@ -127,18 +117,13 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
           setMessage(e.data.status==='expired'?'确认已过期。':'已取消修改。');
         }
       }
-      if(e.kind!=='voyager_view')return;
-      const creation=createPending.current;
-      if(!creation||e.data?.operation_id!==creation.operation_id)return;
-      createPending.current=null;setCreating('');
-      setMessage(`已创建检索计划 ${e.data.request_id||''}；可切换到「范围检索」查看。`);
     });
     return unsubscribe;
   },[]);
   useEffect(()=>{
     if(!openRequest)return;
     if(openRequest.kind==='create'){
-      pending.current=null;createPending.current=null;actionPending.current=null;setLoading(false);setSaving(false);setCreating('');setActing('');
+      pending.current=null;actionPending.current=null;setLoading(false);setSaving(false);setActing('');
       clearDraft();
       setMessage('');
       return;
@@ -155,26 +140,13 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
     if(kind==='delete')send(operation_id,'frontier_delete',{frontier_id:f.frontier_id,expected_version:f.version});
     else send(operation_id,'frontier_update',{frontier_id:f.frontier_id,expected_version:f.version,status:next});
   };
-  const retrieve=(f:LifecycleTarget)=>{
-    if(createPending.current)return;
-    const operation_id=crypto.randomUUID();
-    createPending.current={operation_id,frontier_id:f.frontier_id};setCreating(f.frontier_id);
-    setMessage('正在创建检索计划…');
-    send(operation_id,'voyager_create',{scope:{frontier_id:f.frontier_id,expected_version:f.version},window:{mode,basis,from_at:Math.floor(new Date(from).getTime()/1000),until_at:Math.floor(new Date(until).getTime()/1000),overlap_seconds:overlap},limits:{seconds:900,queries:20,candidates:100,fulltexts:20}});
-  };
   const stale=editing&&isFullView(selected)&&selected.frontier_id===editing.frontier_id&&selected.version!==editing.version;
   const locked=!isCreateDraft&&isFullView(selected)&&selected.status==='deleted';
   return <div className={`trace${embedded?' workbench-panel':''}`}>{!embedded&&<h2>知识库</h2>}
   {isCreateDraft&&titleOnly?<form onSubmit={e=>{e.preventDefault();save();}}>
     <label>前沿题目<TextInput required maxLength={1000} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
     <button type="submit" disabled={saving}>提交前沿审核</button>
-  </form>:!locked&&!staleDraft&&<><Collapsible title="检索窗口（创建检索计划前设置）">
-  <label>方式<FixedSelect value={mode} onChange={e=>setMode(e.target.value)}><option value="initial">首次：基础与近期</option><option value="incremental">增量：含重叠窗口</option></FixedSelect></label>
-  <label>时间依据<FixedSelect value={basis} onChange={e=>setBasis(e.target.value)}><option value="published">发表时间</option><option value="discovered">发现时间</option></FixedSelect></label>
-  <label>开始（本地时间）<TextInput type="datetime-local" value={from} onChange={e=>setFrom(e.target.value)}/></label>
-  <label>结束（不含，本地时间）<TextInput type="datetime-local" value={until} onChange={e=>setUntil(e.target.value)}/></label>
-  <label>增量重叠秒数<TextInput type="number" min="0" value={overlap} onChange={e=>setOverlap(Number(e.target.value))}/></label>
-  </Collapsible>
+  </form>:!locked&&!staleDraft&&<>
   <form onSubmit={e=>{e.preventDefault();save();}}>
   <label>关注问题<TextInput required maxLength={1000} disabled={loading} value={question} onChange={e=>setQuestion(e.target.value)}/></label>
   <label>关注状态<FixedSelect disabled={loading} value={status} onChange={e=>setStatus(e.target.value)}>{statusOptions.map(([value,label])=><option key={value} value={value}>{label}</option>)}</FixedSelect></label>
@@ -192,7 +164,7 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   {stale&&<p role="alert">该 Frontier 已更新到版本 {selected.version}，当前编辑仍固定在载入的版本 {editing.version}；提交会因版本冲突失败。请取消修改后重新编辑以载入最新版本。</p>}
   {!isCreateDraft&&isFullView(selected)&&<section className="child-result"><h3>当前完整已提交版本</h3><p>关注问题：{selected.question} <TestTag tags={selected.tags}/></p><p>状态：{statusLabel[selected.status]||selected.status} · 版本 {selected.version}</p><p>追踪中：{(selected.tracked??(selected.status==='following'))?'是':'否'}</p>{selected.was_resolved&&<p>解决记录：{selected.resolved_at!=null?new Date(selected.resolved_at*1000).toLocaleString():'已标记解决'}</p>}<p>原始研究范围：{selected.scope.text}</p><p>替代查询：{selected.scope.alternatives.join('、')||'无'} · 必须包含：{selected.hard_constraints.must_include.join('、')||'无'} · 排除：{selected.hard_constraints.exclude.join('、')||'无'}</p><p>来源：{selected.scope.sources.join('、')} · 关联：{selected.relations.length?`${selected.relations.length} 项`:'空关联（合法）'}</p>
   {selected.status!=='deleted'&&<div className="workbench-actions">
-    {selected.status==='following'&&<button type="button" disabled={!!creating||loading||saving} onClick={()=>retrieve(selected)}>{creating===selected.frontier_id?'正在创建检索计划…':'创建检索计划（不检索）'}</button>}
+    {selected.status==='following'&&onRetrieve&&<button type="button" disabled={loading||saving} onClick={()=>onRetrieve(selected)}>在会话中检索</button>}
     {selected.status==='following'&&<><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'paused')}>停止追踪</button><button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'resolved')}>标记解决</button></>}
     {(selected.status==='paused'||selected.status==='resolved')&&<button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'following')}>开始追踪</button>}
     <button type="button" disabled={!!acting||loading||saving} onClick={()=>lifecycle(selected,'deleted')}>删除</button>
@@ -200,7 +172,6 @@ export function KnowledgePanel({frontiers,selected,viewEvent,commandError,onComm
   </section>}
   {showList&&<><h3>Frontier 列表</h3><p>列表中的范围摘要可能被截断；编辑会读取完整已提交版本。</p>{frontiers.length===0&&<p>尚无 Frontier。填写上方表单创建第一个关注问题。</p>}
   {frontiers.map(f=><section className="child-result" key={f.frontier_id}><h3>{f.question}</h3><p>范围：{f.scope_text} · 状态：{statusLabel[f.status]||f.status} · 版本 {f.version}</p>
-  {f.status==='following'&&<button disabled={!!creating||!!acting} onClick={()=>retrieve(f)}>{creating===f.frontier_id?'正在创建检索计划…':'创建检索计划（不检索）'}</button>}
   {f.status!=='deleted'&&<button disabled={saving} onClick={()=>load(f)}>编辑（读取完整版本）</button>}
   {f.status==='following'&&<><button disabled={!!acting} onClick={()=>lifecycle(f,'paused')}>停止追踪</button><button disabled={!!acting} onClick={()=>lifecycle(f,'resolved')}>标记解决</button></>}
   {(f.status==='paused'||f.status==='resolved')&&<button disabled={!!acting} onClick={()=>lifecycle(f,'following')}>开始追踪</button>}

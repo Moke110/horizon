@@ -11,7 +11,7 @@ type Source = {
   connection:string;
 };
 
-export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
+export function RetrieverPanel({send,onOpenHistory}:{send:typeof window.horizon.send;onOpenHistory:()=>void}) {
   const [sources,setSources]=useState<Source[]>([]);
   const [error,setError]=useState('');
   const [testing,setTesting]=useState<string|null>(null);
@@ -41,6 +41,7 @@ export function RetrieverPanel({send}:{send:typeof window.horizon.send}) {
   },[send]);
   return <section ref={panel} aria-label="检索器" aria-busy={!!testing}>
     <h2>检索器</h2>
+    <button type="button" onClick={onOpenHistory}>检索历史</button>
     <button type="button" disabled={!!testing} onClick={()=>{
       setTesting('all');
       send({action:'retriever_refresh'});
