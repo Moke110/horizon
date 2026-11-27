@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("entry,choice", [
     ("manual", "default"), ("schedule", "default"),
     ("manual", "explicit"), ("schedule", "explicit"), ("manual", "empty"),
-    ("manual", "recover"),
+    ("manual", "recover"), ("manual", "removed"),
 ])
 def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_local(tmp_path, monkeypatch, entry, choice):
     from retriever import registry
@@ -70,6 +70,14 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
         ]
         expected = [("beta", "graph spectra")]
         report = "Recovered retrieval."
+    elif choice == "removed":
+        steps = [
+            ("retriever_select_sources", {"sources": ["beta", "gamma"]}),
+            None,
+            ("gamma_search", {"query": "graph spectra"}),
+        ]
+        expected = [("gamma", "graph spectra")]
+        report = "Beta is no longer available. Gamma returned graph spectra."
     else:
         steps = [("retriever_select_sources", {"sources": []})]
         expected = []
@@ -123,7 +131,10 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
                              api_key="local-only", base_url=f"http://127.0.0.1:{server.server_port}/v1")
     resolved = {"code": str(ROOT)}
     runtime = ScheduleRuntime(service, "s", resolved, lambda: {})
-    scope = "Only use Gamma to search graphs." if choice == "explicit" else "Search graphs."
+    scope = {
+        "explicit": "Only use Gamma to search graphs.",
+        "removed": "Only use Beta and Gamma to search graphs.",
+    }.get(choice, "Search graphs.")
     try:
         if entry == "schedule":
             command(service, {
@@ -150,17 +161,19 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
             worker.task_id, worker.input_version = task["task_id"], turn["input_version"]
             worker.turn, worker.version_provider = turn, lambda: {}
             worker.run_agent(scope, turn["session_id"])
-            if choice == "recover":
+            if choice in ("recover", "removed"):
                 failed, = service.list_turns(token="s")
                 assert failed["status"] == "recovery_required"
                 assert failed["failure"]["category"] == "authentication"
+                if choice == "removed":
+                    catalog[:] = [source for source in catalog if source["id"] != "beta"]
                 worker.turn = service.transition_turn({
                     "schema_version": 1, "operation_id": "resume", "turn_id": failed["turn_id"],
                     "expected_version": failed["version"], "action": "resume",
                 }, token="s")
                 worker.run_agent(scope, turn["session_id"])
         assert source_calls == expected
-        assert len(exchanges) == len(steps) + 1
+        assert len(exchanges) == len(steps) + (2 if choice == "removed" else 1)
         assert {tool["function"]["name"] for tool in exchanges[0]["tools"]} >= {
             "retriever_select_sources", "alpha_search", "beta_search", "gamma_search",
         }
@@ -173,12 +186,18 @@ def test_retriever_search_uses_selected_sources_and_keeps_provider_failures_loca
         elif choice == "recover":
             assert "graph spectra" in last_tool_results[-1]
             assert any("Validation failed" in data for data in last_tool_results)
+        elif choice == "removed":
+            assert "beta_search" not in {tool["function"]["name"] for tool in exchanges[-1]["tools"]}
+            assert any("no longer available: beta" in json.dumps(message["content"])
+                       for message in exchanges[-1]["messages"] if message["role"] == "user")
         else:
             assert "no_enabled_sources" in last_tool_results[-1]
         turn, = service.list_turns(token="s")
         assert turn["status"] == "completed"
         assert (turn["result"] if entry == "manual" else json.loads(turn["result"])["result"]) == report
-        assert [item["enabled"] for item in registry.list_sources(tmp_path)] == [choice != "empty", choice != "empty", False]
+        assert [item["enabled"] for item in registry.list_sources(tmp_path)] == (
+            [True, False] if choice == "removed" else [choice != "empty", choice != "empty", False]
+        )
     finally:
         runtime.stop()
         server.shutdown()
