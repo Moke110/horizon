@@ -189,7 +189,6 @@ def test_install_lock_schema_declares_the_same_contract():
     assert set(package["properties"]["requires"]["required"]) == {
         "os",
         "arch",
-        "dsh",
         "python",
     }
     assert set(source["required"]) == {"commit", "dirty"}
