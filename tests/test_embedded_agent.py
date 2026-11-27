@@ -347,6 +347,11 @@ def test_failed_delegate_resumes_original_call_after_process_restart(tmp_path):
         assert len(identities)==2 and identities[0]==identities[1]
         assert len(requests)==3
         assert json.dumps(requests[-1]['messages']).count('one question') == 1
+        schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in requests[0]["tools"]}
+        selection_pair = schemas["library_test_cleanup"]["properties"]["selection"]["items"]
+        assert selection_pair == {
+            "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2,
+        }
     finally:
         server.shutdown();server.server_close();thread.join()
 
@@ -399,6 +404,11 @@ def test_real_pi_failed_model_turn_can_continue_after_restart(tmp_path):
         second=run();assert second.returncode==0,second.stdout
         assert len(requests)==2
         assert json.dumps(requests[-1]['messages']).count('one question') == 1
+        schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in requests[0]["tools"]}
+        selection_pair = schemas["library_test_cleanup"]["properties"]["selection"]["items"]
+        assert selection_pair == {
+            "type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2,
+        }
         assert 'Recovered result' in second.stdout
     finally:
         server.shutdown();server.server_close();thread.join()

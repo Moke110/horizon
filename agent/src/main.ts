@@ -342,7 +342,7 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
     description: "Preview test-tagged Library records and affected references. Request Explorer confirmation for removals. A preview or pending confirmation never deletes data. Optionally pass pairs of entity kind and record ID.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("preview"), Type.Literal("request")]),
-      selection: Type.Optional(Type.Array(Type.Tuple([Type.String(), Type.String()]))),
+      selection: Type.Optional(Type.Array(Type.Array(Type.String(), {minItems: 2, maxItems: 2}))),
     }),
     execute: (callId, p, signal) => requestLibrary(callId, {
       type:"test_cleanup_request", action:p.action, selection:p.selection,
