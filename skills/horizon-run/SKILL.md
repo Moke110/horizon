@@ -35,6 +35,10 @@ description: "Horizon built-in Pi agent workflow for bounded source retrieval, p
   导入已有报道时，用 `archive_report` 的 `import` 提交原 ID、SHA-256、标题、简介及按原
   顺序排列的文档 ID。找不到 HTML 时仍能导入，已找到的 HTML 先缓存并核对 SHA-256。
   缺少条目的引用在原位置记为 `d-unknown`，仅原件离线的文档保留真实 ID。
+- 重评报道：用 `archive_report` 的 `assess` 按原 `r-` ID 提交明确的判断、理由和具体证据，等待
+  探索者确认。仅研究方法重大错位、诚信缺陷或 Agent 解读错误可以降级。证据具体而影响待
+  核实时标「存疑」，主要解读已确认不可靠时可直接标「失效」。查明误判后可恢复「已完成」。
+  观点冲突本身不足以降级。独立重评不会修改原文、条目或被报道文档。
 - 检索推送：先用 `hostrun.cli run --intent daily` 检查闸门与续接状态。
   获准写作后读取 `skills/horizon-run/references/workflow.md`，完成检索、排序、写作、
   校验和交付，一次仅推送一篇。尊重未答问题、待复核标记和已发送状态。
