@@ -357,10 +357,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   }
   const archiveSource = defineTool({
     name: "archive_source", label: "Library archive source",
-    description: "List, view or open original source records through the Librarian. Create, update and delete require Explorer confirmation. Use JSON fields title, label, and at least one existing material_id or HTTP(S) url when creating. For update and delete provide sourceId and expected_version in fields; update may include changed source fields.",
+    description: "List, view or open Archive documents through the Librarian. Cache downloads one original PDF, image or HTML from a public HTTPS URL (JSON fields: url); inspect the search evidence and select the best original before requesting registration. Create requires title, summary, source_files containing exactly one cached file_id, and optional citation. Wait for Explorer confirmation before treating it as registered. Existing document originals cannot be replaced. Updates to legacy source metadata and deletions require sourceId, expected_version and Explorer confirmation.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("view"), Type.Literal("open"),
-        Type.Literal("create"), Type.Literal("update"), Type.Literal("delete")]),
+        Type.Literal("cache"), Type.Literal("create"), Type.Literal("update"), Type.Literal("delete")]),
       sourceId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
       testData: Type.Optional(Type.Boolean({description:"True for development test records being created."})),

@@ -38,6 +38,13 @@ write and flush. Ordinary homes retain their existing writer. See the
 
 The Library tools use the owning Python desktop session and stable request IDs. Reads return committed records. Write tools return a review card in the current Explorer conversation and do not apply changes before confirmation. A settle operation can return a stable failure receipt when a reviewed change no longer applies. The Agent may not confirm its own cards. Use `testData: true` when creating development test content, and use `library_test_cleanup` to preview marked records and request a confirmed cleanup.
 
+For `archive_source`, `cache` takes a public HTTPS `url` and returns a `file_id`
+for the downloaded PDF, image, or HTML original. `create` takes `title`,
+`summary`, `source_files` with exactly one `file_id`, and optional `citation`.
+Confirmation publishes the verified original and its document entry. Use the
+entry's permanent `d-` ID to view or open it. Register a separate entry to
+retain a different original.
+
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,
 single-flight locking and executor leases. Intent judgement and knowledge reads

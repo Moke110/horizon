@@ -1,5 +1,5 @@
 import {app,BrowserWindow,dialog,ipcMain,Tray,Menu,nativeImage,shell} from 'electron';
-import {join,basename} from 'node:path';
+import {join,basename,extname} from 'node:path';
 import {open,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {appOrigin,selectOriginal,serveReader} from './pdfProtocol';
@@ -15,6 +15,11 @@ let tray:Tray;
 const requestExit=()=>bridge.write(JSON.stringify({action:'exit'})+'\n');
 let win: BrowserWindow; let ready=false; const pending:unknown[]=[];
 const send=(event:unknown)=>{if(ready)win.webContents.send('event',event);else pending.push(event);};
+const documentTypes:Record<string,string>={
+ pdf:'application/pdf',html:'text/html',htm:'text/html',xhtml:'application/xhtml+xml',
+ png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',
+ bmp:'image/bmp',tif:'image/tiff',tiff:'image/tiff',avif:'image/avif',svg:'image/svg+xml',
+};
 async function saveHpediaExport(data: unknown) {
   try {
     const choice=await dialog.showSaveDialog(win,{defaultPath:'hpedia.json',filters:[{name:'百科 JSON',extensions:['json']}]});
@@ -39,7 +44,27 @@ function optionsItems(): Electron.MenuItemConstructorOptions[] {
   ];
 }
 ipcMain.on('command',async(event,value)=>{
- if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
+ if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||value?.action==='materials_pdf_register'||value?.action==='source_register_file'||value?.action==='materials_pending_resolve'&&value?.decision==='supplement')return;
+ if(value?.action==='choose_archive_source'){
+  const selected=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'源文档',extensions:Object.keys(documentTypes)}]});
+  if(selected.canceled)return;
+  try{
+   const filePath=selected.filePaths[0];
+   const mediaType=documentTypes[extname(filePath).slice(1).toLowerCase()];
+   if(!mediaType)throw Error('Unsupported source file');
+   const source=await open(filePath,'r');
+   try{
+    const status=await source.stat();
+    if(!status.isFile()||status.size===0||status.size>10*1024*1024)throw Error('Invalid source file');
+    const data=Buffer.alloc(status.size);
+    const {bytesRead}=await source.read(data);
+    if(bytesRead!==status.size||(await source.stat()).size!==status.size)throw Error('Source file changed');
+    bridge.write(JSON.stringify({action:'source_register_file',operation_id:randomUUID(),title:value.title,
+      summary:value.summary,citation:value.citation,media_type:mediaType,original_base64:data.toString('base64')})+'\n');
+   }finally{await source.close();}
+  }catch{send({kind:'notice',data:'请选择可读取且不超过 10 MiB 的源文档。'});}
+  return;
+ }
  if(value?.action==='open_source_url'){
   try{
    const url=new URL(value.url);

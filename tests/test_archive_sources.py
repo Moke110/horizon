@@ -1,5 +1,7 @@
 import base64
+import re
 from io import BytesIO
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -98,3 +100,53 @@ def test_removed_archive_original_falls_back_to_source_url(tmp_path):
     assert librarian.open_source(source["source_id"], token=token) == fallback
     assert librarian.source_original(source["source_id"], token=token) == (fallback, None)
     assert librarian.view_source(source["source_id"], token=token) == source
+
+
+def test_library_registers_one_original_only_after_confirmation(tmp_path):
+    token = "desktop"
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=token), token=token)
+    original = b"<!doctype html><p>Original document</p>"
+    candidate = librarian.cache_source(original, "text/html", token=token)
+    request = {"operation_id": "source-register", "title": "所选文档", "summary": "原件简介",
+               "source_files": [candidate["file_id"]], "citation": "Author (2026)"}
+    for files in ([], [candidate["file_id"], candidate["file_id"]]):
+        with pytest.raises(CommandError, match="恰好一份"):
+            librarian.request_source("register", {**request, "source_files": files},
+                                     token=token, origin="agent:task")
+    review = librarian.request_source("register", request, token=token, origin="agent:task")
+    assert review["status"] == "pending"
+    assert librarian.list_sources(token=token) == []
+    receipt = librarian.decide("source-register", "confirm", token=token, origin="agent:task")
+    source_id = receipt["results"][0]["source_id"]
+    assert re.fullmatch(r"d-[0-9a-f]{32}", source_id)
+    reopened = Librarian(KnowledgeCardService(tmp_path, token=token), token=token)
+    record = reopened.view_source(source_id, token=token)
+    assert record["title"] == "所选文档"
+    assert record["summary"] == "原件简介"
+    assert record["citation"] == "Author (2026)"
+    assert record["sha256"] == "dfabed9b097986025c235f3c1b5ae23dfdf0605f15eb8751652bd69853c1a948"
+    assert Path(record["file_path"]).read_bytes() == original
+    assert reopened.source_original(source_id, token=token)[1] == original
+    assert reopened.decide("source-register", "confirm", token=token, origin="agent:task") == receipt
+
+
+def test_document_selection_can_register_equal_files_and_cannot_replace_an_original(tmp_path):
+    token = "desktop"
+    librarian = Librarian(KnowledgeCardService(tmp_path, token=token), token=token)
+    candidate = librarian.cache_source(b"<p>Same original</p>", "text/html", token=token)
+    source_ids = []
+    for title in ("First selection", "Second selection"):
+        librarian.request_source("register", {"operation_id": title, "title": title, "summary": "Selected",
+            "source_files": [candidate["file_id"]]}, token=token, origin="gui")
+        receipt = librarian.decide(title, "confirm", token=token, origin="gui")
+        source_ids.append(receipt["results"][0]["source_id"])
+    assert len(set(source_ids)) == 2
+    first = librarian.view_source(source_ids[0], token=token)
+    with pytest.raises(CommandError, match="不能更换原文"):
+        librarian.request_source("update", {"operation_id": "replace-source", "source_id": source_ids[0],
+            "expected_version": first["version"], "url": "https://example.com/replacement"}, token=token, origin="gui")
+    assert librarian.source_original(source_ids[0], token=token)[1] == b"<p>Same original</p>"
+    Path(first["file_path"]).write_bytes(b"<p>Unexpected contents</p>")
+    with pytest.raises(CommandError, match="原文不可用或已更改"):
+        librarian.source_original(source_ids[0], token=token)
+    assert librarian.source_original(source_ids[1], token=token)[1] == b"<p>Same original</p>"

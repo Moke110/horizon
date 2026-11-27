@@ -75,6 +75,8 @@ class DesktopWorker:
             return librarian.view_source(source_id, token=token)
         if operation == "open":
             package = librarian.open_source(source_id, token=token, task_id=self.task_id)
+            if "document" in package:
+                return package
             if "source_url" in package:
                 return package
             text = package["original_text"]
@@ -82,13 +84,16 @@ class DesktopWorker:
                     "original_text": text[:16000], "original_text_truncated": len(text) > 16000,
                     "pdf": bool(package.get("pdf"))}
         fields = event.get("fields")
+        if operation == "cache" and isinstance(fields, dict) and set(fields) == {"url"}:
+            return librarian.download_source(fields["url"], token=token)
         request_id = event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
         command = {**self._development_fields(event, operation, fields), "operation_id": request_id}
         if source_id:
             command["source_id"] = source_id
-        card = librarian.request_source(operation, command, token=token, origin="agent:" + self.task_id)
+        action = "register" if operation == "create" else operation
+        card = librarian.request_source(action, command, token=token, origin="agent:" + self.task_id)
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 

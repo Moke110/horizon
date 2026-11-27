@@ -105,8 +105,18 @@ class Librarian:
         self.library.authorize(token)
         return self.library.archive.pdf(source_id, token=token)
 
+    def cache_source(self, original, media_type, *, token):
+        self.library.authorize(token)
+        return self.library.archive.documents.cache_original(original, media_type)
+
+    def download_source(self, url, *, token):
+        self.library.authorize(token)
+        if not isinstance(url, str):
+            raise CommandError("invalid_document", "需要公开的源文档链接")
+        return self.library.archive.documents.download(url)
+
     def request_source(self, action, command, *, token, origin):
-        if action not in ("create", "update", "delete") or not isinstance(command, dict):
+        if action not in ("create", "register", "update", "delete") or not isinstance(command, dict):
             raise CommandError("invalid_command", "需要有效的资料库来源变更")
         return self.request_batch(command.get("operation_id"), [(action, command)],
                                   token=token, origin=origin, entity="source")
@@ -323,7 +333,7 @@ class Librarian:
             raise CommandError("invalid_command", "确认请求需要来源、标识和 1 至 100 项变更")
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
-                   "source": ("create", "update", "delete"),
+                   "source": ("create", "register", "update", "delete"),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
@@ -333,7 +343,7 @@ class Librarian:
                 raise CommandError("invalid_command", "无效的术语变更")
         for action, command in changes:
             if "test_data" in command and (
-                type(command["test_data"]) is not bool or action != "create" or not origin.startswith("agent:")
+                type(command["test_data"]) is not bool or action not in ("create", "register") or not origin.startswith("agent:")
             ):
                 raise CommandError("invalid_command", "只有 Agent 新建的测试条目可以标记为测试")
         normalized = [list(change) for change in changes]
@@ -368,7 +378,9 @@ class Librarian:
                                 term_ids.add(term_id)
                     elif entity == "source":
                         proposed = self.library.archive.apply(db, action, command)
-                        if action != "create":
+                        if action == "register":
+                            summaries.append(proposed["title"])
+                        elif action != "create":
                             term_ids.add("archive:" + proposed["source_id"])
                     elif entity == "frontier":
                         proposed, _ = self.library.apply_frontier(db, action, command, token=token, now=now)
@@ -435,7 +447,7 @@ class Librarian:
                         if card.get("entity") == "question":
                             results.append(self.library.apply_question(db, action, command, now=now))
                         elif card.get("entity") == "source":
-                            results.append(self.library.archive.apply(db, action, command))
+                            results.append(self.library.archive.apply(db, action, command, publish=True))
                         elif card.get("entity") == "frontier":
                             frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
                             results.append(frontier)

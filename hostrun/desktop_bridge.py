@@ -1193,22 +1193,47 @@ def _serve(resolved, executable, managed):
                         if kind == 'question_confirmation':
                             show_librarian_return(data)
                             state()
-                    elif action in ('source_create', 'source_update', 'source_delete', 'source_confirm'):
+                    elif action in ('source_create', 'source_register_file', 'source_update', 'source_delete', 'source_confirm'):
                         if exiting.is_set():raise CommandError('exiting','Desktop is exiting')
                         if action == 'source_confirm':
                             receipt = librarian.decide(cmd.get('operation_id'), cmd.get('choice'),
                                                        token=token, origin='gui', expected_entity='source')
                             show_librarian_return(receipt)
                         else:
-                            librarian.request_source(action.removeprefix('source_'),
-                                                     {k:v for k,v in cmd.items() if k!='action'},
-                                                     token=token, origin='gui')
+                            payload = {k:v for k,v in cmd.items() if k!='action'}
+                            if action == 'source_register_file':
+                                import base64
+                                encoded = payload.pop('original_base64', None)
+                                if not isinstance(encoded, str) or len(encoded) > 14 * 1024 * 1024:
+                                    raise CommandError('invalid_document', '需要一份有效的源文件')
+                                try:
+                                    original = base64.b64decode(encoded, validate=True)
+                                except ValueError as error:
+                                    raise CommandError('invalid_document', '需要一份有效的源文件') from error
+                                cached = librarian.cache_source(original, payload.pop('media_type', None), token=token)
+                                payload['source_files'] = [cached['file_id']]
+                            operation = 'register' if action in ('source_create', 'source_register_file') else action.removeprefix('source_')
+                            librarian.request_source(operation, payload, token=token, origin='gui')
                         state()
                     elif action == 'source_open':
                         source_id = cmd.get('source_id')
-                        package, original = librarian.source_original(
-                            source_id, token=token, task_id=cmd.get('task_id'))
-                        if 'source_url' in package:
+                        try:
+                            package, original = librarian.source_original(
+                                source_id, token=token, task_id=cmd.get('task_id'))
+                        except CommandError as error:
+                            if error.code != 'source_unavailable':
+                                raise
+                            package = {'document': librarian.view_source(source_id, token=token)}
+                            original = None
+                        if 'document' in package:
+                            import base64
+                            document = package['document']
+                            encoded = base64.b64encode(original).decode('ascii') if original is not None else None
+                            pdf = document['media_type'] == 'application/pdf' and encoded is not None
+                            emit('private_pdf', {'id':source_id, 'data':encoded} if pdf else None)
+                            emit('archive_document', {'document':document, 'available':encoded is not None,
+                                                      'original':None if pdf else encoded})
+                        elif 'source_url' in package:
                             emit('archive_source_url', {'source_id':source_id, 'url':package['source_url']})
                         else:
                             if original is not None:

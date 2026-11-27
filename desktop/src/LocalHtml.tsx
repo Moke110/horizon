@@ -27,8 +27,12 @@ function renderNode(node:Node,key:number):ReactNode {
 
 export async function readLocalHtml(file:File):Promise<ReactNode> {
   if(!/\.html?$/i.test(file.name)||file.size>10*1024*1024)throw Error('Invalid HTML file');
+  return renderLocalHtml(await file.text());
+}
+
+export function renderLocalHtml(html:string):ReactNode {
   // Template content stays inert. The preview only creates static elements with approved attributes.
   const template=document.createElement('template');
-  template.innerHTML=await file.text();
+  template.innerHTML=html;
   return Array.from(template.content.childNodes,renderNode);
 }
