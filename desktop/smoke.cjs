@@ -332,7 +332,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
       clickNamed('删除关联术语 Related term');
       await wait(() => !relations.textContent.includes('Related term'));
       dialog = await openDialog('关联术语');
-      navigation.querySelector('button[aria-label="资料"]').click();
+      navigation.querySelector('button[aria-label="资料库"]').click();
       await wait(() => !dialog.isConnected && !document.querySelector('main > [inert]'));
 
       const filePicker = document.querySelector('[aria-label="打开 HTML"]');
@@ -466,7 +466,7 @@ app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-lo
     }
     const fixture = path.join(path.dirname(process.env.HORIZON_SMOKE_RESULT), 'research-view.html');
     fs.writeFileSync(fixture, '<h1>Saved HTML report</h1><script>throw Error("unsafe")</script><p><strong>Report emphasis</strong></p>');
-    await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="资料"]').click()`);
+    await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="资料库"]').click()`);
     win.webContents.debugger.attach('1.3');
     try {
       const {root} = await win.webContents.debugger.sendCommand('DOM.getDocument');

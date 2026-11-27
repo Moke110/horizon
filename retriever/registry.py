@@ -1,6 +1,6 @@
 """Registry of independent active search sources."""
-import importlib
 import re
+from importlib import import_module
 from pathlib import Path
 
 from common import file_lock, read_json, write_json
@@ -11,10 +11,19 @@ SOURCE_DIRECTORY = Path(__file__).parent / "sources"
 REGISTERED_SOURCES = ("openalex",)
 
 
+def _installed(source):
+    directory = SOURCE_DIRECTORY / source
+    return (directory / "__init__.py").is_file() and (directory / "README.md").is_file()
+
+
+def source_ids():
+    return [source for source in REGISTERED_SOURCES if _installed(source)]
+
+
 def _module(source):
-    if source not in REGISTERED_SOURCES or not (SOURCE_DIRECTORY / source / "__init__.py").is_file():
+    if source not in REGISTERED_SOURCES or not _installed(source):
         return None
-    return importlib.import_module(f"retriever.sources.{source}")
+    return import_module(f"retriever.sources.{source}")
 
 
 def _settings(home):
@@ -22,10 +31,38 @@ def _settings(home):
     return read_json(path, {})
 
 
+def discover_sources(home):
+    """Record additions in order and retain local preferences across removal."""
+    home = Path(home)
+    with file_lock(home / "retriever-settings.lock"):
+        settings = _settings(home)
+        installed = source_ids()
+        next_order = max((state.get("added_order", 0) for state in settings.values()), default=0)
+        removed = False
+        for source, state in settings.items():
+            if source not in installed and "added_order" in state:
+                state.pop("added_order")
+                state.pop("connection", None)
+                state["configuration_revision"] = state.get("configuration_revision", 0) + 1
+                removed = True
+        added = []
+        for source in installed:
+            state = settings.setdefault(source, {})
+            if "added_order" not in state:
+                next_order += 1
+                state["added_order"] = next_order
+                added.append(source)
+        if added or removed:
+            write_json(home / "retriever-settings.json", settings)
+        return installed, added
+
+
 def list_sources(home):
     settings = _settings(home)
+    installed = source_ids()
+    installed.sort(key=lambda source: settings.get(source, {}).get("added_order", 0), reverse=True)
     cards = []
-    for source in REGISTERED_SOURCES:
+    for source in installed:
         module = _module(source)
         if module is None:
             continue
