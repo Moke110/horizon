@@ -70,7 +70,7 @@ def apply(db, action, command, *, frontier, check_reference, now=None):
             raise CommandError("invalid_command", "进展最多可关联 32 个资料库条目")
         source_ids = list(dict.fromkeys(source_ids))
         for source_id in source_ids:
-            check_reference(source_id)
+            check_reference(source_id, source_id in progress.get("source_ids", []))
         progress.update(content=content.strip(), source_ids=source_ids)
     progress.update(version=progress["version"] + 1, updated_at=int(now))
     db.execute("""INSERT INTO frontier_progress VALUES(?,?,?)

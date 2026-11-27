@@ -16,6 +16,7 @@ export type ArchiveReport = {
   file_path: string | null;
   covered_docs: string[];
   status: 'completed';
+  replaces_report_id?: string;
   assessment?: {decision: string; basis: string; reason: string; evidence: string};
 };
 
@@ -35,15 +36,17 @@ export function ArchiveReportsPanel({reports, onOpen}: {
   </section>;
 }
 
-export function ArchiveReportView({entry, assessment}: {
-  entry: ArchiveReportOriginal; assessment?: ArchiveReport['assessment'];
+export function ArchiveReportView({entry, assessment, onCorrect}: {
+  entry: ArchiveReportOriginal; assessment?: ArchiveReport['assessment']; onCorrect?: () => void;
 }) {
   const {report, html} = entry;
   return <section aria-label="报道条目">
     <h3>{report.title}</h3>
     <p>{report.summary}</p>
+    {onCorrect && <button type="button" onClick={onCorrect}>另起任务更正</button>}
     <dl style={{overflowWrap: 'anywhere'}}>
       <dt>报道 ID</dt><dd>{report.report_id}</dd>
+      {report.replaces_report_id && <><dt>取代的报道 ID</dt><dd>{report.replaces_report_id}</dd></>}
       <dt>状态</dt><dd>{assessmentDecisions[assessment?.decision ?? report.status]}</dd>
       {assessment && <>
         <dt>依据类别</dt><dd>{assessmentBases[assessment.basis]}</dd>

@@ -7,6 +7,8 @@ import uuid
 
 from hostrun.agent_service import CommandError
 from hostrun.archive_documents import DOCUMENT_ID, MAX_SOURCE_BYTES, SHA256
+from hostrun.cleanup import InstanceBusy, InstanceInvalid
+from hostrun.managed_import import managed_paths, store
 
 
 REPORT_ID = re.compile(r"r-[0-9a-f]{32}")
@@ -27,6 +29,10 @@ class ArchiveReports:
         db.execute("""CREATE TABLE IF NOT EXISTS library_report_drafts (
             origin TEXT NOT NULL, draft_id TEXT NOT NULL, html BLOB NOT NULL,
             PRIMARY KEY (origin, draft_id))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS library_report_origins (
+            report_id TEXT PRIMARY KEY, origin TEXT NOT NULL)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS library_retired_reports (
+            report_id TEXT PRIMARY KEY, pending_original TEXT)""")
         db.execute("""CREATE TABLE IF NOT EXISTS library_report_assessments (
             operation_id TEXT PRIMARY KEY, report_id TEXT NOT NULL, decision TEXT NOT NULL,
             basis TEXT NOT NULL, reason TEXT NOT NULL, evidence TEXT NOT NULL)""")
@@ -63,7 +69,7 @@ class ArchiveReports:
             return self.assess(db, command, publish=publish)
         if action == "import":
             return self.import_existing(db, command, origin=origin, publish=publish)
-        return self.create(db, command, origin=origin, publish=publish)
+        return self.create(db, command, origin=origin, publish=publish, replace=action == "replace")
 
     def assess(self, db, command, *, publish):
         if set(command) != {"operation_id", "report_id", "decision", "basis", "reason", "evidence"}:
@@ -80,8 +86,10 @@ class ArchiveReports:
                        (command["operation_id"], report["report_id"], decision, basis, reason, evidence))
         return {**report, "assessment": dict(decision=decision, basis=basis, reason=reason, evidence=evidence)}
 
-    def create(self, db, command, *, origin, publish):
+    def create(self, db, command, *, origin, publish, replace=False):
         fields = {"operation_id", "draft_id", "title", "summary", "covered_docs"}
+        if replace:
+            fields.add("replaces_report_id")
         if set(command) != fields:
             raise CommandError("invalid_report", "报道登记需要标题、简介、缓存稿件和被报道文档")
         covered = command["covered_docs"]
@@ -96,7 +104,23 @@ class ArchiveReports:
         identity = uuid.uuid5(uuid.NAMESPACE_URL, f"horizon:archive-report:{command['operation_id']}:{draft_id}")
         report_id = "r-" + identity.hex
         record = self.entry(report_id, draft_id, command, covered, self.path(report_id))
-        return self.register(db, record, original, publish=publish)
+        old = None
+        if replace:
+            old_id = command["replaces_report_id"]
+            old = self.read_in_transaction(db, old_id)
+            if db.execute("SELECT 1 FROM library_report_origins WHERE report_id=? AND origin=?",
+                          (old_id, origin)).fetchone():
+                raise CommandError("correction_requires_new_task", "请另起任务更正报道")
+            record["replaces_report_id"] = old_id
+        self.register(db, record, original, publish=publish)
+        if publish:
+            db.execute("INSERT INTO library_report_origins VALUES (?,?)", (report_id, origin))
+            if old is not None:
+                db.execute("INSERT INTO library_retired_reports VALUES (?,?)",
+                           (old_id, old["sha256"] if old["file_path"] else None))
+                db.execute("DELETE FROM library_archive_reports WHERE report_id=?", (old_id,))
+                db.execute("DELETE FROM library_report_origins WHERE report_id=?", (old_id,))
+        return record
 
     def import_existing(self, db, command, *, origin, publish):
         fields = command.get("report")
@@ -151,6 +175,7 @@ class ArchiveReports:
 
     def register(self, db, record, original, *, publish):
         report_id = record["report_id"]
+        self._check_retired(db, report_id)
         if db.execute("SELECT 1 FROM library_archive_reports WHERE report_id=?", (report_id,)).fetchone():
             raise CommandError("immutable_report", "已登记报道不能修改")
         if publish:
@@ -160,7 +185,44 @@ class ArchiveReports:
                        (report_id, json.dumps(record, ensure_ascii=False)))
         return record
 
+    def purge_retired_originals(self):
+        # The retirement commits with the replacement. A crash or a busy file leaves
+        # this durable cleanup pending without re-exposing the retired report.
+        with self.connect() as db:
+            self.initialize(db)
+            for report_id, digest in db.execute(
+                "SELECT report_id, pending_original FROM library_retired_reports WHERE pending_original IS NOT NULL"
+            ).fetchall():
+                try:
+                    self._remove_retired_original(report_id, digest)
+                except (CommandError, InstanceBusy, InstanceInvalid, OSError):
+                    continue
+                db.execute("UPDATE library_retired_reports SET pending_original=NULL WHERE report_id=?", (report_id,))
+
+    def _remove_retired_original(self, report_id, digest):
+        path = self.path(report_id)
+        if managed_paths(self.files.home) is not None:
+            with store(self.files.home) as material:
+                name = path.relative_to(material.root).as_posix()
+                inventory = material.inventory(name)
+                if path.exists() or path.is_symlink():
+                    pin = material.existing(name)
+                    self.files._read_managed(pin, digest)
+                    pin.delete()
+                if inventory.pop(name, None) is not None:
+                    material.save()
+            return
+        if path.parent.resolve() != path.parent.absolute():
+            raise OSError("Linked report directory")
+        path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _check_retired(db, report_id):
+        if db.execute("SELECT 1 FROM library_retired_reports WHERE report_id=?", (report_id,)).fetchone():
+            raise CommandError("report_deleted", "报道已删除")
+
     def list(self):
+        self.purge_retired_originals()
         with self.connect() as db:
             self.initialize(db)
             return [self.project_assessment(db, json.loads(record)) for (record,) in db.execute(
@@ -173,6 +235,7 @@ class ArchiveReports:
         row = db.execute("SELECT record FROM library_archive_reports WHERE report_id=?",
                          (report_id,)).fetchone()
         if not row:
+            ArchiveReports._check_retired(db, report_id)
             raise CommandError("not_found", "未找到报道")
         return json.loads(row[0])
 

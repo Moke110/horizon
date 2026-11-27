@@ -113,12 +113,16 @@ class Library:
         self._frontiers.check_write_lock(db, frontier["frontier_id"], now=now)
         return frontier_progress.apply(
             db, action, command, frontier=frontier, now=now,
-            check_reference=lambda identity: self._check_progress_reference(db, identity),
+            check_reference=lambda identity, retained: self._check_progress_reference(db, identity, retained),
         )
 
-    def _check_progress_reference(self, db, identity):
+    def _check_progress_reference(self, db, identity, retained):
         if REPORT_ID.fullmatch(identity):
-            self.reports.read_in_transaction(db, identity)
+            try:
+                self.reports.read_in_transaction(db, identity)
+            except CommandError as error:
+                if error.code != "report_deleted" or not retained:
+                    raise
         else:
             self.archive.read_in_transaction(db, identity)
         self.archive.check_write_lock(db, identity)

@@ -75,10 +75,11 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
         summary:document.summary,citation:document.citation}:report?{report_id:report.report_id,
           sha256:report.sha256,summary:report.summary,covered_docs:report.covered_docs}:change;
       const actionLabel=action==='import'?(report?'导入报道':'导入离线文档'):
-        ({create:'新增',register:'登记文档',restore:'恢复原文',assess:'重评可信度',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action];
+        ({create:'新增',register:'登记文档',restore:'恢复原文',replace:'发布更正报道',assess:'重评可信度',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action];
       return <div key={index}>
       <strong>{actionLabel} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
       {card.entity!=='progress'&&previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
+      {action==='replace'&&<p>取代的报道 ID {fieldText('report_id',change.replaces_report_id)}</p>}
       <dl>{Object.entries(fields).filter(([field,value])=>field in labels&&(!document||value!=null)).map(([field,value])=><React.Fragment key={field}>
         <dt>{labels[field]}</dt><dd>{field==='convergence'?convergenceLabel(value as Convergence,card.entity==='question'?'question':'term'):fieldText(field,value)}</dd>
       </React.Fragment>)}</dl>
@@ -263,15 +264,12 @@ return <div className={'shell'+(navCollapsed?' navigation-collapsed':'')}>
     boardLink?<HpediaPanel deleted={state.hpedia_deleted} key={boardLink.kind+boardLink.id} boardLink={boardLink} renderFrontiers={renderFrontiers} frontierRows={state.frontiers} questions={state.questions||[]} terms={state.cards||[]} send={send} closeDetail={closeDetail} cardEditor={{materials:state.materials||[],selected:cardView,viewEvent:cardViewEvent,commandError:cardError}}
   detailHost={detail==='hpedia'?detailHost:null} openDetail={()=>setDetail('hpedia')}/>:null}</>:tab==='hpedia'?<HpediaPanel deleted={state.hpedia_deleted} renderFrontiers={renderFrontiers} frontierRows={state.frontiers} questions={state.questions||[]} terms={state.cards||[]} send={send} closeDetail={closeDetail} cardEditor={{materials:state.materials||[],selected:cardView,viewEvent:cardViewEvent,commandError:cardError}}
   detailHost={detail==='hpedia'?detailHost:null} openDetail={()=>{closeDetail();setDetail('hpedia');}}/>:tab==='feishu'?<FeishuSetup send={send} close={()=>setTab('chat')}/>:tab==='retriever'?<RetrieverPanel send={send} onOpenHistory={()=>openSearchHistory()}/>:tab==='voyager'?<><SubscriptionPanel rows={state.subscriptions||[]} busy={state.subscription_busy||[]} send={send}/><VoyagerPanel editorFeedback={ownerFeedback?.owner==='voyager'?ownerFeedback:null} closeEditorFeedback={closeOwnerFeedback} requests={state.voyager_requests||[]} busy={state.voyager_busy||[]} selected={voyagerView} history={voyagerHistory} taskId={chat?.task_id} onPrepare={id=>{setText(current=>current||`请调用 delegate 工具，将检索 ${id} 交给历史检索子会话（角色 voyager），返回来源依据和限制。`);setTab('chat');}} onCommand={command=>{if(command.action==='materials_open')requestedMaterial.current=String(command.material_id);send(['voyager_create','materials_open'].includes(command.action)?{...command,task_id:chat?.task_id}:command);}}/></>:['knowledge','themes'].includes(tab)?<KnowledgeWorkbench key="knowledge" editorFeedback={ownerFeedback?.owner==='voyager'?null:ownerFeedback} closeEditorFeedback={closeOwnerFeedback} initialType={tab==='themes'?'theme':'all'} frontiers={state.frontiers||[]} cards={state.cards||[]} themes={state.themes||[]} materials={state.materials||[]} cardSelected={cardView} cardViewEvent={cardViewEvent} cardError={cardError} frontierSelected={frontierView} frontierViewEvent={frontierViewEvent} frontierError={frontierError} themeSelected={themeView} themeViewEvent={themeViewEvent} themeError={themeError} onPendingCount={count=>setKeeperCount(count)} openPendingNonce={openPendingNonce} onRetrieve={prepareFrontierSearch} onCommand={send}/>:tab==='materials'?null:tab==='schedules'?<SchedulePanel schedules={state.schedules||[]} limits={state.schedule_limits||{main:2,children:4}} onCommand={send}/>:tab==='trace'?<section aria-label="轨迹" />:<><div className="messages">{chat && <EditorReports key={chat.task_id} taskId={chat.task_id} detailHost={detail==='report'?detailHost:null} onOpenDetail={()=>{closeDetail();setDetail('report');}}
-  materials={state.materials || []} children={state.children} disabled={state.busy || !state.configured}
+  children={state.children}
   frontiers={state.frontiers || []} handoff={(draft:FeedbackHandoff)=>{
     setFeedbackHandoff(draft);
     navigate(draft.owner==='voyager'?'voyager':'knowledge');
   }}
-  send={send} prepare={(material_id,options)=>setText(`请调用 delegate，将此 JSON 原样交给 editor 子会话生成报道。 ${JSON.stringify({material_id,...options})}`)}
-  prepareRewrite={(report_id,base_version,question,options)=>setText(`请调用 delegate，将此 JSON 原样交给 editor 子会话核对来源并生成新版本。 ${JSON.stringify({report_id,base_version,question,...options})}`)}
-  prepareSynthesis={command=>setText(`请调用 delegate，将以下 JSON 原样交给 editor 子会话生成综合报道。
-${JSON.stringify(command)}`)}/>}
+  send={send}/>}
 {!chat?.messages.length&&!state.busy?<div className="welcome"><div className="hero">◈</div><h1>从一个问题，开始研究</h1><p>与 Horizon 一起阅读文献、整理知识、探索新的发现。</p><div className="suggestions">{['总结当前知识库的研究进展','帮我梳理一个研究问题','查看可用的研究工作流'].map(t=><button key={t} onClick={()=>setText(t)}>{t} ↗</button>)}</div></div>:chat?.messages.map((m,i)=><article key={i} className={m.role==='You'?'user':'assistant'}>{m.role!=='You'&&<div className="author">◈ Horizon</div>}<Markdown>{m.text}</Markdown></article>)}{chat&&state.term_confirmations?.map(card=><TermConfirmationCard key={card.operation_id} card={card} terms={state.cards||[]} sources={state.archive_sources||[]}
   decide={choice=>send({action:'agent_term_confirm',task_id:chat.task_id,operation_id:card.operation_id,choice})}/>)}{chat&&state.editor_term_proposals?.map(proposal=>{
   const card:TermConfirmation={operation_id:proposal.proposal_id,expires_at:proposal.term_expires_at,
@@ -303,9 +301,16 @@ ${JSON.stringify(command)}`)}/>}
       <div className="detail-toolbar"><Button aria-label="关闭详情" onClick={closeDetail}>×</Button></div>
       <div className="detail-body" ref={setDetailHost}>
         {detail==='archive-document'&&archiveDocument&&<ArchiveDocumentView entry={archiveDocument} send={send}/>}
-        {detail==='archive-report'&&archiveReport&&<ArchiveReportView entry={archiveReport}
-          assessment={state.archive_reports?.find(report=>report.report_id===archiveReport.report.report_id)?.assessment
-            ?? archiveReport.report.assessment}/>}
+        {detail==='archive-report'&&archiveReport&&(state.archive_reports?.some(row=>row.report_id===archiveReport.report.report_id)===false
+          ? <p role="status">报道已删除</p>
+          : <ArchiveReportView entry={archiveReport}
+            assessment={state.archive_reports?.find(report=>report.report_id===archiveReport.report.report_id)?.assessment
+              ?? archiveReport.report.assessment}
+            onCorrect={state.busy?undefined:()=>{
+              send({action:'new',operation_id:crypto.randomUUID()});
+              navigate('chat');
+              setText(`请更正报道 ${archiveReport.report.report_id}。更正理由：`);
+            }}/>)}
         {detail==='source-url'&&sourceUrl&&<section aria-label="原始来源链接">
           <p>{sourceUrl}</p>
           <button type="button" onClick={()=>send({action:'open_source_url',url:sourceUrl})}>在浏览器打开原文</button>

@@ -61,6 +61,12 @@ confirms both actions. Import retains each known document ID even if its file
 is offline, and replaces each missing entry at its original position with
 `d-unknown`. Those positions remain fixed after confirmation.
 
+To correct an existing report, start a separate task. `replace` takes all
+`create` fields plus `replaces_report_id`. After Explorer confirmation and
+successful publication, Archive retires the old entry and deletes its HTML.
+Reads of that ID return `report_deleted`, including after restart. A retained
+Frontier reference displays the deletion without opening a different report.
+
 `assess` takes the existing `reportId` and fields `decision`, `basis`,
 `reason`, and `evidence`. A `questionable` or `invalid` decision requires
 `methodology`, `integrity`, or `interpretation` as its basis. `completed`
