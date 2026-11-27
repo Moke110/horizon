@@ -265,7 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--by",
             dest="control_by",
             default="",
-            help="initiator recorded in the console event stream (default: host agent)",
+            help="initiator recorded in the console event stream (default: Horizon CLI)",
         )
         action.add_argument(
             "--wait",
@@ -384,7 +384,7 @@ def _dispatch(args, root: Path, offline: bool, resolved: dict | None = None) -> 
             payload = console_service.run_control(
                 root,
                 args.control_action,
-                initiator=getattr(args, "control_by", "") or "host-agent",
+                initiator=getattr(args, "control_by", "") or "horizon-cli",
                 wait_seconds=getattr(args, "control_wait", 2.0),
             )
             return (0 if payload.get("ok") else 1), payload

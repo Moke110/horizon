@@ -180,7 +180,8 @@ def test_migration_moves_runtime_state_and_keeps_materials_in_the_archive(tmp_pa
     console = code / "bin" / "horizon-console.cmd"
     assert "listener" not in config
     assert "schedules" not in config
-    assert config["agent_run"]["dsh_args"] == ["--patch", "account.yml"]
+    assert "dsh_args" not in config["agent_run"]
+    assert "dsh" not in config["paths"]
     assert console.is_file()
     text = console.read_text(encoding="utf-8")
     # Migration uses the shared launcher, including explicit bytecode suppression.
@@ -210,8 +211,7 @@ def test_migration_moves_runtime_state_and_keeps_materials_in_the_archive(tmp_pa
     assert layout.resolve(code=str(code))["archive"] == str(legacy)
 
 
-def test_migration_remaps_recorded_agent_run_paths_into_the_runtime_area(tmp_path):
-    """A stale absolute path in ``dsh_args`` would break every real agent run."""
+def test_migration_preserves_legacy_overlay_file_without_using_it(tmp_path):
     env = build_legacy(tmp_path)
     legacy, code = env["legacy"], env["code"]
     runtime = code / layout.RUNTIME_DIRNAME
@@ -226,10 +226,8 @@ def test_migration_remaps_recorded_agent_run_paths_into_the_runtime_area(tmp_pat
 
     assert result["ok"] is True
     migrated = json.loads((runtime / "install" / "config.json").read_text(encoding="utf-8"))
-    assert migrated["agent_run"]["dsh_args"] == [
-        "--patch",
-        str(runtime / "install" / "dsh-headless-account.patch.yml"),
-    ]
+    assert "dsh_args" not in migrated["agent_run"]
+    assert "dsh" not in migrated["paths"]
     assert (runtime / "install" / "dsh-headless-account.patch.yml").is_file()
 
 

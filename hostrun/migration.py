@@ -241,7 +241,7 @@ def _migrate_config(
     path = runtime / "install" / "config.json"
     existing = read_json(path) or {}
     config = copy.deepcopy(existing) if existing else default_config(runtime, repo=code)
-    paths = {**(config.get("paths") or {})}
+    paths = {key: value for key, value in (config.get("paths") or {}).items() if key not in {"dsh", "skill"}}
     env_ok = bool(environment.get("ok")) and bool(environment.get("python"))
     paths["repo"] = str(code)
     paths["home"] = str(runtime)
@@ -254,22 +254,16 @@ def _migrate_config(
     # still consumes, and drop the retired start/stop commands and host tasks.
     legacy_listener = config.pop("listener", {}) or {}
     agent_run = {**(config.get("agent_run") or {})}
-    for key in ("feedback_lease_minutes", "derived_timeout_seconds", "dsh_args"):
+    for key in ("feedback_lease_minutes", "derived_timeout_seconds"):
         if key in legacy_listener and key not in agent_run:
             agent_run[key] = legacy_listener[key]
-    # Preserve historical overlay path references when relocating legacy files.
-    if isinstance(agent_run.get("dsh_args"), list):
-        agent_run["dsh_args"] = [
-            _remap_inside(item, legacy, runtime) if isinstance(item, str) else item
-            for item in agent_run["dsh_args"]
-        ]
-    if agent_run:
-        config["agent_run"] = agent_run
+    agent_run.pop("dsh_args", None)
+    config["agent_run"] = agent_run
     config.pop("schedules", None)
     workspace_section = config.get("workspace")
     if isinstance(workspace_section, dict):
         config["workspace"] = {
-            **workspace_section,
+            **{key: value for key, value in workspace_section.items() if key != "skill"},
             "repo": str(code),
             "home": str(runtime),
         }
