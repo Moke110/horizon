@@ -190,8 +190,11 @@ class DesktopWorker:
         try:
             if turn and turn.get('late_editor_input'):
                 self._attempt(turn)
+                material_id = turn['late_editor_input']
+                if material_id.startswith('{'):
+                    material_id = json.loads(material_id)['material_id']
                 outcome = self.delegate({'requestId': 'late-fulltext-editor', 'role': 'editor',
-                                         'input': turn['late_editor_input']})
+                                         'input': material_id})
                 if outcome['status'] == 'succeeded' and not self.cancelled.is_set():
                     self._commit_result(turn, outcome['result'])
                     committed = True
@@ -344,7 +347,6 @@ class DesktopWorker:
             synthesis = synthesis_input(material_id)
             if synthesis and {'report_id', 'base_version'} & synthesis.keys():
                 raise ValueError('Invalid initial synthesis')
-            rewrite = None
             writing = synthesis or {}
             if synthesis is None and isinstance(material_id, str) and material_id.lstrip().startswith('{'):
                 command = json.loads(material_id)
@@ -354,30 +356,7 @@ class DesktopWorker:
                     material_id = command['material_id']
                     writing = command
                 else:
-                    rewrite = command
-            if rewrite is not None:
-                if (not isinstance(rewrite, dict) or not {'report_id', 'base_version', 'question'} <= rewrite.keys()
-                        or rewrite.keys() - {'report_id', 'base_version', 'question', 'material_id', 'once', 'frontier_id'}
-                        or not isinstance(rewrite['report_id'], str)
-                        or ('material_id' in rewrite and not isinstance(rewrite['material_id'], str))
-                        or not isinstance(rewrite['question'], str)
-                        or not 1 <= len(rewrite['question'].strip()) <= 2000
-                        or type(rewrite['base_version']) is not int):
-                    raise ValueError('Invalid Editor follow-up')
-                previous = reports.get(rewrite['report_id'], self.task_id,
-                                       version=rewrite['base_version'], token=self.service_token)
-                material_id = rewrite.get('material_id', previous['source']['material_id'])
-                writing = {'frontier_id': previous['context_versions'].get('writing_frontier_id'), **rewrite}
-                if 'sources' in previous:
-                    if 'material_id' in rewrite:
-                        raise ValueError('A synthesis follow-up cannot replace its source selection')
-                    synthesis = {
-                        **previous.get('synthesis_options', {}),
-                        'material_ids': previous['selected_material_ids'],
-                        'question': previous['title'],
-                        'report_id': rewrite['report_id'],
-                        'base_version': rewrite['base_version'],
-                    }
+                    raise ValueError('Invalid Editor input')
             selected = synthesis['material_ids'] if synthesis else material_id
             saved_report = reports.get_by_operation(operation, self.task_id, selected, token=self.service_token)
             if saved_report is None and synthesis:
@@ -403,13 +382,6 @@ class DesktopWorker:
                                          token=self.service_token).view_frontier(frontier_id, token=self.service_token)
                     editor_context['frontier'] = {key: frontier[key] for key in ('frontier_id', 'version', 'question')}
                     versions['knowledge'].append({'kind': 'frontier', 'id': frontier_id, 'version': frontier['version']})
-            if editor_context is not None and rewrite:
-                editor_context['follow_up'] = {
-                    'question': rewrite['question'],
-                    'previous_claims': [
-                        {'kind': claim['kind'], 'text': claim['text'][:240]} for claim in previous['claims'][:8]
-                    ],
-                }
         child_context = voyager_context if voyager_context is not None else editor_context
         if existing:
             child = existing
@@ -488,9 +460,7 @@ class DesktopWorker:
                         report = reports.save(operation, self.task_id, evidence, versions,
                                               reviewed['claims'], token=self.service_token,
                                               keeper_proposals=reviewed.get('keeper_proposals'),
-                                              task_version=self.input_version,
-                                              report_id=rewrite['report_id'] if rewrite else None,
-                                              base_version=rewrite['base_version'] if rewrite else None)
+                                              task_version=self.input_version)
                         receipt = {'report_id': report['report_id'], 'version': report['version']}
                     output = json.dumps(receipt, ensure_ascii=False)
             status = 'succeeded'

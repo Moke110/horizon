@@ -243,8 +243,8 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   };
   if (historyInput) ensureInputReader();
 
-  const delegate = defineTool({ name: "delegate", label: "Delegate task", description: "Run an independent Voyager, Editor, or restricted development session. For editor pass a selected material UUID or forward the user-selected synthesis or follow-up JSON unchanged; the child reads the saved snapshot and saves an evidence-linked report. For role voyager pass only the existing explicit retrieval UUID from the current task as input. It reads saved retrieval evidence without making source requests. Development roles accept bounded text. Never pass credentials or the entire conversation.",
-    parameters: Type.Object({ role: Type.Union([Type.Literal("voyager"), Type.Literal("editor"), Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
+  const delegate = defineTool({ name: "delegate", label: "Delegate task", description: "Run an independent Voyager or restricted development session. For role voyager pass only the existing explicit retrieval UUID from the current task as input. It reads saved retrieval evidence without making source requests. Development roles accept bounded text. Never pass credentials or the entire conversation.",
+    parameters: Type.Object({ role: Type.Union([Type.Literal("voyager"), Type.Literal("development_reader"), Type.Literal("development_summarizer")]), input: Type.String({ maxLength: 12000 }) }),
     execute: async (_id, p, signal) => {
       if (!values["session-id"]) throw new Error("Delegation requires a persistent parent session");
       ensureInputReader();
@@ -357,10 +357,10 @@ Use read_file and write_file for task JSON and artifacts. Do not claim delivery 
   }
   const archiveReport = defineTool({
     name: "archive_report", label: "Newsroom and Archive reports",
-    description: "After all retrieval in this task is finished, author the final Newsroom HTML and cache it with stage. Submit create with JSON fields title, summary, draft_id, and covered_docs containing only the document IDs actually reported on. Import uses fields.report containing the original report_id, sha256, title, summary, and ordered covered_docs. An optional draft_id must identify cached HTML with the same hash. Create and import require Explorer confirmation. List or view registered reports; their originals and entries cannot be edited.",
+    description: "After all retrieval in this task is finished, author the final Newsroom HTML and cache it with stage. Submit create with JSON fields title, summary, draft_id, and covered_docs containing only the document IDs actually reported on. To correct a report, start a separate task and use replace with the same fields plus replaces_report_id. The previous report remains readable until the new report is confirmed and published. Import uses fields.report containing the original report_id, sha256, title, summary, and ordered covered_docs. An optional draft_id must identify cached HTML with the same hash. Create, replace and import require Explorer confirmation. List or view registered reports; their originals and entries cannot be edited.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("list"), Type.Literal("view"),
-        Type.Literal("stage"), Type.Literal("create"), Type.Literal("import")]),
+        Type.Literal("stage"), Type.Literal("create"), Type.Literal("import"), Type.Literal("replace")]),
       reportId: Type.Optional(Type.String()),
       fields: Type.Optional(Type.String({maxLength: 24000})),
       html: Type.Optional(Type.String({maxLength: 10 * 1024 * 1024})),

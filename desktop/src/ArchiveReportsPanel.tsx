@@ -9,6 +9,7 @@ export type ArchiveReport = {
   file_path: string | null;
   covered_docs: string[];
   status: 'completed';
+  replaces_report_id?: string;
 };
 
 export type ArchiveReportOriginal = {report: ArchiveReport; html: string | null};
@@ -27,13 +28,15 @@ export function ArchiveReportsPanel({reports, onOpen}: {
   </section>;
 }
 
-export function ArchiveReportView({entry}: {entry: ArchiveReportOriginal}) {
+export function ArchiveReportView({entry, onCorrect}: {entry: ArchiveReportOriginal; onCorrect?: () => void}) {
   const {report, html} = entry;
   return <section aria-label="报道条目">
     <h3>{report.title}</h3>
     <p>{report.summary}</p>
+    {onCorrect && <button type="button" onClick={onCorrect}>另起任务更正</button>}
     <dl style={{overflowWrap: 'anywhere'}}>
       <dt>报道 ID</dt><dd>{report.report_id}</dd>
+      {report.replaces_report_id && <><dt>取代的报道 ID</dt><dd>{report.replaces_report_id}</dd></>}
       <dt>状态</dt><dd>已完成</dd>
       <dt>SHA-256</dt><dd>{report.sha256}</dd>
       {report.file_path && <><dt>文件地址</dt><dd>{report.file_path}</dd></>}

@@ -485,7 +485,7 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
         def poll(self):
             return 0
 
-    children = iter([Process(False), Process(True), Process(True), Process(True)])
+    children = iter([Process(False), Process(True)])
     monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: next(children))
     request = {"role": "editor", "input": material["material_id"]}
     assert app.delegate({**request, "requestId": "unread"})["status"] == "failed"
@@ -498,16 +498,11 @@ def test_editor_handoff_persists_report_after_the_child_reads_its_evidence(tmp_p
     assert ReportService(tmp_path, token=token).citation(report_id, task["task_id"], 0, 0, token=token)["segment"] == body
     reports = ReportService(tmp_path, token=token)
     base = {"report_id": report_id, "base_version": 1, "question": "Count the observations."}
-    inherited = app.delegate({**request, "requestId": "inherit", "input": json.dumps(base)})
-    assert inherited["status"] == "succeeded"
-    assert reports.get(report_id, app.task_id, token=token, version=2)["context_versions"]["preferences"][0]["value"] == "detailed"
-    global_request = {**base, "base_version": 2, "frontier_id": None}
-    global_rewrite = app.delegate({**request, "requestId": "global", "input": json.dumps(global_request)})
-    assert global_rewrite["status"] == "succeeded"
-    latest = reports.get(report_id, app.task_id, token=token, version=3)["context_versions"]
-    assert latest["preferences"][0]["value"] == "concise"
-    assert latest["preferences"][0]["scope"] == "global"
-    assert "writing_frontier_id" not in latest
+    with pytest.raises(ValueError, match="Invalid Editor input"):
+        app.delegate({**request, "requestId": "rewrite", "input": json.dumps(base)})
+    latest = reports.get(report_id, app.task_id, token=token)
+    assert latest["version"] == 1
+    assert latest["context_versions"]["preferences"][0]["value"] == "detailed"
     assert reports.get(report_id, app.task_id, token=token, version=1)["context_versions"]["writing_frontier_id"] == frontier_id
 
 

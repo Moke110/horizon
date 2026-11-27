@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 import re
 
@@ -93,6 +94,65 @@ def test_registered_report_rejects_in_place_changes(tmp_path):
         }, token=TOKEN, origin=ORIGIN)
     assert error.value.code == "immutable_report"
     assert service.open_report(report["report_id"], token=TOKEN) == {"report": report, "html": HTML}
+
+
+
+def test_correcting_report_publishes_new_identity_and_retires_old_original(tmp_path, monkeypatch):
+    service = librarian(tmp_path)
+    covered = document(service)
+    draft = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
+    request = {
+        "operation_id": "original", "draft_id": draft["draft_id"],
+        "title": "Finding", "summary": "Research overview", "covered_docs": [covered],
+    }
+    service.request_report("create", request, token=TOKEN, origin=ORIGIN)
+    old, = service.decide("original", "confirm", token=TOKEN, origin=ORIGIN)["results"]
+    old_id = old["report_id"]
+    with pytest.raises(CommandError, match="另起任务"):
+        service.request_report("replace", {
+            **request, "operation_id": "same-task", "replaces_report_id": old_id,
+        }, token=TOKEN, origin=ORIGIN)
+
+    origin = "agent:correction"
+    corrected_html = "<h1>Corrected finding</h1>"
+    draft = service.stage_report(corrected_html, token=TOKEN, origin=origin)
+    correction = {
+        **request, "operation_id": "bad-correction", "draft_id": draft["draft_id"],
+        "title": "Corrected finding", "replaces_report_id": old_id,
+    }
+    with pytest.raises(CommandError):
+        service.request_report("replace", {**correction, "covered_docs": []}, token=TOKEN, origin=origin)
+    assert service.open_report(old_id, token=TOKEN)["html"] == HTML
+
+    service.request_report("replace", correction, token=TOKEN, origin=origin)
+
+    def file_unavailable(*args, **kwargs):
+        raise PermissionError("Archive file unavailable")
+
+    with monkeypatch.context() as write_failure:
+        write_failure.setattr(os, "link", file_unavailable)
+        returned = service.decide("bad-correction", "confirm", token=TOKEN, origin=origin)
+    assert returned["status"] == "returned"
+    assert service.open_report(old_id, token=TOKEN)["html"] == HTML
+    assert service.list_reports(token=TOKEN) == [old]
+
+    correction["operation_id"] = "correction"
+    service.request_report("replace", correction, token=TOKEN, origin=origin)
+    assert service.open_report(old_id, token=TOKEN)["html"] == HTML
+    decision = service.decide("correction", "confirm", token=TOKEN, origin=origin)
+    assert decision["status"] == "confirmed"
+    new, = decision["results"]
+    assert new["report_id"] != old_id and new["replaces_report_id"] == old_id
+    assert not Path(old["file_path"]).exists()
+    reopened = librarian(tmp_path)
+    assert reopened.open_report(new["report_id"], token=TOKEN) == {"report": new, "html": corrected_html}
+    assert reopened.list_reports(token=TOKEN) == [new]
+    with pytest.raises(CommandError, match="报道已删除") as error:
+        reopened.open_report(old_id, token=TOKEN)
+    assert error.value.code == "report_deleted"
+    with pytest.raises(CommandError, match="报道已删除"):
+        reopened.request_report("import", {"operation_id": "import-old", "report": old}, token=TOKEN, origin=origin)
+    assert reopened.decide("correction", "confirm", token=TOKEN, origin=origin) == decision
 
 
 def test_import_report_without_html_preserves_id_hash_and_coverage_positions(tmp_path):

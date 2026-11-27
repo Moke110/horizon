@@ -114,6 +114,9 @@ export function FrontierTracking({frontiers,terms,deleted={},matches,createReque
           <fieldset><legend>报道</legend>{reports.map(report=><Checkbox key={report.report_id} name="source_ids" value={report.report_id}
               defaultChecked={draft!=='new'&&draft.source_ids.includes(report.report_id)}>
             {report.title}
+          </Checkbox>)}{draft!=='new'&&draft.source_ids.filter(id=>id.startsWith('r-')&&
+            !reports.some(report=>report.report_id===id)).map(id=><Checkbox key={id} name="source_ids" value={id} defaultChecked>
+            报道已删除
           </Checkbox>)}</fieldset>
           <button type="submit">提交进展审核</button>
           <button type="button" onClick={()=>setDraft(null)}>取消</button>

@@ -1,12 +1,11 @@
 import {TextInput, MultilineInput} from './gui/elements/FormElements';
-import {FixedSelect, Checkbox} from './gui/elements/ChoiceElements';
+import {FixedSelect} from './gui/elements/ChoiceElements';
 import {Collapsible} from './gui/elements/Collapsible';
 import {createPortal} from 'react-dom';
 import React, {useEffect, useState} from 'react';
 import type {FeedbackHandoff} from './EditorFeedbackPreview';
-import type {MaterialSummary} from './MaterialsPanel';
-import {CurrentWritingOptions, EditorPreferences, UsedWritingPreferences,
-  type FrontierChoice, type WritingPreference, type WritingRequest} from './EditorPreferences';
+import {EditorPreferences, UsedWritingPreferences,
+  type FrontierChoice, type WritingPreference} from './EditorPreferences';
 
 type Child = {child_id:string; role:string; status:string; result?:string};
 type Claim = {kind:'source'|'inference'|'unknown'|'disagreement'|'known'; text:string; independent_source_count?:number; citations:{locator:string; excerpt:string; status?:string; title?:string}[]};
@@ -15,24 +14,13 @@ type Report = {report_id:string; version:number; task_id:string; title:string; c
   feedback?:{revision:number; score:number|null; reason?:string; claim_index?:number}; gaps?:{material_id?:string; reason:string; source?:string; detail?:string}[]};
 type Citation = {segment?:string; status:string; segment_truncated?:boolean; next_offset?:number|null};
 
-export function EditorReports({taskId, materials, children, disabled, prepare, prepareSynthesis, prepareRewrite, frontiers, handoff, send, detailHost, onOpenDetail}:{
+export function EditorReports({taskId, children, frontiers, handoff, send, detailHost, onOpenDetail}:{
   detailHost:HTMLDivElement|null; onOpenDetail:()=>void;
-  taskId:string; materials:MaterialSummary[]; children:Child[]; disabled:boolean;
-  prepareRewrite:(id:string,version:number,question:string,options:WritingRequest)=>void;
+  taskId:string; children:Child[];
   frontiers:FrontierChoice[]; handoff:(draft:FeedbackHandoff)=>void;
-  prepare:(id:string,options:WritingRequest)=>void; prepareSynthesis:(command:{question:string; material_ids:string[]; expand_known:boolean}&WritingRequest)=>void; send:(command:unknown)=>void;
+  send:(command:unknown)=>void;
 }) {
-  const [writing, setWriting] = useState<WritingRequest>({});
-  const takeWriting = () => {
-    setWriting({frontier_id:writing.frontier_id});
-    return writing;
-  };
-  const [material, setMaterial] = useState('');
   const [feedbackOwner, setFeedbackOwner] = useState<FeedbackHandoff['owner']>('voyager');
-  const [question, setQuestion] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [expandKnown, setExpandKnown] = useState(false);
-  const materialIds = selected.filter(id=>materials.some(row=>row.material_id===id));
   const [report, setReport] = useState<Report|null>(null);
   const [citation, setCitation] = useState<Citation|null>(null);
   const [snapshot, setSnapshot] = useState<{claimIndex:number; citationIndex:number}|null>(null);
@@ -50,26 +38,8 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
     }
   }), [taskId, report?.report_id, report?.version, handoff]);
 
-  return <Collapsible title="Editor 报道">
-    <CurrentWritingOptions frontiers={frontiers} value={writing} inherited={report?.context_versions?.writing_frontier_id} onChange={setWriting}/>
+  return <Collapsible title="历史报道">
     <EditorPreferences frontiers={frontiers} taskId={taskId} send={send}/>
-    <label>选择资料 <FixedSelect value={material} onChange={event=>setMaterial(event.target.value)}>
-      <option value="">请选择</option>
-      {materials.map(row=><option key={row.material_id} value={row.material_id}>{row.title}</option>)}
-    </FixedSelect></label>
-    <button disabled={disabled || !materials.some(row=>row.material_id===material)} onClick={()=>prepare(material,takeWriting())}>准备生成报道</button>
-    <Collapsible title="综合多份资料">
-      <label>综合问题 <TextInput value={question} onChange={event=>setQuestion(event.target.value)} maxLength={500}/></label>
-      <label>选择两到四份资料 <FixedSelect multiple value={materialIds} onChange={event=>
-        setSelected(Array.from(event.target.selectedOptions, option=>option.value))}>
-        {materials.map(row=><option key={row.material_id} value={row.material_id}>{row.title}</option>)}
-      </FixedSelect></label>
-      <Checkbox checked={expandKnown} onChange={event=>setExpandKnown(event.target.checked)}> 展开已知背景</Checkbox>
-      <button disabled={disabled || !question.trim() || materialIds.length<2 || materialIds.length>4}
-        onClick={()=>prepareSynthesis({question:question.trim(), material_ids:materialIds, expand_known:expandKnown,...takeWriting()})}>
-        准备综合报道
-      </button>
-    </Collapsible>
     {children.filter(child=>child.role==='editor' && child.status==='succeeded').map(child=>{
       let saved: {report_id?:string; version?:number; outcome?:string; gaps?:unknown[]};
       try { saved = JSON.parse(child.result || '{}'); } catch { return null; }
@@ -107,14 +77,6 @@ export function EditorReports({taskId, materials, children, disabled, prepare, p
           action:'report_feedback', report_id:report.report_id, version:report.version, score:null,
           operation_id:crypto.randomUUID(), expected_revision:report.feedback?.revision,
         })}>撤回评分</button>}
-      </form>
-      <form key={JSON.stringify([report.report_id, report.version])} onSubmit={event=>{
-        event.preventDefault();
-        const question = String(new FormData(event.currentTarget).get('question') || '').trim();
-        if(question) prepareRewrite(report.report_id, report.version, question, takeWriting());
-      }}>
-        <label>追问或纠错 <TextInput name="question" required maxLength={2000}/></label>
-        <button type="submit" disabled={disabled}>准备改写</button>
       </form>
       <Collapsible title="交给其他流程的反馈">
         <form key={`${report.report_id}:${report.version}`} onSubmit={event=>{

@@ -129,7 +129,7 @@ class Librarian:
 
     def request_report(self, action, command, *, token, origin):
         self.library.authorize(token)
-        if action not in ("create", "import"):
+        if action not in ("create", "import", "replace"):
             raise CommandError("immutable_report", "已登记报道不能修改")
         if not isinstance(command, dict):
             raise CommandError("invalid_report", "需要有效的报道登记请求")
@@ -361,7 +361,7 @@ class Librarian:
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
                    "source": ("create", "register", "import", "restore", "update", "delete"),
-                   "report": ("create", "import"),
+                   "report": ("create", "import", "replace"),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
@@ -515,4 +515,7 @@ class Librarian:
             self.library.notify_committed(term)
         for frontier in frontier_notifications:
             self.library.notify_frontier(frontier)
+        if status == "confirmed" and card.get("entity") == "report":
+            if any(action == "replace" for action, _ in card["changes"]):
+                self.library.reports.purge_retired_originals()
         return card
