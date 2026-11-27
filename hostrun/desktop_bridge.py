@@ -1064,9 +1064,11 @@ def _serve(resolved, executable, managed):
                             threading.Thread(target=update_subscription,args=(identity,),daemon=True).start()
                             state()
                     elif action in ('retriever_sources', 'retriever_configure', 'retriever_toggle',
-                                    'retriever_test', 'retriever_refresh'):
+                                    'retriever_test', 'retriever_refresh', 'retriever_tavily_budget'):
                         from retriever.connection import refresh_sources, test_connection
-                        from retriever.registry import configure_source, discover_sources, list_sources, toggle_source
+                        from retriever.registry import (
+                            configure_source, discover_sources, invalidate_connection, list_sources, toggle_source,
+                        )
                         source = cmd.get('source')
                         added = []
                         try:
@@ -1076,6 +1078,11 @@ def _serve(resolved, executable, managed):
                                 configure_source(service.home, source, cmd.get('key'))
                             elif action == 'retriever_toggle':
                                 toggle_source(service.home, source, cmd.get('enabled'))
+                            elif action == 'retriever_tavily_budget':
+                                voyager.save_tavily_budget_setting(
+                                    cmd.get('paygo_disabled'), cmd.get('monthly_limit'), token=token,
+                                )
+                                invalidate_connection(service.home, 'tavily')
                             elif action in ('retriever_test', 'retriever_refresh'):
                                 def probe(probe_action=action, source_id=source):
                                     try:

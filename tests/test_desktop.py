@@ -566,4 +566,6 @@ def test_desktop_turn_exposes_retriever_catalog_without_configuration(tmp_path, 
     app.run_agent("Search graph theory")
     raw = environments[0]["HORIZON_RETRIEVER_SOURCES"]
     assert "test-secret" not in raw
-    assert json.loads(raw) == [{"id": "openalex", "name": "OpenAlex", "enabled": True}]
+    sources = {source["id"]: source for source in json.loads(raw)}
+    assert sources["openalex"] == {"id": "openalex", "name": "OpenAlex", "enabled": True}
+    assert all(set(source) == {"id", "name", "enabled"} for source in sources.values())

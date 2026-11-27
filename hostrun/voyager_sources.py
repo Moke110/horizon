@@ -143,6 +143,8 @@ class EuropePMCProvider(AcademicTransport):
         terms = ['"' + query['term'].replace('"', ' ') + '"']
 
 
+        if query.get('search_expression'):
+            terms = [query['search_expression']]
         window = query['window']
         if window['basis'] == 'published':
             dates = [datetime.fromtimestamp(window[k], timezone.utc).strftime('%Y-%m-%d') for k in ('effective_from_at', 'until_at')]
@@ -197,6 +199,8 @@ class ArxivProvider(AcademicTransport):
     def search(self, query):
         quote = lambda text: 'all:"' + text.replace('"', ' ') + '"'
         terms = [quote(query['term'])]
+        if query.get('search_expression'):
+            terms = [query['search_expression']]
         window = query['window']
         if window['basis'] == 'published':
             dates = [datetime.fromtimestamp(window[k], timezone.utc).strftime('%Y%m%d%H%M') for k in ('effective_from_at', 'until_at')]
