@@ -25,6 +25,8 @@ class DesktopWorker:
             return search_source(self.home, event.get("source"), event.get("query"))
         librarian = Librarian(KnowledgeCardService(self.home, token=token), token=token)
         operation = event.get("action")
+        if event.get("type") == "report_request":
+            return self._report_request(librarian, operation, event, token=token)
         if event.get("type") == "source_request":
             return self._source_request(librarian, operation, event, token=token)
         if event.get("type") == "tracking_request":
@@ -62,6 +64,25 @@ class DesktopWorker:
             card = librarian.request(operation, command, token=token, origin=origin)
         else:
             raise CommandError("invalid_command", "不支持的术语操作")
+        self.events.put(("term_confirmation_changed", self.task_id))
+        return card
+
+    def _report_request(self, librarian, operation, event, *, token):
+        from hostrun.agent_service import CommandError
+
+        origin = "agent:" + self.task_id
+        if operation == "list":
+            return librarian.list_reports(token=token)
+        if operation == "view":
+            return librarian.view_report(event.get("reportId"), token=token)
+        if operation == "stage":
+            return librarian.stage_report(event.get("html"), token=token, origin=origin)
+        fields = event.get("fields")
+        request_id = event.get("requestId")
+        if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
+            raise CommandError("invalid_report", "需要有效的报道登记请求")
+        command = {**fields, "operation_id": request_id}
+        card = librarian.request_report(operation, command, token=token, origin=origin)
         self.events.put(("term_confirmation_changed", self.task_id))
         return card
 
@@ -205,7 +226,7 @@ class DesktopWorker:
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get('type') in ('term_request', 'source_request', 'tracking_request', 'question_request', 'test_cleanup_request', 'retriever_search_request'):
+                if event.get('type') in ('term_request', 'source_request', 'report_request', 'tracking_request', 'question_request', 'test_cleanup_request', 'retriever_search_request'):
                     from hostrun.agent_service import CommandError
                     try:
                         result = self._term_request(event)

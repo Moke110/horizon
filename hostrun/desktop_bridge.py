@@ -901,6 +901,7 @@ def _serve(resolved, executable, managed):
                             'hpedia_deleted':librarian.deleted_entries(token=token),
                             'editor_term_proposals':keeper_service_factory().session_term_proposals(chats[current]['task_id'],token=token) if chats else [],
                            'archive_sources':librarian.list_sources(token=token),
+                           'archive_reports':librarian.list_reports(token=token),
                            'gui_term_confirmations':[card for origin in ('gui', 'gui:hpedia')
                                 for card in librarian.confirmations(token=token,origin=origin)
                                 if card['status']=='pending'],
@@ -1223,6 +1224,8 @@ def _serve(resolved, executable, managed):
                                 operation = 'register'
                             librarian.request_source(operation, payload, token=token, origin='gui')
                         state()
+                    elif action == 'archive_report_open':
+                        emit('archive_report', librarian.open_report(cmd.get('report_id'), token=token))
                     elif action == 'source_open':
                         source_id = cmd.get('source_id')
                         try:

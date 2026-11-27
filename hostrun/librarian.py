@@ -121,6 +121,33 @@ class Librarian:
         return self.request_batch(command.get("operation_id"), [(action, command)],
                                   token=token, origin=origin, entity="source")
 
+    def stage_report(self, html, *, token, origin):
+        self.library.authorize(token)
+        if not isinstance(origin, str) or not origin.startswith("agent:") or not origin[6:].strip():
+            raise CommandError("invalid_report", "报道稿件需要当前 Agent 会话")
+        return self.library.reports.stage(html, origin)
+
+    def request_report(self, action, command, *, token, origin):
+        self.library.authorize(token)
+        if action != "create":
+            raise CommandError("immutable_report", "已登记报道不能修改")
+        if not isinstance(command, dict):
+            raise CommandError("invalid_report", "需要有效的报道登记请求")
+        return self.request_batch(command.get("operation_id"), [(action, command)],
+                                  token=token, origin=origin, entity="report")
+
+    def list_reports(self, *, token):
+        self.library.authorize(token)
+        return self.library.reports.list()
+
+    def view_report(self, report_id, *, token):
+        self.library.authorize(token)
+        return self.library.reports.view(report_id)
+
+    def open_report(self, report_id, *, token):
+        self.library.authorize(token)
+        return self.library.reports.open(report_id)
+
     @property
     def HISTORY(self):
         return self.library.history_metadata
@@ -334,6 +361,7 @@ class Librarian:
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
                    "source": ("create", "register", "import", "restore", "update", "delete"),
+                   "report": ("create",),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
@@ -359,8 +387,10 @@ class Librarian:
                 if row[:2] != (origin, encoded):
                     raise CommandError("operation_conflict", "确认请求标识已使用")
                 return json.loads(row[2])
-            if entity in ("source", "progress"):
+            if entity in ("source", "progress", "report"):
                 self.library.archive.initialize(db)
+            if entity == "report":
+                self.library.reports.initialize(db)
             if entity == "progress":
                 frontier_progress.initialize(db)
             term_ids = set()
@@ -382,6 +412,9 @@ class Librarian:
                             summaries.append(proposed["title"])
                         if action not in ("register", "create"):
                             term_ids.add("archive:" + proposed["source_id"])
+                    elif entity == "report":
+                        proposed = self.library.reports.create(db, command, origin=origin, publish=False)
+                        summaries.append(proposed["title"])
                     elif entity == "frontier":
                         proposed, _ = self.library.apply_frontier(db, action, command, token=token, now=now)
                         summaries.append(proposed["question"])
@@ -448,6 +481,8 @@ class Librarian:
                             results.append(self.library.apply_question(db, action, command, now=now))
                         elif card.get("entity") == "source":
                             results.append(self.library.archive.apply(db, action, command, publish=True))
+                        elif card.get("entity") == "report":
+                            results.append(self.library.reports.create(db, command, origin=origin, publish=True))
                         elif card.get("entity") == "frontier":
                             frontier, changed = self.library.apply_frontier(db, action, command, token=token, now=now)
                             results.append(frontier)

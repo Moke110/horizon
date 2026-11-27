@@ -11,6 +11,7 @@
 | [test_agent_service.py](test_agent_service.py) | Behavioral checks for agent service. |
 | [test_agent_tasks.py](test_agent_tasks.py) | Behavioral checks for agent tasks. |
 | [test_archive.py](test_archive.py) | Behavioral checks for archive. |
+| [test_archive_reports.py](test_archive_reports.py) | Behavioral checks for Newsroom drafts, Librarian confirmation and immutable Archive reports. |
 | [test_bitable.py](test_bitable.py) | Behavioral checks for bitable. |
 | [test_cleanup_cli.py](test_cleanup_cli.py) | Behavioral checks for cleanup cli. |
 | [test_cleanup_instance.py](test_cleanup_instance.py) | Behavioral checks for cleanup instance. |

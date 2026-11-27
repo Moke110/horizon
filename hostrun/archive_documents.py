@@ -75,10 +75,10 @@ class ArchiveDocuments:
             raise CommandError("invalid_document", "需要有效的文档标题、简介或学术引用")
         return value.strip()
 
-    def _originals(self):
+    def original_directory(self, kind):
         managed = managed_paths(self.home)
         archive = managed[1] if managed else archive_for_runtime(self.home)
-        return (archive or self.home / "archive") / "originals" / "documents"
+        return (archive or self.home / "archive") / "originals" / kind
 
     def prepare(self, db, command, *, publish):
         if set(command) - {"operation_id", "title", "summary", "source_files", "citation", "test_data"}:
@@ -143,7 +143,7 @@ class ArchiveDocuments:
         }
 
     def _path(self, source_id, media_type):
-        return self._originals() / f"{source_id}.{EXTENSIONS[media_type]}"
+        return self.original_directory("documents") / f"{source_id}.{EXTENSIONS[media_type]}"
 
     def publish(self, path, data, digest):
         if managed_paths(self.home) is None:
@@ -164,12 +164,15 @@ class ArchiveDocuments:
         if record["file_path"] is None:
             raise CommandError("source_unavailable", "原文不可用")
         path = self._path(record["source_id"], record["media_type"])
+        return self.read_file(path, record["sha256"])
+
+    def read_file(self, path, digest):
         if managed_paths(self.home) is None:
-            return self._read(path, record["sha256"])
+            return self._read(path, digest)
         try:
             with store(self.home) as material:
                 pin = material.existing(path.relative_to(material.root).as_posix())
-                return self._read_managed(pin, record["sha256"])
+                return self._read_managed(pin, digest)
         except (InstanceInvalid, InstanceBusy, OSError) as error:
             raise CommandError("source_unavailable", "原文不可用或已更改") from error
 
