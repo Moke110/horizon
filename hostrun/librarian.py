@@ -129,7 +129,7 @@ class Librarian:
 
     def request_report(self, action, command, *, token, origin):
         self.library.authorize(token)
-        if action not in ("create", "import"):
+        if action not in ("create", "import", "assess"):
             raise CommandError("immutable_report", "已登记报道不能修改")
         if not isinstance(command, dict):
             raise CommandError("invalid_report", "需要有效的报道登记请求")
@@ -361,7 +361,7 @@ class Librarian:
         actions = {"term": ("create", "update", "archive", "delete"),
                    "question": ("create", "update", "delete"),
                    "source": ("create", "register", "import", "restore", "update", "delete"),
-                   "report": ("create", "import"),
+                   "report": ("create", "import", "assess"),
                    "frontier": ("create", "update", "delete"),
                    "progress": ("create", "update", "delete")}.get(entity, ())
         for change in changes:
@@ -415,6 +415,10 @@ class Librarian:
                     elif entity == "report":
                         proposed = self.library.reports.apply(db, action, command, origin=origin, publish=False)
                         summaries.append(proposed["title"])
+                        if action == "assess":
+                            lock = "archive:" + proposed["report_id"]
+                            self.library.check_write_lock(db, lock, now=now)
+                            term_ids.add(lock)
                     elif entity == "frontier":
                         proposed, _ = self.library.apply_frontier(db, action, command, token=token, now=now)
                         summaries.append(proposed["question"])

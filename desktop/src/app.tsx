@@ -14,7 +14,7 @@ import {SubscriptionPanel,type Subscription} from './SubscriptionPanel';
 import {VoyagerPanel,type VoyagerSummary} from './VoyagerPanel';
 import {SchedulePanel,type Schedule} from './SchedulePanel';
 import {ArchiveDocumentView,ArchiveSourcesPanel,type ArchiveDocument,type ArchiveSource} from './ArchiveSourcesPanel';
-import {ArchiveReportsPanel,ArchiveReportView,type ArchiveReport,type ArchiveReportOriginal} from './ArchiveReportsPanel';
+import {ArchiveReportsPanel,ArchiveReportView,assessmentBases,assessmentDecisions,type ArchiveReport,type ArchiveReportOriginal} from './ArchiveReportsPanel';
 import {MaterialsPanel,type MaterialSummary,type MaterialPackage} from './MaterialsPanel';
 import {KnowledgePanel,type FrontierSummary,type Frontier,type FrontierViewEvent,type FrontierCommandError} from './KnowledgePanel';
 import {KnowledgeCardPanel,type CardSummary,type KnowledgeCard,type CardViewEvent,type CardCommandError} from './KnowledgeCardPanel';
@@ -44,10 +44,12 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
   },[card.status,card.expires_at]);
   const status=elapsed&&card.status==='pending'?'expired':card.status;
   const labels:Record<string,string>={aliases:'别名',sources:'来源',relations:'关系',
-    validity:'状态',tracked:'追踪中',questionable:'存疑',convergence:'收敛状态',reason:'修改理由',summary:'简介',citation:'学术引用',source_files:'缓存原件',file_id:'缓存原件',document_id:'文档 ID',report_id:'报道 ID',sha256:'SHA-256',label:'来源说明',covered_docs:'被报道文档',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
+    validity:'状态',tracked:'追踪中',questionable:'存疑',convergence:'收敛状态',reason:'修改理由',decision:'重评状态',basis:'依据类别',evidence:'重评证据',summary:'简介',citation:'学术引用',source_files:'缓存原件',file_id:'缓存原件',document_id:'文档 ID',report_id:'报道 ID',sha256:'SHA-256',label:'来源说明',covered_docs:'被报道文档',url:'原始链接',material_id:'原文文件',source_ids:'资料库来源',status:'关注状态',scope:'研究范围',hard_constraints:'硬约束'};
   const fieldText=(field:string,value:unknown)=>{
     if(field==='validity') return value==='questionable'?'存疑':'有效';
     if(field==='tracked') return value?'是':'否';
+    if(field==='decision'&&typeof value==='string')return assessmentDecisions[value]??value;
+    if(field==='basis'&&typeof value==='string')return assessmentBases[value]??value;
     if(typeof value==='object'&&value){
       const row=value as Record<string,unknown>;
       if(field==='scope')return [
@@ -63,7 +65,7 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
   };
   const previewText=(value:unknown)=>typeof value==='string'?value.replace(
     /\[\[term:([^\[\]\s]+)\]\]/g,(_,id:string)=>terms.find(term=>term.card_id===id)?.title??'术语'):'';
-  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':card.entity==='source'?'来源变更确认':card.entity==='report'?'报道入库确认':card.entity==='frontier'?'前沿变更确认':card.entity==='progress'?'进展变更确认':card.entity==='test_cleanup'?'测试内容清理确认':'术语变更确认'}>
+  return <article className="assistant" aria-label={card.entity==='question'?'百科问题变更确认':card.entity==='source'?'来源变更确认':card.entity==='report'?(card.changes[0]?.[0]==='assess'?'报道重评确认':'报道入库确认'):card.entity==='frontier'?'前沿变更确认':card.entity==='progress'?'进展变更确认':card.entity==='test_cleanup'?'测试内容清理确认':'术语变更确认'}>
     <div className="author">图书管理员</div>
     {card.cleanup&&<CleanupEntries plan={card.cleanup}/>}
     {card.changes.map(([action,change],index)=>{
@@ -73,7 +75,7 @@ function TermConfirmationCard({card,decide,terms=[],sources=[]}:{card:TermConfir
         summary:document.summary,citation:document.citation}:report?{report_id:report.report_id,
           sha256:report.sha256,summary:report.summary,covered_docs:report.covered_docs}:change;
       const actionLabel=action==='import'?(report?'导入报道':'导入离线文档'):
-        ({create:'新增',register:'登记文档',restore:'恢复原文',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action];
+        ({create:'新增',register:'登记文档',restore:'恢复原文',assess:'重评可信度',update:'修改',archive:'归档',delete:'删除'} as Record<string,string>)[action];
       return <div key={index}>
       <strong>{actionLabel} {previewText(card.summaries?.[index]??change.prompt??change.title??change.question??change.question_id??change.card_id??sources.find(source=>source.source_id===change.source_id)?.title??change.source_id??change.progress_id??change.frontier_id)}</strong> {change.test_data===true&&<TestTag tags={['测试']}/>}
       {card.entity!=='progress'&&previewText(change.answer??change.content)&&<p>{previewText(change.answer??change.content)}</p>}
@@ -301,7 +303,9 @@ ${JSON.stringify(command)}`)}/>}
       <div className="detail-toolbar"><Button aria-label="关闭详情" onClick={closeDetail}>×</Button></div>
       <div className="detail-body" ref={setDetailHost}>
         {detail==='archive-document'&&archiveDocument&&<ArchiveDocumentView entry={archiveDocument} send={send}/>}
-        {detail==='archive-report'&&archiveReport&&<ArchiveReportView entry={archiveReport}/>}
+        {detail==='archive-report'&&archiveReport&&<ArchiveReportView entry={archiveReport}
+          assessment={state.archive_reports?.find(report=>report.report_id===archiveReport.report.report_id)?.assessment
+            ?? archiveReport.report.assessment}/>}
         {detail==='source-url'&&sourceUrl&&<section aria-label="原始来源链接">
           <p>{sourceUrl}</p>
           <button type="button" onClick={()=>send({action:'open_source_url',url:sourceUrl})}>在浏览器打开原文</button>

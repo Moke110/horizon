@@ -61,6 +61,13 @@ confirms both actions. Import retains each known document ID even if its file
 is offline, and replaces each missing entry at its original position with
 `d-unknown`. Those positions remain fixed after confirmation.
 
+`assess` takes the existing `reportId` and fields `decision`, `basis`,
+`reason`, and `evidence`. A `questionable` or `invalid` decision requires
+`methodology`, `integrity`, or `interpretation` as its basis. `completed`
+uses `correction` to record a mistaken assessment. The Explorer confirms
+the decision. Reads include the current `assessment` when present, and the
+registered report and original remain immutable.
+
 The NDJSON stream contains `session`, `text`, `tool_call`, `tool_result`, `final`,
 `status` and `error`. The existing runner keeps logs, cancellation, timeouts,
 single-flight locking and executor leases. Intent judgement and knowledge reads
