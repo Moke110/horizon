@@ -1,4 +1,4 @@
-import {TextInput} from './gui/elements/FormElements';
+import {MultilineInput,TextInput} from './gui/elements/FormElements';
 import {TestTag} from './TestCleanupPanel';
 import React,{useState} from 'react';
 import {renderLocalHtml} from './LocalHtml';
@@ -16,7 +16,7 @@ export type ArchiveSource={
   citation?:string|null;
   sha256?:string;
   file_path?:string|null;
-  media_type?:string;
+  media_type?:string|null;
 };
 
 export type ArchiveDocument={document:ArchiveSource;available:boolean;original:string|null};
@@ -42,7 +42,11 @@ export const ArchiveDocumentView=React.memo(function ArchiveDocumentView({entry,
       {document.file_path&&<><dt>文件地址</dt><dd>{document.file_path}</dd></>}
       {document.citation&&<><dt>学术引用</dt><dd>{document.citation}</dd></>}
     </dl>
-    {available?<article className="local-html" aria-label="文档原文">{preview}</article>:<p role="status">原文不可用</p>}
+    {available?<article className="local-html" aria-label="文档原文">{preview}</article>:<>
+      <p role="status">原文不可用</p>
+      <button type="button" onClick={()=>send({action:'choose_archive_restore',source_id:document.source_id,
+        expected_version:document.version})}>选择原文恢复访问</button>
+    </>}
   </section>;
 });
 
@@ -53,10 +57,28 @@ export function ArchiveSourcesPanel({sources,onOpen,send}:{
 }){
   const [editing,setEditing]=useState<ArchiveSource|null>(null);
   const [creating,setCreating]=useState(false);
-  const close=()=>{setEditing(null);setCreating(false);};
+  const [importing,setImporting]=useState(false);
+  const [importError,setImportError]=useState('');
+  const close=()=>{setEditing(null);setCreating(false);setImporting(false);setImportError('');};
   return <section className="archive-sources" aria-label="资料库来源">
     <h2>资料库</h2>
-    <button type="button" onClick={()=>{setEditing(null);setCreating(true);}}>登记文档</button>
+    <button type="button" onClick={()=>{close();setCreating(true);}}>登记文档</button>
+    <button type="button" onClick={()=>{close();setImporting(true);}}>导入离线文档</button>
+    {importing&&<form onSubmit={event=>{
+      event.preventDefault();
+      const raw=new FormData(event.currentTarget).get('document');
+      try{
+        const document=JSON.parse(typeof raw==='string'?raw:'');
+        send({action:'source_import',operation_id:crypto.randomUUID(),document});
+        close();
+      }catch{setImportError('请输入有效的文档条目 JSON。');}
+    }}>
+      <label>文档条目 JSON<MultilineInput name="document" required maxLength={10000}
+        placeholder={'{"source_id":"d-…","sha256":"…","title":"…","summary":"…"}'}/></label>
+      {importError&&<p role="alert">{importError}</p>}
+      <button type="submit">提交审核</button>
+      <button type="button" onClick={close}>取消</button>
+    </form>}
     {(editing||creating)&&<form key={editing?.source_id??'new-source'} onSubmit={event=>{
       event.preventDefault();
       const form=new FormData(event.currentTarget);
@@ -81,7 +103,7 @@ export function ArchiveSourcesPanel({sources,onOpen,send}:{
       {sources.map(source=><li key={source.source_id}>
         <button type="button" onClick={()=>onOpen(source)}>{source.title} <TestTag tags={source.tags}/> · {source.sha256?'打开文档':'打开原文'}</button>
         <span>{source.label}</span>
-        {!source.sha256&&<button type="button" onClick={()=>{setCreating(false);setEditing(source);}}>编辑</button>}
+        {!source.sha256&&<button type="button" onClick={()=>{close();setEditing(source);}}>编辑</button>}
         <button type="button" onClick={()=>send({action:'source_delete',operation_id:crypto.randomUUID(),
           source_id:source.source_id,expected_version:source.version})}>删除来源</button>
       </li>)}

@@ -24,6 +24,8 @@ description: "Horizon built-in Pi agent workflow for bounded source retrieval, p
   根据标题、内容与学术引用自行判断是否重复、选择要保存的原件。文件哈希用来校验原件，
   不作为去重门槛。用 `create` 提交标题、简介、恰好一个缓存 `file_id` 和可选学术引用，
   等待探索者通过 Librarian 确认后再引用返回的 `d-` 文档 ID。收录其他原件须另建文档。
+  离线迁移用 `import` 导入带原 ID 和 SHA-256 的已有文档条目。找到原件后先缓存，再用
+  `restore` 请求恢复原条目。核对 SHA-256，并等待探索者确认。
 - 检索推送：先用 `hostrun.cli run --intent daily` 检查闸门与续接状态。
   获准写作后读取 `skills/horizon-run/references/workflow.md`，完成检索、排序、写作、
   校验和交付，一次仅推送一篇。尊重未答问题、待复核标记和已发送状态。
