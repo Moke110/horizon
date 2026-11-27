@@ -209,3 +209,50 @@ def test_import_report_attaches_only_matching_cached_html(tmp_path):
     with pytest.raises(CommandError) as error:
         service.request_report("import", {**request, "operation_id": "unrelated-import"}, token=TOKEN, origin=ORIGIN)
     assert error.value.code == "immutable_report"
+
+
+def test_confirmed_reassessment_changes_the_projection_without_rewriting_the_report(tmp_path):
+    service = librarian(tmp_path)
+    covered = document(service)
+    draft = service.stage_report(HTML, token=TOKEN, origin=ORIGIN)
+    service.request_report("create", {
+        "operation_id": "publication", "draft_id": draft["draft_id"],
+        "title": "Finding", "summary": "Research overview", "covered_docs": [covered],
+    }, token=TOKEN, origin=ORIGIN)
+    original, = service.decide("publication", "confirm", token=TOKEN, origin=ORIGIN)["results"]
+    identity = original["report_id"]
+    assessment = {"decision": "invalid", "basis": "interpretation", "reason": "The primary reading reverses the result.",
+                  "evidence": "Table 2 gives a negative estimate, while the headline claims an increase."}
+    card = service.request_report("assess", {"operation_id": "reassessment", "report_id": identity, **assessment},
+                                  token=TOKEN, origin=ORIGIN)
+    assert card["status"] == "pending"
+    assert service.view_report(identity, token=TOKEN) == original
+    assert service.decide("reassessment", "confirm", token=TOKEN, origin=ORIGIN)["status"] == "confirmed"
+
+    reopened = librarian(tmp_path)
+    assert reopened.open_report(identity, token=TOKEN) == {"report": {**original, "assessment": assessment}, "html": HTML}
+    assert reopened.list_reports(token=TOKEN) == [{**original, "assessment": assessment}]
+    assert Path(original["file_path"]).read_bytes() == HTML.encode("utf-8")
+
+    disagreement = {**assessment, "decision": "questionable", "basis": "disagreement"}
+    with pytest.raises(CommandError, match="重评依据"):
+        reopened.request_report("assess", {"operation_id": "disagreement", "report_id": identity, **disagreement},
+                                token=TOKEN, origin=ORIGIN)
+    assert reopened.view_report(identity, token=TOKEN)["assessment"] == assessment
+
+    later_decisions = [
+        {"decision": "questionable", "basis": "methodology", "reason": "The effect still needs verification.",
+         "evidence": "Appendix A reveals a cohort mismatch, but its size is not documented."},
+        {"decision": "completed", "basis": "correction", "reason": "The cited effect and cohort were verified.",
+         "evidence": "The corrected reading of Appendix A matches the analysis and report."},
+    ]
+    for index, newer in enumerate(later_decisions):
+        request_id = f"reassessment-{index}"
+        reopened.request_report("assess", {"operation_id": request_id, "report_id": identity, **newer},
+                                token=TOKEN, origin=ORIGIN)
+        reopened.decide(request_id, "confirm", token=TOKEN, origin=ORIGIN)
+        assert librarian(tmp_path).open_report(identity, token=TOKEN) == {
+            "report": {**original, "assessment": newer}, "html": HTML,
+        }
+    assert reopened.decide("reassessment", "confirm", token=TOKEN, origin=ORIGIN)["results"][0]["assessment"] == assessment
+    assert len(reopened.list_reports(token=TOKEN)) == 1

@@ -13,6 +13,7 @@ from hostrun.managed_import import managed_paths, store
 
 REPORT_ID = re.compile(r"r-[0-9a-f]{32}")
 UNKNOWN_DOCUMENT = "d-unknown"
+ASSESSMENT_BASES = ("methodology", "integrity", "interpretation")
 
 
 class ArchiveReports:
@@ -32,6 +33,11 @@ class ArchiveReports:
             report_id TEXT PRIMARY KEY, origin TEXT NOT NULL)""")
         db.execute("""CREATE TABLE IF NOT EXISTS library_retired_reports (
             report_id TEXT PRIMARY KEY, pending_original TEXT)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS library_report_assessments (
+            operation_id TEXT PRIMARY KEY, report_id TEXT NOT NULL, decision TEXT NOT NULL,
+            basis TEXT NOT NULL, reason TEXT NOT NULL, evidence TEXT NOT NULL)""")
+        db.execute("""CREATE INDEX IF NOT EXISTS library_report_assessments_by_report
+            ON library_report_assessments(report_id)""")
 
     def stage(self, html, origin):
         if not isinstance(html, str) or not html.strip():
@@ -59,9 +65,26 @@ class ArchiveReports:
         return self.files.original_directory("reports") / f"{report_id}.html"
 
     def apply(self, db, action, command, *, origin, publish):
+        if action == "assess":
+            return self.assess(db, command, publish=publish)
         if action == "import":
             return self.import_existing(db, command, origin=origin, publish=publish)
         return self.create(db, command, origin=origin, publish=publish, replace=action == "replace")
+
+    def assess(self, db, command, *, publish):
+        if set(command) != {"operation_id", "report_id", "decision", "basis", "reason", "evidence"}:
+            raise CommandError("invalid_assessment", "重评需要报道 ID、判断、依据类别、理由与证据")
+        report = self.read_in_transaction(db, command["report_id"])
+        decision, basis = command["decision"], command["basis"]
+        if not ((decision in ("questionable", "invalid") and basis in ASSESSMENT_BASES)
+                or (decision == "completed" and basis == "correction")):
+            raise CommandError("invalid_assessment", "重评依据必须为研究方法错位、诚信缺陷、解读错误或恢复时的误判更正")
+        reason = self._text(command["reason"], 2000, "重评理由")
+        evidence = self._text(command["evidence"], 4000, "重评证据")
+        if publish:
+            db.execute("INSERT INTO library_report_assessments VALUES (?,?,?,?,?,?)",
+                       (command["operation_id"], report["report_id"], decision, basis, reason, evidence))
+        return {**report, "assessment": dict(decision=decision, basis=basis, reason=reason, evidence=evidence)}
 
     def create(self, db, command, *, origin, publish, replace=False):
         fields = {"operation_id", "draft_id", "title", "summary", "covered_docs"}
@@ -202,7 +225,7 @@ class ArchiveReports:
         self.purge_retired_originals()
         with self.connect() as db:
             self.initialize(db)
-            return [json.loads(record) for (record,) in db.execute(
+            return [self.project_assessment(db, json.loads(record)) for (record,) in db.execute(
                 "SELECT record FROM library_archive_reports ORDER BY rowid DESC")]
 
     @staticmethod
@@ -216,10 +239,19 @@ class ArchiveReports:
             raise CommandError("not_found", "未找到报道")
         return json.loads(row[0])
 
+    @staticmethod
+    def project_assessment(db, report):
+        row = db.execute("""SELECT decision, basis, reason, evidence FROM library_report_assessments
+            WHERE report_id=? ORDER BY rowid DESC LIMIT 1""", (report["report_id"],)).fetchone()
+        if row is None:
+            return report
+        decision, basis, reason, evidence = row
+        return {**report, "assessment": dict(decision=decision, basis=basis, reason=reason, evidence=evidence)}
+
     def view(self, report_id):
         with self.connect() as db:
             self.initialize(db)
-            return self.read_in_transaction(db, report_id)
+            return self.project_assessment(db, self.read_in_transaction(db, report_id))
 
     def open(self, report_id):
         report = self.view(report_id)

@@ -67,6 +67,13 @@ successful publication, Archive retires the old entry and deletes its HTML.
 Reads of that ID return `report_deleted`, including after restart. A retained
 Frontier reference displays the deletion without opening a different report.
 
+`assess` takes the existing `reportId` and fields `decision`, `basis`,
+`reason`, and `evidence`. A `questionable` or `invalid` decision requires
+`methodology`, `integrity`, or `interpretation` as its basis. `completed`
+uses `correction` to record a mistaken assessment. The Explorer confirms
+the decision. Reads include the current `assessment` when present, and the
+registered report and original remain immutable.
+
 For `frontier_tracking` progress, `source_ids` can contain both document `d-`
 and report `r-` IDs in reference order. Open evidence through `archive_source`
 or `archive_report`. Progress references point to separately registered

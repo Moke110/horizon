@@ -80,8 +80,10 @@ class DesktopWorker:
         fields = event.get("fields")
         request_id = event.get("requestId")
         if not isinstance(fields, dict) or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256:
-            raise CommandError("invalid_report", "需要有效的报道登记请求")
+            raise CommandError("invalid_report", "需要有效的报道请求")
         command = {**fields, "operation_id": request_id}
+        if operation == "assess":
+            command["report_id"] = event.get("reportId")
         card = librarian.request_report(operation, command, token=token, origin=origin)
         self.events.put(("term_confirmation_changed", self.task_id))
         return card

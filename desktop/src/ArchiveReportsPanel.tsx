@@ -1,6 +1,13 @@
 import React from 'react';
 import {renderLocalHtml} from './LocalHtml';
 
+export const assessmentDecisions: Record<string, string> = {
+  completed: '已完成', questionable: '存疑', invalid: '失效',
+};
+export const assessmentBases: Record<string, string> = {
+  methodology: '重大研究方法错位', integrity: '诚信缺陷', interpretation: 'Agent 解读错误', correction: '误判更正',
+};
+
 export type ArchiveReport = {
   report_id: string;
   title: string;
@@ -10,6 +17,7 @@ export type ArchiveReport = {
   covered_docs: string[];
   status: 'completed';
   replaces_report_id?: string;
+  assessment?: {decision: string; basis: string; reason: string; evidence: string};
 };
 
 export type ArchiveReportOriginal = {report: ArchiveReport; html: string | null};
@@ -23,12 +31,14 @@ export function ArchiveReportsPanel({reports, onOpen}: {
     {reports.length === 0 ? <p>尚无报道。</p> : <ul>{reports.map(report =>
       <li key={report.report_id}>
         <button type="button" onClick={() => onOpen(report.report_id)}>{report.title} · 打开报道</button>
-        <span>已完成</span>
+        <span>{assessmentDecisions[report.assessment?.decision ?? report.status]}</span>
       </li>)}</ul>}
   </section>;
 }
 
-export function ArchiveReportView({entry, onCorrect}: {entry: ArchiveReportOriginal; onCorrect?: () => void}) {
+export function ArchiveReportView({entry, assessment, onCorrect}: {
+  entry: ArchiveReportOriginal; assessment?: ArchiveReport['assessment']; onCorrect?: () => void;
+}) {
   const {report, html} = entry;
   return <section aria-label="报道条目">
     <h3>{report.title}</h3>
@@ -37,7 +47,12 @@ export function ArchiveReportView({entry, onCorrect}: {entry: ArchiveReportOrigi
     <dl style={{overflowWrap: 'anywhere'}}>
       <dt>报道 ID</dt><dd>{report.report_id}</dd>
       {report.replaces_report_id && <><dt>取代的报道 ID</dt><dd>{report.replaces_report_id}</dd></>}
-      <dt>状态</dt><dd>已完成</dd>
+      <dt>状态</dt><dd>{assessmentDecisions[assessment?.decision ?? report.status]}</dd>
+      {assessment && <>
+        <dt>依据类别</dt><dd>{assessmentBases[assessment.basis]}</dd>
+        <dt>重评理由</dt><dd>{assessment.reason}</dd>
+        <dt>重评证据</dt><dd>{assessment.evidence}</dd>
+      </>}
       <dt>SHA-256</dt><dd>{report.sha256}</dd>
       {report.file_path && <><dt>文件地址</dt><dd>{report.file_path}</dd></>}
       <dt>被报道文档</dt><dd><ol>{report.covered_docs.map((identity, index) =>
