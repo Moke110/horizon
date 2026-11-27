@@ -7,7 +7,6 @@ type Source = {
   description:string;
   configuration:'saved'|'environment'|'missing'|'public'|'optional';
   key_label:string|null;
-  config_input_type:'password'|'url';
   monthly_limit?:number|null;
   enabled:boolean;
   connection:string;
@@ -80,7 +79,7 @@ export function RetrieverPanel({send,onOpenHistory}:{send:typeof window.horizon.
       <p>{source.description}</p>
       <p role="status">{source.connection||'尚未测试连接'}</p>
       <p>{{
-        missing:source.config_input_type==='url'?'尚未配置实例 URL':'尚未配置 API Key',
+        missing:'尚未配置 API Key',
         saved:'使用本机保存的配置', environment:'使用环境变量中的配置',
         public:'无需 API Key', optional:'可选 API Key，当前使用公开额度',
       }[source.configuration]}</p>
@@ -91,7 +90,7 @@ export function RetrieverPanel({send,onOpenHistory}:{send:typeof window.horizon.
         send({action:'retriever_configure',source:source.id,key});
         form.reset();
       }}>
-        <label>{source.key_label}<TextInput name="key" required type={source.config_input_type} maxLength={1024}
+        <label>{source.key_label}<TextInput name="key" required type="password" maxLength={1024}
           autoComplete="off" disabled={!!testing}/></label>
         <button disabled={!!testing}>保存配置</button>
         {source.configuration==='saved'&&<button type="button" disabled={!!testing}
