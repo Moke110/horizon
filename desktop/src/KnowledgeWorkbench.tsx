@@ -166,7 +166,7 @@ export function KnowledgeWorkbench({
   cardSelected,cardViewEvent,cardError,
   frontierSelected,frontierViewEvent,frontierError,
   themeSelected,themeViewEvent,themeError,
-  onCommand,onPendingCount,openPendingNonce=0,editorFeedback,closeEditorFeedback,termDetail,
+  onCommand,onRetrieve,onPendingCount,openPendingNonce=0,editorFeedback,closeEditorFeedback,termDetail,
 }:{
   initialType?:TypeFilter;
   termDetail?:{host:HTMLDivElement|null;visible:boolean;open:()=>void;close:()=>void};
@@ -184,6 +184,7 @@ export function KnowledgeWorkbench({
   themeViewEvent:ThemeViewEvent|null;
   themeError:ThemeCommandError|null;
   onCommand:(command:unknown)=>void;
+  onRetrieve?:(frontier:Frontier)=>void;
   onPendingCount?:(count:number|null)=>void;
   openPendingNonce?:number;
   editorFeedback?:FeedbackHandoff|null;
@@ -1310,7 +1311,7 @@ export function KnowledgeWorkbench({
           </header>
           {active.type==='card'&&<KnowledgeCardPanel key={active.nonce} cards={cards} materials={materials} selected={activeCard} viewEvent={cardViewEvent} commandError={cardError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('card')} termMode={dictionary} onCommitted={committed('card')}/>}
           {active.type==='theme'&&<ThemePanel key={active.nonce} themes={themes} materials={materials} cards={cards} selected={activeTheme} viewEvent={themeViewEvent} commandError={themeError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('theme')} onCommitted={committed('theme')}/>}
-          {active.type==='frontier'&&<KnowledgePanel key={active.nonce} frontiers={frontiers} selected={activeFrontier} viewEvent={frontierViewEvent} commandError={frontierError} onCommand={onCommand} embedded showList={false} openRequest={requestFor('frontier')} onCommitted={committed('frontier')}/>}
+          {active.type==='frontier'&&<KnowledgePanel key={active.nonce} frontiers={frontiers} selected={activeFrontier} viewEvent={frontierViewEvent} commandError={frontierError} onCommand={onCommand} onRetrieve={onRetrieve} embedded showList={false} openRequest={requestFor('frontier')} onCommitted={committed('frontier')}/>}
           {historyOpen&&active.mode==='open'&&active.id&&<KnowledgeHistoryPanel key={`${active.type}:${active.id}`} kind={active.type} id={active.id} currentVersion={activeVersion} onCommand={onCommand} onUndoApplied={undoApplied} onClose={closeHistory}/>}
         </>:<div className="workbench-empty">
           <h2>知识库工作台</h2>
