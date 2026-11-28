@@ -7,28 +7,32 @@
 | English | 中文 | Meaning |
 |---|---|---|
 | Horizon | 地平线 | The software |
-| Library | 图书馆 | Hpedia, Bulletin Board and Archive managed through the Librarian |
+| Library | 图书馆 | Archive, Pedia and Writer Reference. Every role can read Library data; only the Librarian can write it. |
 | Term | 术语 | One vocabulary entry and its definition, corresponding to one existing Knowledge Card |
-| Hpedia | 百科 | The collection of Terms, Questions and Frontiers |
+| Pedia | 百科 | The Library collection of Terms, Questions and Frontiers, previously called Hpedia. |
+| Writer Reference | 写作参照 | Independent copies of reference materials and user preference entries used to guide report writing. |
+| Cache | 缓存区 | Temporary task files that every role can read and write. Clearing the cache does not affect archived materials. |
 | Hpedia entry | 百科条目 | A Term, Question or Frontier with its own identity in Hpedia |
 | Hpedia ID | 百科 ID | The permanent identifier of an Hpedia entry, with a type prefix and a hexadecimal body. References use the same ID across workspaces. |
 | Question | 问题 | A specific question and its answer, together referencing at least one Term |
 | Status (Term or Question) | 状态 | Whether the current definition or answer is considered valid (有效) or questionable (存疑) |
 | Followed (Hpedia entry) | 追踪中 | Whether the Explorer is tracking the entry on the Bulletin Board. Questionable entries are always followed. |
-| Bulletin Board | 白板 | Links to all followed Hpedia entries |
+| Bulletin Board | 白板 | The Electron view of followed Pedia entries, not a separately stored list. |
+| Scheduled task | 定时任务 | A schedule and task instruction. Each trigger starts a task session led by the main agent. |
 | Frontier | 前沿 | An open-ended research question with zero or more Updates, a tracking choice and a record of resolution when solved |
 | Update | 进展 | A distinct development under a Frontier |
 | Archive | 资料库 | The Library collection of source documents, Horizon reports and their entries, independent of Hpedia. |
-| source-doc | 源文档 | One original file supplied by the Explorer or collected by an Agent, such as a paper PDF, image or HTML snapshot. |
+| source-material | 原材料 | An original file supplied by the Explorer or collected by an Agent for research or reporting; previously called source-doc. |
+| reference-material | 参考材料 | An independent copy kept in Writer Reference to guide writing. Its use as a writing example does not itself make it a covered document. |
 | doc-entry | 文档 | The Archive record identifying exactly one source file. Its permanent d- ID never switches to another file. |
 | horizon-report | 报道原文 | The HTML report produced by Horizon Newsroom. Once completed, its text is final; a correction is a separate report. |
 | report-entry | 报道 | The immutable Archive record for one Horizon report, with its own permanent `r-` ID and covered documents. |
 | Report reliability | 报道可信度 | The current assessment associated with a report: 已完成, 存疑 or 失效. It is separate from the report entry. |
 | covered-docs | 被报道文档 | The nonempty list of documents a report actually covers, not all inputs or background citations. Each missing document has its own `d-unknown` placeholder on import. The list is fixed at registration. |
-| Retriever | 检索器 | The configurable collection of information sources available for Agent retrieval tasks. Formerly called Voyager. |
+| Retriever | 检索器 | The role that tests information sources, runs searches and downloads original materials. |
 | Information source | 信息源 | An independently configurable member of the Retriever that accepts a search expression and returns results. Its enabled state determines its inclusion in manual and automatic retrieval when the Explorer has not specified sources in the conversation. |
 | Explorer | 探索者 | A person using Horizon |
-| Librarian | 图书管理员 | The module that mediates Library access, reviews proposed changes and applies changes the Explorer confirms |
+| Librarian | 图书管理员 | The sole Library writer. It also reads designated published reports and tells the main agent which existing Questions or Frontiers they answer or update. |
 | Confirmation card | 确认卡 | A related group of proposed knowledge changes that the Explorer reviews together |
 
 Use these names in product copy, documentation and Agent explanations. Explorer names the person, not an Agent or Windows File Explorer. Technical protocol roles such as `user` and existing identity fields such as `owner` keep their technical meanings.
