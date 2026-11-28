@@ -6,6 +6,7 @@
 | [0002-library-and-librarian.md](0002-library-and-librarian.md) | 图书馆、图书管理员与确认流程 |
 | [0003-retriever.md](0003-retriever.md) | 信息源管理与 Agent 检索职责 |
 | [0004-archive-and-reports.md](0004-archive-and-reports.md) | 资料库身份、报道定稿与可信度 |
+| [0005-module-boundaries.md](0005-module-boundaries.md) | 重构后的模块归属、读写权限与信息源凭据 |
 
 ## Verification
 
